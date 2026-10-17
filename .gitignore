@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.claude/worktrees/
+node_modules/
+.venv/
+__pycache__/
+dist/
+
+# 本机权限配置与验收记录
+.claude/
+docs/access-check-evidence.json
+docs/claude-access-check.md
+docs/文件访问边界.md
