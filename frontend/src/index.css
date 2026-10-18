@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { color-scheme: light; }
+  body { @apply m-0 bg-canvas font-sans text-ink antialiased; }
+  button, a, textarea { -webkit-tap-highlight-color: transparent; }
+  button, a { touch-action: manipulation; }
+  :focus-visible { @apply outline outline-2 outline-offset-4 outline-accent; }
+  textarea:focus-visible { outline: none; }
+  button:disabled { cursor: not-allowed; }
+  ::selection { @apply bg-ink text-card; }
+}
+
+@layer components {
+  .app-shell { height: 100vh; height: 100dvh; min-height: 320px; }
+  .composer-footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .primary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card bg-accent px-4 text-sm font-medium text-card hover:opacity-80; }
+  .secondary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card border border-outline bg-card px-4 text-sm text-ink hover:border-ink; }
+  .citation-button {
+    @apply inline-flex h-11 min-w-11 items-center justify-center rounded-md font-mono text-[11px] text-accent hover:bg-line;
+    margin-block: -12px;
+  }
+  .answer-markdown > * + * { @apply mt-3; }
+  .answer-markdown p { white-space: pre-line; }
+  .answer-markdown ol { @apply list-decimal space-y-1 pl-6; }
+  .answer-markdown ul { @apply list-disc space-y-1 pl-6; }
+  .answer-markdown strong { @apply font-semibold; }
+  .answer-markdown pre { @apply overflow-x-auto rounded-card border border-line bg-card p-4 font-mono text-xs; }
+  .answer-markdown :not(pre) > code { @apply rounded bg-line px-1 py-0.5 font-mono text-[13px]; }
+  .answer-markdown blockquote { @apply border-l-2 border-outline pl-4 text-muted; }
+  .answer-markdown h1, .answer-markdown h2, .answer-markdown h3 { @apply font-serif text-lg font-semibold; }
+  .answer-markdown a { @apply inline-block min-h-11; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}

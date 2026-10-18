@@ -1,0 +1,99 @@
+# 栖木 · 电商智能客服前端
+
+React 18 + TypeScript + Vite 5 + Tailwind CSS 3.4，视觉遵循 `docs/UI设计规范.md` 与桌面、手机设计稿。字体全部来自系统字体栈，无 CDN、在线字体、外部图片或运行时图标依赖。
+
+## 安装与启动
+
+需要 Node.js 18.18+（推荐 Node.js 22 LTS）和 npm。在仓库根目录执行：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+打开 <http://localhost:3000>。端口固定 3000，已启用 `strictPort`；端口被占用会明确报错。
+
+```bash
+npm test             # Vitest，一次运行
+npm run typecheck    # TypeScript 静态检查（包含测试与配置）
+npm run build        # tsc --noEmit 后再 vite build，产物在 dist/
+npm run preview      # 预览构建产物，不提供 /api 开发代理
+```
+
+本次实现未运行任何 npm 命令，未安装依赖、执行测试、类型检查、开发服务或构建。依赖均使用稳定版 caret 范围，首次安装后请在本机检查并保存生成的锁文件。
+
+## 环境变量
+
+模板为 [`env.sample`](./env.sample)，仓库不提供环境文件。可以直接把变量传给命令，不需要新建任何 `.env.*` 文件：
+
+```bash
+VITE_STORE_NAME=栖木 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
+```
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `VITE_API_BASE` | 空 | 请求 `${base}/api/v1/chat`；空值走同源开发代理。填写服务 origin，不重复附加 `/api/v1` |
+| `VITE_PROXY_TARGET` | `http://127.0.0.1:8010` | 只供 Vite dev server 代理 `/api`，不进入浏览器配置 |
+| `VITE_HUMAN_SUPPORT_URL` | 空 | 完整 http(s) 人工客服地址；空值或无效值隐藏顶栏与拒答链接 |
+| `VITE_SHOW_SAMPLE_BADGE` | `true` | 仅值为 `false` 时隐藏样例标签；手机端将样例标识放在页脚 |
+| `VITE_STORE_NAME` | `栖木` | 店铺名、欢迎语和网页标题；字标保持「栖」 |
+| `VITE_MOCK` | `0` | 严格为 `1` 时只使用本地 fixtures，不请求后端 |
+
+Vite 的客户端变量在构建时注入，改变配置后需要重启开发服务或重新构建。不要把任何密钥放入 `VITE_*`。开发代理目标仅在 Vite 配置读取；没有前端健康检查轮询。
+
+## Mock 演示
+
+```bash
+VITE_MOCK=1 npm run dev
+```
+
+每次模拟等待 600–1500ms，返回 `is_mock: true`，回答旁显示 Mock 样例标识。输入「划痕」显示三条引用的 RAG 回答；「火星」显示拒答；「你好」显示闲聊；「退货」显示 FAQ；「限流」和「超时」分别模拟 42901、50401；其他输入显示样例 RAG。划痕优先于退货关键词，错误关键词优先匹配。Mock 只是固定样例，不会针对其他问题生成政策。
+
+访问 <http://localhost:3000/?debug=1>，或在浏览器控制台执行 `localStorage.setItem('ecomrag.debug', '1')`，后续请求会带 `debug: true`；Mock RAG 此时返回六个阶段的演示 trace。移除 URL 参数并执行 `localStorage.removeItem('ecomrag.debug')` 恢复默认。真实后端可能禁止对外返回 trace，即使 debug 开启也不会出现链路区。
+
+## 与后端联调
+
+本前端默认后端端口 **8010**。根 README 里的后端命令原用 8000；联调时请在 `backend/` 使用：
+
+```bash
+uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --reload
+```
+
+再在 `frontend/` 执行 `npm run dev`，确保 `VITE_MOCK` 未开启。浏览器请求同源 `/api/v1/chat`，开发服务器转发到 8010。后端 CORS 默认允许 `http://localhost:3000` 与 `http://127.0.0.1:3000`；使用其他 origin 或直接设置 `VITE_API_BASE` 跨域访问时，需同步配置后端 CORS。生产环境用 Web 服务器托管 `dist/` 并反代 `/api`，或构建时设置 `VITE_API_BASE`。
+
+请求严格发送 `{ session_id, message, debug }`，输入按 Unicode 码点计数，上限 500 字，空白不可发送。请求 60 秒后通过 AbortController 中止并显示超时；耗时由客户端实际测量。新对话也会中止旧请求并忽略迟到结果。错误信息按业务码映射，不把后端内部错误原文展示给顾客。
+
+## 交互与存储
+
+- Enter 发送，Shift+Enter 换行；IME 组合期间的 Enter 不发送。请求期间锁定输入、发送、快捷提问与重试；新对话仍可用。
+- 匿名 UUID 存在 `localStorage['ecomrag.session_id']`；消息存在 `sessionStorage['ecomrag.messages']`，刷新恢复、关闭标签页由浏览器清理。新对话清空并更换 UUID。存储被禁用、内容损坏或配额满时继续以内存方式工作。
+- Markdown 支持加粗、列表、换行，不启用 raw HTML。仅语法树文本节点中的有效 `[n]` 会转为引用按钮，代码块、行内代码、已有链接内的编号保持原样；未知编号显示原文。模型给出的图片仅显示替代文本，不自动加载外部资源。
+- 来源默认展开，点击或按 Enter 激活引用会展开来源、滚动、聚焦并暂时高亮对应卡片；trace 默认折叠，只在非空时显示。FAQ 来源文件名显示为「常见问题」。
+- 接近底部时跟随新消息；上滑阅读时保留位置。触控目标至少 44px，快捷标签可视高度约 32px、外层点击区 44px；减弱动态效果设置下关闭脉冲。
+
+## 目录
+
+```text
+frontend/
+├── package.json、tsconfig.json、vite.config.ts
+├── tailwind.config.ts、postcss.config.js、index.html、env.sample
+└── src/
+    ├── main.tsx、App.tsx、index.css
+    ├── api/          # 请求/响应类型、校验、错误映射、可替换的 API client
+    ├── components/   # 顶栏、输入、Markdown、来源、trace、消息
+    ├── hooks/        # 会话状态与滚动跟随
+    ├── lib/          # 引用语法树转换、格式化、安全存储、配置
+    ├── mocks/        # 关键词匹配的本地响应
+    └── test/         # RTL / jest-dom 的全局设置
+```
+
+测试与模块就近放置：`citations.test.tsx`、`client.test.ts`、`Composer.test.tsx`、`App.test.tsx`、`storage.test.ts`、`fixtures.test.ts`。覆盖引用边界与代码跳过、所有错误码/网络/非 JSON/超时、输入与 IME、聊天及重试与新会话、存储异常与恢复、trace、debug 与 Mock。
+
+## 已知限制与待验证
+
+- 本期为非流式单页，不做登录、个人订单查询、真实人工工单、深色模式；人工入口只是配置的链接。
+- 若在请求中刷新，已发送的问题会保留，但浏览器不能恢复该在途请求；可重新提问。存储不可用时刷新无法保留会话。
+- localStorage 的会话 ID 在同源标签页共享，消息按标签页独立。某标签页新开对话会更新共享 ID，其他已打开标签页仍保持其当前会话直到刷新。
+- `env.sample` 仅作模板，不会被 Vite 自动加载。生产静态预览需要另外配置 API 服务。
+- 尚未验证：依赖安装与解析、TypeScript 检查、Vitest 测试、Vite 构建、浏览器视觉与移动端软键盘/安全区、真实 IME 与读屏、开发代理及真实后端联调。请在本机逐项验收。

@@ -1,5 +1,7 @@
 # 电商 RAG 智能客服
 
+顾客聊天前端的安装、Mock 演示与联调说明见 [frontend/README.md](frontend/README.md)。
+
 面向 C 端顾客的 Python 3.11 / FastAPI / Pydantic v2 后端，依赖由 uv 管理。当前链路为限流 → 缓存 → FAQ → LLM 路由 → 通用对话 / RAG 检索 → 带引用生成 / 拒答兜底。聊天接口返回真实服务结果，离线测试全部注入假服务或假 LLM。
 
 ## 本地启动
