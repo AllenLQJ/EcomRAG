@@ -23,7 +23,7 @@
 | 前端 | React + Vite + Tailwind 独立界面 | 视觉按 UI 设计稿实现 |
 | 开发与演示机 | 本机 M1，16 GB 内存 | 全部依赖用 arm64 镜像 |
 | 公网 | 海外 VPS（无需备案） | 见第 8 节 |
-| 样例数据 | 虚构店铺：18 份文档、34 条 FAQ、24 条测试题 | 政策与文档一致；见[联调修复与验收](联调修复与验收.md) |
+| 样例数据 | 虚构店铺：19 份文档、37 条 FAQ、24 条测试题 | 政策与文档一致；见[联调修复与验收](联调修复与验收.md) |
 
 **标记约定**：【已确认】= 已拍板；【建议】= 默认做法，无异议即生效。
 
@@ -93,7 +93,15 @@ LLM_MAX_CONCURRENCY=2
 
 LLM HTTP 并发默认 `LLM_MAX_CONCURRENCY=2`，路由和生成共享同一信号量；应与模型服务账号的并发上限一致，多 worker 部署时按 worker 数折算。例如账号总额度为 2，两个 worker 各设为 1；worker 数超过账号并发额度时应减少 worker 或另行使用跨进程协调，进程内信号量不能限制所有 worker 的总并发。等待信号量不计入 `LLM_TIMEOUT_S` 的单次尝试超时，但受 `REQUEST_TIMEOUT_S=40` 整请求预算约束。
 
-新增 `LLM_RATE_LIMIT_RETRIES=3`：上游 429 使用独立重试计数，默认退避 1、2、4 秒；有效的 `Retry-After` 秒数与退避取更大值，单次等待最多 8 秒。无效、负数或日期格式的头忽略，只使用指数退避。429 退避前关闭本次响应并释放信号量名额，下次尝试重新排队；不会占着名额等待。网络、5xx、超时继续共用 `LLM_MAX_RETRIES=1` 和从 `LLM_RETRY_BACKOFF_S=0.5` 秒开始的指数退避，普通退避仍持有名额；超时另受 `LLM_TIMEOUT_RETRIES=1` 限制并使用新连接池。429 不消耗或重置普通重试预算，一次 complete 最多为首次尝试加两类重试次数，但始终共用整请求截止时间；预算先耗尽时返回 HTTP 504 / 50401，不再重试。
+连接池显式设置 `max_keepalive_connections=max_connections=LLM_MAX_CONCURRENCY`，新增 `LLM_KEEPALIVE_S=60` 控制空闲 TLS 连接保留秒数（设为 0 可禁用空闲复用）。同一客户端跨请求复用连接。httpx 传输支持 `socket_options` 时同时启用 `SO_KEEPALIVE`，旧版本不支持时跳过；TCP 探测间隔沿用操作系统默认值。底层传输不做隐藏重试，所有重试由本客户端计数。
+
+新增 `LLM_NETWORK_RETRIES=3`，表示首次尝试之外最多重试 3 次；网络错误和超时共用此计数。覆盖 ConnectError、ConnectTimeout、ReadError、RemoteProtocolError、其他 httpx 超时与单次调用超时，也保留连接重置类错误的重试。默认从 `LLM_RETRY_BACKOFF_S=0.5` 秒开始按 0.5、1、2 秒指数退避，每次增加 0 到 min(0.1 秒, 基础退避的 10%) 的抖动。网络/超时退避持有并发名额；超时后仍使用临时独立连接池，避免影响其他请求，结束时关闭临时池。
+
+每次重试前检查整请求预算：剩余时间须大于「退避时间 + min(`LLM_TIMEOUT_S`, `LLM_MIN_ATTEMPT_S`)」，`LLM_MIN_ATTEMPT_S` 默认 5 秒（正常调用 2–5 秒即可完成）；不满足时直接按现有错误返回。重试那一次仍受整请求预算约束，不会延长总耗时上限。实测：6 路并发时一次请求在第 30.7 秒遇到网络错误，旧规则要求剩余 12 秒而放弃重试，改为 5 秒后可再试一次。
+
+`LLM_MAX_RETRIES=1` 保留兼容，现仅控制 5xx 的重试次数，继续使用原指数退避且不加抖动；`LLM_TIMEOUT_RETRIES=1` 仅接受旧配置，已弃用且不再限制超时重试，请改用 `LLM_NETWORK_RETRIES`。上游 429 保持 `LLM_RATE_LIMIT_RETRIES=3` 的独立计数，默认退避 1、2、4 秒；有效的 `Retry-After` 秒数与退避取更大值，单次等待最多 8 秒。无效、负数或日期格式的头忽略。429 退避前关闭响应并释放名额，下次尝试重新排队。三类重试互不消耗或重置计数。
+
+所有尝试、排队和退避共享 `REQUEST_TIMEOUT_S=40` 的整请求预算，包括路由与生成两阶段。重试前必须至少剩余「本次退避 + `LLM_TIMEOUT_S`」的完整尝试时间，否则立即按最后一次错误返回（网络/5xx 为 HTTP 502 / 50201，超时为 HTTP 504 / 50401，429 为 HTTP 503 / 50302），不再等待或发请求；实际总截止时间触发仍返回 HTTP 504 / 50401。
 
 | 限流/忙碌来源 | 业务码 | HTTP 状态与文案 |
 | --- | --- | --- |
@@ -115,7 +123,11 @@ LLM HTTP 并发默认 `LLM_MAX_CONCURRENCY=2`，路由和生成共享同一信�
 
 生成器资料完全无法回答时只输出内部标记 `NO_ANSWER`；可部分回答时引用已知部分，并说明其余资料未提及。pipeline 对大小写、空白、外围标点容错：只有标记时返回现有 REFUSAL、route=fallback、sources=[]，仅记录 `reason=generator_no_answer`。标记夹在正常回答中时也会被移除；移除后只剩空白、标点、格式符或引用时同样拒答，标记不会作为生成答案发给用户。应用日志不记录原问题、答案、提示词或 key。
 
-新增 `data/eval_colloquial.jsonl` 共 32 题（23 条应答、6 条拒答/敏感、3 条闲聊）。在 backend 目录执行 `python -m eval.run_eval --eval-file data/eval_colloquial.jsonl --output logs/eval-colloquial.json`。`expected_route="answer"` 接受 faq/cache/rag，列表接受列出的任一路由；旧 cache 期望仍接受首次命中的 faq。`expected_doc` 可为空或省略，此时跳过引用命中统计；带参考文档且允许 rag 的失败行仍计入引用分母。终端和 JSON 分别提供「误拒答（应答却 fallback）」的 false_refusals 与「误答（应拒却回答）」的 false_answers 清单；错误单独汇总，不冒充误拒答。仅期望 fallback 却返回任何非拒答路由（包括 general）计为误答；列表允许 fallback 时不算误拒答。评测终端/文件按要求包含评测题和回答，不进入应用日志。需在本机运行原 24 题、口语 32 题及并发压测，核验实际质量、排队耗时、溢出 50302 和超时 50401；本次未运行真实依赖或完整 pytest。
+新增 `data/eval_colloquial.jsonl` 共 34 题（25 条应答、6 条拒答/敏感、3 条闲聊）。在 backend 目录执行 `python -m eval.run_eval --eval-file data/eval_colloquial.jsonl --output logs/eval-colloquial.json`。`expected_route="answer"` 接受 faq/cache/rag，列表接受列出的任一路由；旧 cache 期望仍接受首次命中的 faq。`expected_doc` 可为空或省略，此时跳过引用命中统计；带参考文档且允许 rag 的失败行仍计入引用分母。终端和 JSON 分别提供「误拒答（应答却 fallback）」的 false_refusals 与「误答（应拒却回答）」的 false_answers 清单；错误单独汇总，不冒充误拒答。仅期望 fallback 却返回任何非拒答路由（包括 general）计为误答；列表允许 fallback 时不算误拒答。评测终端/文件按要求包含评测题和回答，不进入应用日志。需在本机运行原 24 题、口语 34 题及并发压测，核验实际质量、排队耗时、溢出 50302 和超时 50401；本次未运行真实依赖或完整 pytest。
+
+`data/docs/product_catalog.md` 为「灵码在售商品总览｜虚构样例」，仅摘录听岚 S1/S2 无线耳机、栖光 L1 桌面台灯、木澈 C1 保温杯的现有详情，不推定店铺只销售这四款。首个 `##` 小节覆盖「你这里有什么商品」「你们卖什么」并完整列出四款商品，随后按品类介绍定位和参数。默认切块参数（父块 1200、子块 300、重叠 50，子块包含标题）下，总览为 4 个父块、5 个子块；整个 docs 为 19 份文档、41 个父块、81 个子块。FAQ 共 37 条，新增两条商品范围咨询与一条耳机咨询，答案摘自总览并保留「虚构样例：」前缀；口语集追加两条商品总览问题，期望 `answer`。
+
+更新后在 backend 目录重新执行 `python -m ingest.run --dir ../data/docs` 与 `python -m ingest.load_faq ../data/faq.csv`，完成知识文档与 FAQ 入库后重启后端以重建内存 FAQ 索引；如存在旧回答缓存，可执行 `python -m ingest.clear_cache` 清理本项目缓存。这些入库命令会在本机加载配置并访问本地模型/服务；本次仅修改代码和数据，未执行真实入库。先用 `python -m pytest tests/test_llm*.py tests/test_settings.py tests/test_ingest*.py tests/test_eval_colloquial.py tests/test_cli_config.py` 运行相关单元测试。
 
 ## 3. MVP 功能与接口
 
@@ -196,7 +208,7 @@ ecom-rag/
 - [ ] 本机 `docker compose up` 起通 Milvus、MySQL、Redis（arm64 镜像）
 - [ ] 下载 bge-m3 与 bge-reranker-v2-m3（共约 4.5 GB）
 - [ ] 配置智谱 glm-5.3-flash 账号凭据，确认额度、有效期与并发上限，验证 enabled/low 思考参数；备一家兼容服务
-- [ ] 样例数据：18 份文档、34 条 FAQ、24 条测试题（先定演示脚本的问题，再反向准备数据）
+- [ ] 样例数据：19 份文档、37 条 FAQ、24 条测试题（先定演示脚本的问题，再反向准备数据）
 - [ ] 买好海外 VPS 并试跑一次 compose
 
 **阶段 1 · 脚手架与入库（约 3.5 小时）→ M1**
@@ -366,3 +378,53 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 - 额度：在智谱控制台确认额度、有效期与并发上限；备用兼容服务同时核对地址、模型名、思考参数和 token 配额，运行 llm_ping 后再切换。
 - 本机备用：演示期间接电源，运行 `caffeinate -dims` 防止休眠；不要合盖。
 - 降级：VPS 慢时先关 Reranker 或下调候选数（默认已是 10）；仍不够时让前端提示稍后再试。
+
+
+## 流式回答与公网代理
+
+`POST /api/v1/chat/stream` 接受与 `POST /api/v1/chat` 相同的 `{session_id,message,debug}`。原非流式接口及 JSON 错误行为保持不变。流式成功建立后使用 HTTP 200、`Content-Type: text/event-stream`、`Cache-Control: no-cache`、`X-Accel-Buffering: no`、`Content-Encoding: identity`，没有压缩或完整响应缓冲。参数校验失败仍是原 HTTP 400 JSON 错误；流开始后的业务失败通过 `error` 事件返回，不能再改变 HTTP 状态。
+
+每个事件使用 `event: 名称` 与 `data: JSON`，后面一个空行。顺序为 meta → status（阶段切换）→ delta（零至多条）→ done 或 error；终态只有一个：
+
+| 事件 | data |
+| --- | --- |
+| `meta` | `{"request_id":"UUID","session_id":"原会话ID"}`，限流或排队前尽早发送 |
+| `status` | `{"stage":"faq"}`，stage 为 faq / routing / retrieving / generating |
+| `delta` | `{"text":"文本增量"}`，只含 content，不转发 reasoning_content |
+| `done` | 完整 ChatResponse，含 request_id、session_id、answer、route、strategy、sources、is_mock、trace |
+| `error` | `{"code":50401,"message":"请求超时，请稍后再试","request_id":"UUID"}` |
+
+等待事件期间每 10 秒发送 `: ping` 注释行和空行；心跳不算 delta，也不增加对话内容。error 沿用 42901（本服务限流）、50302（容量/上游繁忙）、50401（超时）、50201（LLM 失败）、50301（依赖不可用）等原错误码与文案。缓存、FAQ、敏感/低分拒答发送单个 delta 后 done；生成确认只有 NO_ANSWER（或流结束时仅有其残缺真前缀）时，先发送单个 delta，内容为现有拒答文案，再发送 route=fallback 的 done；只拼接 delta 的客户端也能得到完整拒答。NO_ANSWER 匹配先做全角转半角归一化，流式与非流式一致，正文的其它全角字形与标点保持原样。可能被拆开的标记前缀先缓冲，流结束仍为真前缀时丢弃；夹在正文中的完整标记也在转发前移除。
+
+前端以 done.answer 为最终结果，覆盖暂态文本；done 前 `[n]` 按普通文字显示，done 后按 sources 启用引用、来源卡片、路由标签与客户端发送至 done 的耗时。sources 仍只保留有效被引用资料，无有效引用时保留最高分一条；trace 仅请求 debug=true 且 ALLOW_TRACE=true 返回。正常结束记录最终问答；业务失败记录 error 行。客户端断开时取消仍向上传播，并以 shield 独立写入一条 route=error 的记录，answer 为已生成的部分文本或空，写入失败仅记录固定警告，不能吞掉或替代取消。produce 异常退出且尚未入队终态时，consumer 补发 code=50001、message=内部错误的 error 事件；在线连接上的流始终以 done 或 error 结束。原文只进入 chat_log，应用日志仅记路由、阶段、耗时和脱敏诊断。
+
+路由和生成共用 REQUEST_TIMEOUT_S=40 的截止时间、模型线程池等待队列与 LLM 并发信号量。首内容 token 前沿用 LLM_TIMEOUT_S=12；新增 `LLM_STREAM_IDLE_TIMEOUT_S=20` 控制相邻 content 增量的空闲秒数，reasoning/供应商心跳不延长该时间。首内容前网络、超时、429、5xx 按现有各自计数重试并检查剩余预算；捕获 TimeoutError 后还检查整请求 deadline 与 timeout scope，预算已到期立即返回 50401，绝不计算退避或开始重试；已经转发内容后不重试，发送 error 并结束。断开会取消上游 HTTP 流、释放信号量并撤销未开始的模型线程池等待；已经运行的同步模型线程仍须等其自然结束才能释放执行名额。
+
+前端 `VITE_STREAM=1` 为默认值，`=0` 只用原 JSON 接口。使用 fetch + ReadableStream 解析 SSE，支持 UTF-8 跨块、CRLF、多行 data 与注释。首个事件前保持 60 秒 AbortController 超时，收到事件后每次事件重置 30 秒空闲超时；注释和未知事件不作为业务事件续期，未知事件也不禁用兜底。error 的 request_id 可省略，前端保留原 code，缺省时沿用已收到 meta 的 request_id。reader 的 cancel/releaseLock 清理失败不会覆盖结果、错误或阻断兜底。首事件前网络错误、404/405 或非 SSE Content-Type 自动回退一次非流式请求；一旦收到合法的 meta/status/delta/done/error 事件，任何后续错误/提前 EOF 都显示错误气泡并可重试，避免自动重复回答。超时与主动取消不触发兜底。VITE_MOCK=1 同样模拟 status，并按 Unicode 字符每 30–60ms 发送增量，不访问后端。
+
+新增 `CLIENT_IP_HEADER=x-forwarded-for`（默认）或 `cf-connecting-ip`。必须同时满足 `TRUST_PROXY_HEADERS=true` 和 socket 对端 request.client.host 位于 `TRUSTED_PROXIES` 才读取所选头；X-Forwarded-For 取首个字段并校验地址格式，CF-Connecting-IP 必须是单个 IP。缺失、空白、非法地址回退 request.client.host，不再改读其他请求头。**只有后端仅监听 127.0.0.1 且前面有可信代理时才能开启**，代理必须覆盖所选头；公网可直连后端时保持 false。用 Cloudflare 固定隧道时可配置 CLIENT_IP_HEADER=cf-connecting-ip，确保中间反向代理保留 Cloudflare 验证后的该头，禁止客户端绕过可信入口；建议用 `--no-proxy-headers` 禁用 Uvicorn 的自动头重写，由应用根据原始 socket 对端执行白名单校验，避免服务启动参数绕过本配置。
+
+新增 `TRUSTED_PROXIES`，默认 `["127.0.0.1", "::1"]`，可配置 IP 或 IPv4/IPv6 CIDR，环境变量使用 JSON 数组，如 `TRUSTED_PROXIES='["127.0.0.1","::1","10.8.0.0/24"]'`。空列表表示不信任任何代理；非法地址或网段在配置加载时拒绝。不要把公网直连者纳入白名单；后端部署仍只监听 `127.0.0.1`，例如 `uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers`。未知/不可信对端即使携带转发头也只使用 socket 地址。
+
+前端消息区使用 `aria-busy=true` 抑制生成中的增量播报，`aria-relevant` 仅为 additions；阶段提示不再使用独立 status live region。done/error 后新增完整回答或错误气泡，再解除 busy，避免逐字或重复播报。send（含重试）、reset 与卸载都会更新请求 epoch；所有迟到事件与结果在更新状态前再次核对代次，不能污染新对话。sessionStorage 只保留已完成的回合（含错误终态），恢复旧数据时删除末尾未获回复的 user 消息，不自动恢复加载态。
+
+Cloudflare 固定（named）隧道应转发到本机 HTTP 服务，前端静态页面与 `/api/` 尽量同源。若经 Nginx 反代，可在 API location 中配置：
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8010;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+    proxy_read_timeout 90s;
+    proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+}
+```
+
+上述透传 CF 头的站点入口必须只接受受信 Cloudflare 隧道流量；若直接接受公网访问，不能信任客户端提供的 CF 头。固定隧道 ingress 的 service 指向该本机 Web 服务（例如 `http://127.0.0.1:8080`），只提供 API 时可直接指向后端 8010。对 `/api/*` 禁用缓存、响应压缩和代理缓冲，保留 text/event-stream、Cache-Control 和 X-Accel-Buffering 头。10 秒心跳用于避免 Cloudflare/中间代理约 100 秒无数据断开，但不延长应用总预算；无需增大 Cloudflare 超时以替代后端预算。检查真实域名下首条 meta 是否立即到达以及增量是否逐条到达，不能只以最终收到整段答案判断流式正常。
+
+离线测试新增 `test_answer_stream.py`、`test_chat_stream.py`、`test_llm_stream.py` 和前端 `sse.test.ts`、`stream.test.ts`、`Stream.test.tsx`，使用假服务、异步生成器与 ReadableStream，不依赖真实 LLM/模型/Milvus。仍需本机运行完整 pytest、Vitest、tsc --noEmit、build，并验证真实供应商、浏览器和固定隧道；本轮没有联网或运行 npm/真实服务。
+
+本轮 SSE 审核补充测试：取消时 shield 写入与失败后的取消传播、生产者异常终态、已到期预算不退避、半/全角标记与残缺前缀、可信代理 IP/CIDR，以及前端未知事件、可选 request_id、reader 清理失败、epoch 隔离、仅保存完整回合和无逐字播报。测试仍使用本地替身；完整 pytest、Vitest、tsc 与 build 留待本机执行。
