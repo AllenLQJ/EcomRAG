@@ -48,6 +48,17 @@ def test_general_route():
     services.retrieve.assert_not_called()
 
 
+@pytest.mark.parametrize("speculative", [False, True])
+def test_configured_top_k_reaches_sequential_and_speculative_retrieval(speculative):
+    services = FakeServices().knowledge()
+    services.rerank_candidates = AsyncMock(return_value=[document()])
+    assert run(services, speculative_retrieval=speculative, rerank_top_k=3).route == "rag"
+    if speculative:
+        services.rerank_candidates.assert_awaited_once_with("原问题", [document()], top_k=3)
+    else:
+        services.retrieve.assert_called_once_with(["改写后的检索问题"], rerank_query="原问题", top_k=3)
+
+
 @pytest.mark.parametrize("cited,indices", [({2}, [2]), (set(), [1, 2])])
 def test_rag_sources_preserve_original_indices(cited, indices):
     services = FakeServices().knowledge()

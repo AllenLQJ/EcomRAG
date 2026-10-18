@@ -106,3 +106,35 @@ class ChatLogQueueTests(unittest.TestCase):
         asyncio.run(run())
         self.assertEqual(len(connection.calls), 1)
         self.assertTrue(connection.closed)
+
+    def test_shutdown_abandon_skips_current_row_after_connect_or_ping_returns(self):
+        for stage in ("connect", "ping"):
+            with self.subTest(stage=stage):
+                entered, release = threading.Event(), threading.Event()
+                connection = FakeConnection()
+                def blocked():
+                    entered.set()
+                    if not release.wait(2):
+                        raise RuntimeError("test must release worker")
+                    return connection
+                factory = blocked if stage == "connect" else lambda: connection
+                writer = ChatLogWriter(config(), connection_factory=factory)
+                async def run():
+                    try:
+                        if stage == "ping":
+                            await writer.ensure_schema()
+                            connection.ping = lambda **kwargs: blocked()
+                        self.assertTrue(await writer.write(row(0)))
+                        self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                        self.assertTrue(await writer.write(row(1)))
+                        with self.assertLogs("app.chat_log", "WARNING") as logs:
+                            await writer.aclose(timeout=0.01)
+                        self.assertNotIn("PRIVATE", "".join(logs.output))
+                        self.assertEqual(writer.queue.qsize(), 0)
+                    finally:
+                        release.set()
+                        await asyncio.to_thread(writer._thread.join, 1)
+                asyncio.run(run())
+                self.assertFalse(any(sql.startswith("INSERT") for sql, _ in connection.calls))
+                self.assertEqual(writer.queue.unfinished_tasks, 0)
+                self.assertTrue(connection.closed)

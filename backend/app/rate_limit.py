@@ -1,11 +1,11 @@
 """IP、session 分别按固定分钟/自然日窗口计数；Redis 故障退化为本进程。"""
-import asyncio
 import hashlib
 import threading
 import time
 from collections import OrderedDict
 
 from app.contracts import AppError, RATE_LIMITED
+from app.executor import BoundedExecutor
 from app.faq.cache import FaqCache
 
 
@@ -18,6 +18,8 @@ class RateLimiter:
         self._counts = OrderedDict()
         self.capacity = capacity
         self._lock = threading.Lock()
+        self._executor = BoundedExecutor(settings.rate_limit_io_workers, settings.rate_limit_io_max_in_flight,
+                                         name="rate-limit-io")
 
     def check(self, ip, session_id):
         now = self.clock()
@@ -59,11 +61,13 @@ class RateLimiter:
             raise AppError(RATE_LIMITED, 429, "提问有点快，休息一分钟再问吧")
 
     async def check_async(self, ip, session_id):
-        await asyncio.to_thread(self.check, ip, session_id)
+        await self._executor.run(self.check, ip, session_id)
 
     async def aclose(self):
-        if self.cache.client is not None:
-            await asyncio.to_thread(self.cache.client.close)
+        def close():
+            if self.cache.client is not None:
+                self.cache.client.close()
+        await self._executor.aclose(close)
 
 
 def client_ip(request, settings):

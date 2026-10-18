@@ -110,7 +110,8 @@ class LLMClient:
                                 exception_type="AppError", **context)
         # 核心调用参数优先，避免供应商扩展覆盖模型、问题或配置的 token 上限。
         payload = {**self.settings.llm_extra_body,
-                   "model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+                   "model": model, "messages": messages, "temperature": temperature,
+                   "max_tokens": max_tokens, "stream": False}
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         logger.info("llm_request extra_body_keys=%s",

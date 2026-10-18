@@ -120,6 +120,17 @@ def test_extra_body_is_merged_but_only_top_level_keys_are_logged(caplog):
     assert EXTRA_VALUE not in repr(configured)
 
 
+@pytest.mark.parametrize("stream", [True, "true", "True"])
+def test_extra_body_cannot_enable_streaming(stream, caplog):
+    configured = settings(llm_extra_body={"stream": stream})
+    def handler(request):
+        assert json.loads(request.content)["stream"] is False
+        return httpx.Response(200, json=response(ANSWER))
+    assert asyncio.run(complete(None, configured=configured, handler=handler)) == ANSWER
+    assert configured.llm_extra_body == {"stream": stream}
+    assert all(value not in caplog.text for value in (ANSWER, QUESTION, KEY))
+
+
 @pytest.mark.parametrize("raw", ["{broken", "[]", "null", '"string"', '""', "true", '{"value":NaN}'])
 def test_invalid_extra_body_has_clear_config_error_without_values(raw):
     with pytest.raises(ValidationError, match="LLM_EXTRA_BODY"):

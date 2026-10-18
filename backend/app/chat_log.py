@@ -138,10 +138,14 @@ class ChatLogWriter:
                     continue
                 success = False
                 try:
+                    if self._abandon.is_set():
+                        continue
                     if connection is None:
                         connection = self.connection_factory()
                     elif callable(getattr(connection, "ping", None)):
                         connection.ping(reconnect=True)
+                    if self._abandon.is_set():
+                        continue
                     if kind == "schema":
                         ensure_chat_logs_schema(connection)
                     else:

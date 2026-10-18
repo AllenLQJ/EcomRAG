@@ -1,11 +1,11 @@
 import asyncio
 import inspect
 import logging
-from contextvars import copy_context
 from time import perf_counter
 from uuid import uuid4
 
 from app.contracts import AppError, TIMEOUT
+from app.executor import BoundedExecutor
 from app.llm.strategies import build_queries
 from app.schemas import ChatRequest, ChatResponse, Source
 from app.services import dependency_error, unavailable
@@ -18,7 +18,7 @@ REFUSAL = "抱歉，店铺资料里没有找到相关说明。为避免给你不
 SENSITIVE_REFUSAL = "抱歉，这类问题我无法回答。涉及他人隐私、医疗效果或超出店铺规则的内容，建议联系人工客服。"
 
 
-async def call(function, *args, **kwargs):
+async def call(function, *args, executor, **kwargs):
     if inspect.iscoroutinefunction(function):
         return await function(*args, **kwargs)
     # 工作线程只写自己的列表；成功 await 后在事件循环内交接，超时/取消时直接丢弃。
@@ -29,7 +29,7 @@ async def call(function, *args, **kwargs):
             return function(*args, **kwargs)
         finally:
             items.reset(token)
-    result = await asyncio.get_running_loop().run_in_executor(None, copy_context().run, invoke)
+    result = await executor.run(invoke)
     if target is not None:
         target.extend(worker_trace)
     return result
@@ -51,17 +51,17 @@ def discard(task):
         task.cancel()
 
 
-async def retrieve(services, queries, question, trace, *, split=False):
+async def retrieve(services, queries, question, trace, *, executor, top_k, split=False):
     started = perf_counter()
     try:
         if split:
-            candidates = await call(services.retrieve_candidates, queries)
+            candidates = await call(services.retrieve_candidates, queries, executor=executor)
             if not any(item.stage == "retrieve" for item in trace):
                 record("retrieve", started, candidates=len(candidates))
             started = perf_counter()
-            docs = await call(services.rerank_candidates, question, candidates, top_k=5)
+            docs = await call(services.rerank_candidates, question, candidates, top_k=top_k, executor=executor)
         else:
-            docs = await call(services.retrieve, queries, rerank_query=question, top_k=5)
+            docs = await call(services.retrieve, queries, rerank_query=question, top_k=top_k, executor=executor)
         if not any(item.stage == "retrieve" for item in trace):
             record("retrieve", started, candidates=len(docs))
         if not any(item.stage == "rerank" for item in trace):
@@ -73,10 +73,10 @@ async def retrieve(services, queries, question, trace, *, split=False):
         raise
 
 
-async def speculate(services, question, trace):
+async def speculate(services, question, trace, *, executor, top_k):
     token = items.set(trace)
     try:
-        return await retrieve(services, [question], question, trace, split=True)
+        return await retrieve(services, [question], question, trace, split=True, executor=executor, top_k=top_k)
     finally:
         items.reset(token)
 
@@ -86,12 +86,17 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
     trace = [] if trace_sink is None else trace_sink
     token = items.set(trace)
     started, result = perf_counter(), None
+    executor = getattr(services, "model_executor", None)
+    owns_executor = executor is None
+    if owns_executor:
+        # 注入的同步服务也使用独立线程池；真实服务的池由 Services 持有并跨请求共享。
+        executor = BoundedExecutor(settings.model_io_workers, settings.model_io_max_in_flight, name="model-io")
     try:
         async with request_budget(settings.request_timeout_s):
             if before_chat is not None:
                 await before_chat()
             result = await _run(chat, request_id or str(uuid4()), settings, services, trace,
-                                [] if history is None else history)
+                                [] if history is None else history, executor)
             return result
     except TimeoutError:
         raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
@@ -100,9 +105,11 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
         if result is not None and chat.debug and settings.allow_trace:
             result.trace = list(trace)
         items.reset(token)
+        if owns_executor:
+            executor.shutdown()
 
 
-async def _run(chat, request_id, settings, services, trace, history):
+async def _run(chat, request_id, settings, services, trace, history, executor):
     def response(answer, route, sources=(), strategy=None):
         return ChatResponse(request_id=request_id, session_id=chat.session_id,
                             answer=answer, route=route, strategy=strategy, sources=list(sources),
@@ -110,7 +117,7 @@ async def _run(chat, request_id, settings, services, trace, history):
 
     started = perf_counter()
     try:
-        hit = await call(services.faq_lookup, chat.message)
+        hit = await call(services.faq_lookup, chat.message, executor=executor)
     except Exception as exc:
         if dependency_error(exc):
             raise unavailable() from None
@@ -126,7 +133,8 @@ async def _run(chat, request_id, settings, services, trace, history):
                         title=hit.question, snippet=hit.answer[:60], score=hit.score)])
     speculative, speculative_trace = None, []
     if settings.speculative_retrieval and not history:
-        speculative = asyncio.create_task(speculate(services, chat.message, speculative_trace))
+        speculative = asyncio.create_task(speculate(services, chat.message, speculative_trace,
+                                                    executor=executor, top_k=settings.rerank_top_k))
     try:
         started = perf_counter()
         decision = await services.route(chat.message, history)
@@ -152,7 +160,8 @@ async def _run(chat, request_id, settings, services, trace, history):
             # 只有完整成功的任务才能交接；私有列表与其中对象不再被主流程共享。
             trace.extend(item.model_copy(update={"speculative": True}) for item in tuple(speculative_trace))
         else:
-            docs = await retrieve(services, build_queries(decision, chat.message), chat.message, trace)
+            docs = await retrieve(services, build_queries(decision, chat.message), chat.message, trace,
+                                  executor=executor, top_k=settings.rerank_top_k)
     finally:
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:

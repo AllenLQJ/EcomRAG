@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     allow_trace: bool = False
     trust_proxy_headers: bool = False
     request_timeout_s: float = Field(default=40, gt=0)
+    model_io_workers: int = Field(default=1, gt=0)
+    model_io_max_in_flight: int = 1
+    rate_limit_io_workers: int = Field(default=2, gt=0)
+    rate_limit_io_max_in_flight: int = Field(default=16, gt=0)
     rate_limit_per_min: int = Field(default=10, gt=0)
     rate_limit_per_day: int = Field(default=200, gt=0)
     health_timeout_s: float = Field(default=1, gt=0)
@@ -82,6 +86,18 @@ class Settings(BaseSettings):
     chat_log_enabled: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     debug: bool = False
+
+    @model_validator(mode="after")
+    def validate_model_io_capacity(self):
+        if not 1 <= self.model_io_max_in_flight <= self.model_io_workers:
+            raise ValueError("MODEL_IO_MAX_IN_FLIGHT 必须至少为 1，且不得大于 MODEL_IO_WORKERS")
+        return self
+
+    @model_validator(mode="after")
+    def validate_chunk_overlap(self):
+        if self.child_chunk_overlap >= self.child_chunk_size - 1:
+            raise ValueError("CHILD_CHUNK_OVERLAP 必须小于 CHILD_CHUNK_SIZE - 1，需为标题前缀预留空间")
+        return self
 
     @model_validator(mode="after")
     def apply_legacy_llm_names(self):

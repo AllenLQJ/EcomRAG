@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -129,6 +131,32 @@ def test_local_counter_is_atomic_and_instances_are_isolated():
         assert sum(pool.map(check, range(30))) == 5
     fresh, _ = limiter(minute=1)
     fresh.check("ip", "s")
+
+
+def test_cancelled_rate_limit_work_keeps_its_configured_capacity():
+    async def run():
+        settings = Settings(_env_file=None, rate_limit_io_workers=1, rate_limit_io_max_in_flight=1)
+        instance = RateLimiter(settings)
+        loop = asyncio.get_running_loop()
+        entered, release = asyncio.Event(), threading.Event()
+        def blocked(*args):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+        instance.check = blocked
+        task = asyncio.create_task(instance.check_async("ip", "session"))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            with pytest.raises(AppError) as caught:
+                await asyncio.wait_for(instance.check_async("other", "other"), 0.5)
+            assert (caught.value.code, caught.value.http_status) == (50302, 503)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+            await instance.aclose()
+    asyncio.run(run())
 
 
 def test_local_capacity_lru_eviction_and_expired_windows():

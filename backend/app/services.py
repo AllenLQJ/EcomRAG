@@ -1,10 +1,10 @@
 """应用持有服务生命周期；导入及构造不加载模型，不读取配置文件。"""
-import asyncio
 import threading
 import logging
 from functools import lru_cache
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE
+from app.executor import BoundedExecutor
 from app.faq.cache import FaqCache
 from app.faq.repo import FaqRepo
 from app.faq.service import FaqService
@@ -65,6 +65,8 @@ class Services:
         self.llm = LLMClient(settings, transport=transport)
         self.router = Router(self.llm, settings.router_model, max_tokens=settings.router_max_tokens)
         self.generator = Generator(self.llm, settings.generate_model, max_tokens=settings.generate_max_tokens)
+        self.model_executor = BoundedExecutor(settings.model_io_workers, settings.model_io_max_in_flight,
+                                              name="model-io")
 
     def _initialize(self):
         if self.faq is None:
@@ -81,7 +83,7 @@ class Services:
 
     async def warmup(self):
         try:
-            await asyncio.to_thread(self._warmup)
+            await self.model_executor.run(self._warmup)
         except Exception as exc:
             if dependency_error(exc):
                 raise unavailable() from None
@@ -92,17 +94,19 @@ class Services:
             self._initialize()
             return self.faq.faq_lookup(question)
 
-    def retrieve(self, queries, rerank_query, top_k=5):
+    def retrieve(self, queries, rerank_query, top_k=None):
         with self._model_lock:
-            return self.retriever.retrieve(queries, rerank_query, top_k=top_k)
+            return self.retriever.retrieve(queries, rerank_query,
+                                          top_k=self.settings.rerank_top_k if top_k is None else top_k)
 
     def retrieve_candidates(self, queries):
         with self._model_lock:
             return self.retriever.retrieve_candidates(queries)
 
-    def rerank_candidates(self, rerank_query, candidates, top_k=5):
+    def rerank_candidates(self, rerank_query, candidates, top_k=None):
         with self._model_lock:
-            return self.retriever.rerank_candidates(rerank_query, candidates, top_k)
+            return self.retriever.rerank_candidates(
+                rerank_query, candidates, self.settings.rerank_top_k if top_k is None else top_k)
 
     async def route(self, question, history):
         return await self.router.route(question, history)
@@ -122,4 +126,4 @@ class Services:
                     self.cache.client.close()
                 if self.retriever.client is not None:
                     self.retriever.client.close()
-        await asyncio.to_thread(close)
+        await self.model_executor.aclose(close)

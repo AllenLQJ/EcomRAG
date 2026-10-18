@@ -93,6 +93,19 @@ class RetrievalTests(unittest.TestCase):
         retriever, _, _ = self.build([[hit("a", 0.03), hit("b", 0.02), hit("c", 0.01)]], limit=1)
         self.assertEqual(len(retriever.retrieve(["问题"], "原始问题", top_k=5)), 3)
 
+    def test_top_k_above_candidate_count_keeps_all_candidates_in_both_paths(self):
+        for enabled in (False, True):
+            with self.subTest(rerank_enabled=enabled):
+                retriever, client, _ = self.build([[hit("a", 0.03), hit("b", 0.02)]], enabled=enabled)
+                candidates = retriever.retrieve_candidates(["问题"])
+                docs = retriever.rerank_candidates("原始问题", candidates, top_k=99)
+                expected = ["b", "a"] if enabled else ["a", "b"]
+                self.assertEqual([doc.parent_id for doc in docs], expected)
+                self.assertEqual(len(docs), len(candidates))
+                retriever, _, _ = self.build([[hit("a", 0.03), hit("b", 0.02)]], enabled=enabled)
+                self.assertEqual([doc.parent_id for doc in retriever.retrieve(["问题"], "原始问题", top_k=99)],
+                                 expected)
+
     def test_split_retrieval_preserves_dedup_and_only_truncates_rerank_inputs(self):
         retriever, client, reranker = self.build([[hit("a", 0.03), hit("b", 0.02), hit("a", 0.01)]], enabled=True)
         retriever.rerank_max_chars = 3

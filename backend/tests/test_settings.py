@@ -141,13 +141,43 @@ def test_performance_config_defaults_and_zero_char_limit():
     assert settings.rerank_text_mode == "child" and settings.rerank_fp16 is False
     assert settings.generate_max_tokens == 600
     assert settings.llm_max_retries == 1 and settings.llm_retry_backoff_s == 0.5
+    assert settings.model_io_workers == 1 and settings.model_io_max_in_flight == 1
+    assert settings.rate_limit_io_workers == 2 and settings.rate_limit_io_max_in_flight == 16
+    assert settings.child_chunk_size == 300 and settings.child_chunk_overlap == 50
 
 
 @pytest.mark.parametrize("field,value", [("rerank_candidates", 0), ("rerank_max_length", 0),
                                         ("rerank_batch_size", 0), ("rerank_max_chars", -1),
                                         ("rerank_text_mode", "invalid"), ("llm_max_retries", -1),
-                                        ("llm_retry_backoff_s", -0.1)])
+                                        ("llm_retry_backoff_s", -0.1), ("rerank_top_k", 0), ("rerank_top_k", -1),
+                                        ("model_io_workers", 0), ("model_io_max_in_flight", 0),
+                                        ("rate_limit_io_workers", 0), ("rate_limit_io_max_in_flight", 0)])
 def test_performance_config_rejects_invalid_limits(field, value):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **{field: value})
+
+
+@pytest.mark.parametrize("workers,capacity", [(1, 0), (1, -1), (1, 2), (2, 3)])
+def test_model_capacity_must_be_positive_and_not_exceed_workers(workers, capacity):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="MODEL_IO_MAX_IN_FLIGHT.*MODEL_IO_WORKERS"):
+        Settings(_env_file=None, model_io_workers=workers, model_io_max_in_flight=capacity)
+
+
+@pytest.mark.parametrize("workers,capacity", [(1, 1), (2, 1), (2, 2)])
+def test_model_capacity_valid_boundaries(workers, capacity):
+    settings = Settings(_env_file=None, model_io_workers=workers, model_io_max_in_flight=capacity)
+    assert settings.model_io_workers == workers and settings.model_io_max_in_flight == capacity
+
+
+@pytest.mark.parametrize("size,overlap", [(50, 50), (49, 50), (50, 49), (300, 299), (1, 0)])
+def test_chunk_overlap_reserves_at_least_one_prefix_character(size, overlap):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="CHILD_CHUNK_OVERLAP"):
+        Settings(_env_file=None, child_chunk_size=size, child_chunk_overlap=overlap)
+
+
+@pytest.mark.parametrize("size,overlap", [(50, 0), (50, 48), (300, 298), (300, 50), (2, 0)])
+def test_valid_chunk_overlap_boundaries(size, overlap):
+    assert Settings(_env_file=None, child_chunk_size=size, child_chunk_overlap=overlap).child_chunk_overlap == overlap

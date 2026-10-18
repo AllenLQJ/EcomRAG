@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.exceptions import HTTPException
 
-from app.contracts import AppError, DEPENDENCY_UNAVAILABLE
+from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, SERVICE_BUSY
 
 
 def test_health_structure_when_dependencies_are_down(client):
@@ -71,18 +71,38 @@ def test_blank_session_id(client, session_id):
     }
 
 
-def test_app_error_handler(app, client):
+@pytest.mark.parametrize("code,message", [(DEPENDENCY_UNAVAILABLE, "依赖不可用"),
+                                         (SERVICE_BUSY, "服务有点忙，请稍后再试")])
+def test_app_error_handler(app, client, code, message):
     @app.get("/test-app-error")
     async def fail():
-        raise AppError(DEPENDENCY_UNAVAILABLE, 503, "依赖不可用")
+        raise AppError(code, 503, message)
 
     response = client.get("/test-app-error")
     assert response.status_code == 503
     assert response.json() == {
-        "code": 50301,
-        "message": "依赖不可用",
+        "code": code,
+        "message": message,
         "request_id": response.headers["X-Request-ID"],
     }
+
+
+@pytest.mark.parametrize("stage", ["model", "rate_limit"])
+def test_busy_chat_preserves_code_message_and_request_id(app, client, stage, caplog):
+    error = AppError(SERVICE_BUSY, 503, "服务有点忙，请稍后再试")
+    if stage == "model":
+        app.state.services.faq_lookup.side_effect = error
+    else:
+        async def busy(*args):
+            raise error
+        app.state.rate_limiter.check_async = busy
+    response = client.post("/api/v1/chat", json={
+        "session_id": "busy", "message": "PRIVATE_QUESTION PRIVATE_ANSWER PRIVATE_KEY"})
+    assert response.status_code == 503
+    assert response.json() == {"code": 50302, "message": "服务有点忙，请稍后再试",
+                               "request_id": response.headers["X-Request-ID"]}
+    app.state.services.route.assert_not_awaited()
+    assert "PRIVATE_" not in response.text + caplog.text
 
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
