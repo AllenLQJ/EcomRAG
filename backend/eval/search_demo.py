@@ -18,10 +18,13 @@ def main(argv=None, *, settings=None) -> int:
 
         settings = get_settings()
     embedder = BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size)
-    reranker = BgeReranker(resolve_data_path(settings.reranker_path))
+    reranker = BgeReranker(resolve_data_path(settings.reranker_path),
+                           max_length=settings.rerank_max_length, batch_size=settings.rerank_batch_size,
+                           fp16=settings.rerank_fp16)
     retriever = Retriever(None, embedder, reranker, uri=settings.milvus_uri,
                           timeout_s=settings.milvus_timeout_s,
-                          rerank_candidates=settings.rerank_candidates)
+                          rerank_candidates=settings.rerank_candidates, rerank_max_chars=settings.rerank_max_chars,
+                          rerank_text_mode=settings.rerank_text_mode)
     try:
         for enabled in (False, True):
             retriever.rerank_enabled = enabled

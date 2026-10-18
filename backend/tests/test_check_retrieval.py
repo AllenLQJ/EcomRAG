@@ -4,6 +4,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from eval.check_retrieval import evaluate, print_report
 
@@ -61,7 +62,8 @@ class RetrievalCheckTests(unittest.TestCase):
         self.assertIn("0.500000 >= 0.5", text)
         self.assertIn("0.894000 >= 0.5", text)
         self.assertIn("实测 RAG 最低 0.894、拒答类最高 0.261", text)
-        self.assertIn("0.5 位于两者之间；样本小，该阈值在阶段 4 用 eval.jsonl 校准", text)
+        self.assertIn("重排输入或精度改变会改变分数分布", text)
+        self.assertIn("重新校准阈值", text)
         self.assertIn("是否会被拒答=是", text)
         self.assertIn("是否会被拒答=否", text)
 
@@ -89,7 +91,36 @@ class RetrievalCheckTests(unittest.TestCase):
         report = evaluate(rows, retriever, refuse_threshold=0.5)
         self.assertEqual(report["rag_total"], 8)
         self.assertEqual((report["hit_at_5"], report["hit_at_1"]), (1.0, 1.0))
-        self.assertEqual(len(report["fallback"]), 3)
-        self.assertEqual([item["top_score"] for item in report["fallback"]], [0.0015, 0.261, 0.229])
+        self.assertEqual(len(report["fallback"]), 5)
+        self.assertEqual([item["top_score"] for item in report["fallback"]], [0.0015, 0.261, 0.229, 0.0, 0.0])
         self.assertTrue(all(item["refused"] for item in report["fallback"]))
-        self.assertEqual(len(retriever.calls), 11)
+        self.assertEqual(len(retriever.calls), 13)
+
+    def test_split_mode_comparison_measures_only_rerank_and_summarizes_each_mode(self):
+        rows = [dict(question="商品", expected_route="rag", expected_doc="product.md"),
+                dict(question="不支持", expected_route="fallback", expected_doc=None)]
+        class SplitFake:
+            candidate_limit = 6
+            def __init__(self, mode):
+                self.rerank_text_mode = mode
+                self.calls = []
+            def retrieve_candidates(self, queries):
+                self.calls.append(("retrieve", queries))
+                return queries
+            def rerank_candidates(self, question, candidates, top_k):
+                self.calls.append(("rerank", question, candidates, top_k))
+                if question == "不支持":
+                    return [doc("irrelevant.md", 0.2)]
+                expected = doc("product.md", 0.8)
+                return [expected] if self.rerank_text_mode == "child" else [doc("other.md", 0.9), expected]
+        for mode, hit1, rank in (("child", 1, 1), ("parent", 0, 2)):
+            retriever = SplitFake(mode)
+            with patch("eval.check_retrieval.perf_counter", side_effect=[0, 0.002, 1, 1.004]):
+                report = evaluate(rows, retriever, refuse_threshold=0.5)
+            self.assertEqual((report["text_mode"], report["candidates"]), (mode, 6))
+            self.assertEqual((report["hit_at_1"], report["hit_at_5"]), (hit1, 1))
+            self.assertEqual((report["rag"][0]["rank"], report["rag"][0]["score"]), (rank, 0.8))
+            self.assertAlmostEqual(report["rag"][0]["rerank_ms"], 2)
+            self.assertAlmostEqual(report["fallback"][0]["rerank_ms"], 4)
+            self.assertEqual(report["fallback"][0]["top_score"], 0.2)
+            self.assertEqual([call[0] for call in retriever.calls], ["retrieve", "rerank"] * 2)

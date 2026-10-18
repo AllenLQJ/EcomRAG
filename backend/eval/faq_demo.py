@@ -12,7 +12,7 @@ from ingest.loaders import resolve_data_path
 
 
 def main(argv=None, *, settings=None) -> int:
-    parser = argparse.ArgumentParser(description="显示 FAQ 命中结果、来源与 top_score")
+    parser = argparse.ArgumentParser(description="显示 FAQ 命中结果；默认阈值 0.9，实测误命中最高 0.885，阶段 4 校准")
     parser.add_argument("question")
     args = parser.parse_args(argv)
     if settings is None:
@@ -29,6 +29,7 @@ def main(argv=None, *, settings=None) -> int:
         hit = service.faq_lookup(args.question)
         print(json.dumps({"result": hit.model_dump() if hit else None,
                           "source": hit.source if hit else None,
+                          "threshold": settings.faq_threshold,
                           "top_score": service.top_score}, ensure_ascii=False, indent=2))
     finally:
         if cache.client is not None:

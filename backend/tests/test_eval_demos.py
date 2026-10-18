@@ -34,13 +34,15 @@ class EvalDemoTests(unittest.TestCase):
                     patch.object(check_retrieval, "evaluate", return_value={}) as evaluate, \
                     patch.object(check_retrieval, "print_report") as report, \
                     contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(check_retrieval.main([], **({"settings": settings} if injected else {})), 0)
+                self.assertEqual(check_retrieval.main(["--rerank-text-mode", "parent"],
+                                                      **({"settings": settings} if injected else {})), 0)
             encoder.assert_called_once_with(resolve_data_path(settings.bge_m3_path), 7)
-            ranker.assert_called_once_with(resolve_data_path(settings.reranker_path))
+            ranker.assert_called_once_with(resolve_data_path(settings.reranker_path), max_length=512, batch_size=16, fp16=False)
             factory.assert_called_once_with(None, encoder.return_value, ranker.return_value,
                                             uri=settings.milvus_uri, timeout_s=3.5,
-                                            rerank_enabled=True, rerank_candidates=12)
-            self.assertEqual(len(evaluate.call_args.args[0]), 20)
+                                            rerank_enabled=True, rerank_candidates=12, rerank_max_chars=600,
+                                            rerank_text_mode="parent")
+            self.assertEqual(len(evaluate.call_args.args[0]), 24)
             self.assertIs(evaluate.call_args.args[1], factory.return_value)
             self.assertEqual(evaluate.call_args.kwargs, {"refuse_threshold": 0.6})
             report.assert_called_once_with({})
@@ -70,9 +72,10 @@ class EvalDemoTests(unittest.TestCase):
                         contextlib.redirect_stdout(output):
                     self.assertEqual(search_demo.main(["问题"], **({"settings": settings} if injected else {})), 0)
                 encoder.assert_called_once_with(resolve_data_path(settings.bge_m3_path), 7)
-                reranker.assert_called_once_with(resolve_data_path(settings.reranker_path))
+                reranker.assert_called_once_with(resolve_data_path(settings.reranker_path), max_length=512, batch_size=16, fp16=False)
                 factory.assert_called_once_with(None, encoder.return_value, reranker.return_value,
-                                                uri=settings.milvus_uri, timeout_s=3.5, rerank_candidates=12)
+                                                uri=settings.milvus_uri, timeout_s=3.5, rerank_candidates=12,
+                                                rerank_max_chars=600, rerank_text_mode="child")
                 self.assertEqual(seen_modes, [False, True])
                 self.assertEqual(retriever.retrieve.call_count, 2)
                 retriever.retrieve.assert_called_with(["问题"], "问题", top_k=5)
@@ -82,6 +85,25 @@ class EvalDemoTests(unittest.TestCase):
                 self.assertIn("片" * 60, output.getvalue())
                 self.assertNotIn("片" * 61, output.getvalue())
                 getter.assert_not_called() if injected else getter.assert_called_once_with()
+
+    def test_check_retrieval_defaults_to_both_modes_and_cli_overrides_candidates(self):
+        settings = self.settings()
+        with patch("app.retrieval.embedder.BgeM3Embedder"), patch("app.retrieval.reranker.BgeReranker"), \
+                patch("app.retrieval.retriever.Retriever") as factory, \
+                patch.object(check_retrieval, "evaluate", return_value={}) as evaluate, \
+                patch.object(check_retrieval, "print_report"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(check_retrieval.main(["--candidates", "6"], settings=settings), 0)
+        self.assertEqual([call.kwargs["rerank_text_mode"] for call in factory.call_args_list], ["child", "parent"])
+        self.assertEqual([call.kwargs["rerank_candidates"] for call in factory.call_args_list], [6, 6])
+        self.assertEqual(evaluate.call_count, 2)
+        self.assertEqual(factory.return_value.client.close.call_count, 2)
+
+    def test_check_retrieval_cli_rejects_invalid_candidates_or_mode_without_loading_settings(self):
+        for args in (["--candidates", "0"], ["--candidates", "-1"], ["--rerank-text-mode", "invalid"]):
+            with patch.object(config, "get_settings", side_effect=AssertionError("不得读取配置")), \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                check_retrieval.main(args)
+            self.assertEqual(caught.exception.code, 2)
 
     def test_faq_demo_uses_runtime_config_and_reports_hit_or_miss(self):
         settings = self.settings()

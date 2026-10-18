@@ -40,9 +40,10 @@ class SampleDataTests(unittest.TestCase):
 
     def test_eval_exact_coverage_and_document_references(self):
         rows = [json.loads(line) for line in (ROOT / "data/eval.jsonl").read_text(encoding="utf-8").splitlines()]
-        self.assertEqual(len(rows), 20)
+        self.assertEqual(len(rows), 24)
+        self.assertEqual(len({row["question"] for row in rows}), 24)
         self.assertEqual(Counter(row["expected_route"] for row in rows),
-                         {"faq": 6, "rag": 8, "general": 3, "fallback": 3})
+                         {"faq": 6, "rag": 8, "general": 5, "fallback": 5})
         with (ROOT / "data/faq.csv").open(encoding="utf-8", newline="") as handle:
             questions = {row["question"] for row in csv.DictReader(handle)}
         for row in rows:

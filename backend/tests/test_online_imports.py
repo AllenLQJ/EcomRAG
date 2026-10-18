@@ -24,6 +24,12 @@ import app.main, app.config, app.contracts, app.pipeline
 import app.faq.repo, app.faq.cache, app.faq.bm25, app.faq.service
 import app.retrieval.embedder, app.retrieval.store, app.retrieval.retriever, app.retrieval.reranker
 import eval.search_demo, eval.faq_demo, eval.check_retrieval
+import app.services, app.rate_limit, app.llm.client, app.llm.router, app.llm.generator
+import eval.chat_demo, eval.run_eval
+import eval.llm_ping, app.llm.diagnostics
+import eval.profile_rerank, eval.metrics
+import app.chat_log, app.logging_config
+import ingest.clear_cache, ingest.migrate_db, ingest.purge_chat_logs, eval.chat_logs_view
 print("imports OK")
 '''
         result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
