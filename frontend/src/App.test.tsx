@@ -89,7 +89,7 @@ describe('chat flow', () => {
     expect(screen.queryByRole('link', { name: '联系人工客服' })).not.toBeInTheDocument();
   });
 
-  it('shows mapped errors with a request ID; retry resends the same question and session', async () => {
+  it('hides the retained request ID; retry resends the same question and session', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ code: 42901, message: 'private detail', request_id: 'req-123' }, false))
       .mockResolvedValueOnce(json(result('怎么申请退货？')));
@@ -97,7 +97,8 @@ describe('chat flow', () => {
     render(<App />);
     const user = await ask('怎么申请退货？');
     expect(await screen.findByText('提问有点快，休息一分钟再问吧。')).toBeInTheDocument();
-    expect(screen.getByText('请求编号 req-123')).toBeInTheDocument();
+    expect(screen.queryByText(/请求编号|req-123/)).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toContain('req-123');
     await user.click(screen.getByRole('button', { name: '重试' }));
     await screen.findByRole('button', { name: '引用来源 1' });
     expect(fetchMock).toHaveBeenCalledTimes(2);

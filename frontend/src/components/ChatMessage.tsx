@@ -30,7 +30,6 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
       {message.kind === 'error' ? <div className="rounded-card border border-line bg-card p-4">
         <p className="text-sm leading-relaxed text-fallback-text">{errorMessage(message.code)}</p>
         <button type="button" disabled={pending} onClick={() => onRetry(message.question, message.id)} className="secondary-button mt-3 disabled:opacity-50">重试</button>
-        {message.requestId && <p className="mt-2 break-all text-xs text-muted">请求编号 {message.requestId}</p>}
       </div> : <>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <RouteBadge route={message.response.route} /><span>{formatSeconds(message.elapsedMs)}</span>

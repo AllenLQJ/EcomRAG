@@ -58,6 +58,8 @@ describe('API client', () => {
   });
 
   it('aborts at 60 seconds and maps the timeout to 50401', async () => {
+    expect(REQUEST_TIMEOUT_MS).toBe(60_000);
+    expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(40_000); // 后端默认整个请求预算为 40 秒。
     vi.useFakeTimers();
     const signals: AbortSignal[] = [];
     vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {

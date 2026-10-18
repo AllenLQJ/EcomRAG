@@ -28,7 +28,9 @@ export function traceSummary(item: Record<string, unknown>): string {
     .filter(([key, value]) => key !== 'stage' && key !== 'ms' && value !== null && value !== undefined)
     .map(([key, value]) => {
       let summary = typeof value === 'object' ? JSON.stringify(value) : String(value);
-      if (key === 'hit' || key === 'speculative') {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        summary = key === 'top_score' || !Number.isInteger(value) ? value.toFixed(2) : String(value);
+      } else if (key === 'hit' || key === 'speculative') {
         if (typeof value === 'boolean') summary = value ? '是' : '否';
       } else if (typeof value === 'string') {
         if (key === 'intent') summary = lookup(intents, value);
