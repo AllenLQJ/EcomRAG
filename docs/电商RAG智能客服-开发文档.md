@@ -17,13 +17,13 @@
 
 | 项 | 选择 | 说明 |
 | --- | --- | --- |
-| LLM | 通义千问 Qwen（阿里云国际站免费额度） | OpenAI 兼容协议，可换厂商 |
+| LLM | 智谱 glm-5.3-flash | OpenAI 兼容协议，可换厂商；始终思考，推荐 low 强度 |
 | 结构化存储 | MySQL 8 | 存 FAQ 与对话日志 |
 | 检索 | Milvus 混合检索 + bge-m3 + Reranker（默认开启） | `RERANK_ENABLED` 可关 |
 | 前端 | React + Vite + Tailwind 独立界面 | 视觉按 UI 设计稿实现 |
 | 开发与演示机 | 本机 M1，16 GB 内存 | 全部依赖用 arm64 镜像 |
 | 公网 | 海外 VPS（无需备案） | 见第 8 节 |
-| 样例数据 | 虚构店铺：15–20 份文档、30 条 FAQ、20 条测试题 | 用 LLM 生成并人工抽检 |
+| 样例数据 | 虚构店铺：18 份文档、34 条 FAQ、24 条测试题 | 政策与文档一致；见[联调修复与验收](联调修复与验收.md) |
 
 **标记约定**：【已确认】= 已拍板；【建议】= 默认做法，无异议即生效。
 
@@ -63,17 +63,59 @@ FastAPI · pipeline.py        校验、限流、request_id、编排
 | 向量库 | Milvus Standalone 2.4+（docker compose） | 已确认 | 稀疏向量与混合检索在 Standalone 上更稳；M1 用 arm64 镜像 |
 | Embedding | BAAI/bge-m3，稠密 1024 维 + 稀疏 | 已确认 | 本机用 MPS，VPS 用 CPU；开工前下载约 2.3 GB |
 | Reranker | BAAI/bge-reranker-v2-m3 | 已确认 | `RERANK_ENABLED=true`；候选 10 → 保留 5 |
-| LLM | 通义千问（阿里云国际站 Model Studio），OpenAI 兼容接口 | 已确认 | 路由用 qwen-flash 或 qwen-turbo，生成用 qwen-plus；模型名与免费额度以控制台为准 |
+| LLM | 智谱 glm-5.3-flash，OpenAI 兼容接口 | 已确认 | 路由和生成均显式配置该模型；开启思考，推荐 low；其他兼容模型按其文档配置 |
 | 结构化存储 | MySQL 8（docker，`faq_pairs`、`chat_logs`） | 已确认 | `faq/repo.py` 封装访问 |
 | 缓存 / 限流 | Redis 7，FAQ 答案 TTL 24h | 建议 | 连不上时跳过缓存，限流退化为进程内计数；已知限制：本地 LRU 淘汰会丢失对应计数 |
 | BM25 | rank_bm25 + jieba | 建议 | 启动时从 MySQL 加载到内存 |
-| FAQ 命中阈值 | bge-m3 余弦 ≥ 0.8 | 已确认 | 误命中风险高于 0.85，联调后用测试集复核 |
+| FAQ 命中阈值 | bge-m3 余弦 ≥ 0.9 | 已确认 | 联调后用测试集复核 |
 | 父块 / 子块 | 父块按标题切、上限 1200 字；子块 300 字、重叠 50 | 建议 | 子块前拼文档标题提升召回 |
 | 混合检索 | 稠密 Top20 + 稀疏 Top20，RRF k=60 | 建议 | 去重后交给 Reranker |
-| 拒答阈值 | rerank 最高分 < 0.3 走 fallback | 建议 | 联调后用测试集校准 |
-| 超时 | 单次 LLM 20s，整个请求 40s | 建议 | 超时返回 504 |
+| 拒答阈值 | rerank 最高分 < 0.2 走 fallback | 已实现 | 低分且改写规范化后不同、非空时追加一次重排；默认阈值依据 child 模式实测调整 |
+| 超时 | 单次 LLM 12s，整个请求 40s，前端 60s | 已实现 | 超时默认新连接重试一次；最终超时 HTTP 504 / 50401 |
 
-同步 IO 使用独立线程池：模型侧 `MODEL_IO_WORKERS=1`、`MODEL_IO_MAX_IN_FLIGHT=1`，启动时要求 `1 <= MODEL_IO_MAX_IN_FLIGHT <= MODEL_IO_WORKERS`；限流侧 `RATE_LIMIT_IO_WORKERS=2`、`RATE_LIMIT_IO_MAX_IN_FLIGHT=16`。在飞上限包含运行和排队任务，满载立即返回 HTTP 503 / 业务码 50302（服务有点忙，请稍后再试）；请求超时或取消后，名额保留到底层任务退出，尚未开始的任务跳过执行。模型调用仍受全局锁串行保护，调高线程数与在飞上限后，已准入任务仍可能等待模型锁直至超时。线程池收尾默认最多等待 5 秒，超时后放弃等待、取消排队任务并记录固定警告；运行中的线程无法强制停止，未开始的连接清理也会跳过。
+当前使用智谱 `glm-5.3-flash`。以下配置需由开发者在本机设置；代码保留原通用兼容地址和模型名的默认值，不会自动切换供应商：
+
+```dotenv
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+ROUTER_MODEL=glm-5.3-flash
+GENERATE_MODEL=glm-5.3-flash
+ROUTER_MAX_TOKENS=2048
+GENERATE_MAX_TOKENS=4096
+LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
+LLM_MAX_CONCURRENCY=2
+```
+
+该推理模型始终思考，不支持关闭思考，需开启并选择强度（推荐 `low`，也支持 `high`、`max`）。思考 token 计入 max_tokens；默认 `ROUTER_MAX_TOKENS=2048`、`GENERATE_MAX_TOKENS=4096` 为思考与最终答案共用配额，生成配置也用于通用对话。max_tokens 只是上限，不要求用满；单次实际 HTTP 调用耗时由 `LLM_TIMEOUT_S` 兜底，整请求仍受 `REQUEST_TIMEOUT_S` 约束。提示词仍约束简短回答。用户此前实测路由 1024、生成 2048 的配额下 8 个真实问题均成功，路由 2.3–6 秒、生成 2–7 秒；这些数据对应原配额，新的 2048/4096 配额仍需在本机回归。其他 OpenAI 兼容模型继续可用；非思考模型可省略 `LLM_EXTRA_BODY` 或按其文档设置，客户端不自动推测供应商参数。
+
+在 backend 目录执行 `python -m eval.llm_ping`，两个角色分别读取上述线上配额，复用相同 LLM_EXTRA_BODY、超时、并发及重试配置；探测文本仍是简单的「回复ok」，不等同于完整路由/生成质量评测。每项输出 max_tokens、finish_reason、reasoning_tokens、耗时 ms，缺失字段为 null；成功仅附回复长度，失败附脱敏诊断，不打印回复或思考原文。元数据随每次调用返回，避免并发共享最后一次响应造成串扰。
+
+当 finish_reason=length、最终 content 为空但有 reasoning_content/reasoning 时，仍返回通用 HTTP 502 / 50201，诊断 reason 为「思考消耗了全部输出配额，请调大 ROUTER_MAX_TOKENS/GENERATE_MAX_TOKENS，或在模型支持时降低思考强度」。没有推理字段时只提示提高配额；不将思考文本作为答案。上游 error_code=1210 时，诊断提示「该模型不支持关闭思考，请把 LLM_EXTRA_BODY 改为 {"thinking":{"type":"enabled","effort":"low"}}」；这是固定配置示例，不是请求参数值的回显。400 不自动重试，日志不记录问题、答案、推理原文或 key。
+
+LLM HTTP 并发默认 `LLM_MAX_CONCURRENCY=2`，路由和生成共享同一信号量；应与模型服务账号的并发上限一致，多 worker 部署时按 worker 数折算。例如账号总额度为 2，两个 worker 各设为 1；worker 数超过账号并发额度时应减少 worker 或另行使用跨进程协调，进程内信号量不能限制所有 worker 的总并发。等待信号量不计入 `LLM_TIMEOUT_S` 的单次尝试超时，但受 `REQUEST_TIMEOUT_S=40` 整请求预算约束。
+
+新增 `LLM_RATE_LIMIT_RETRIES=3`：上游 429 使用独立重试计数，默认退避 1、2、4 秒；有效的 `Retry-After` 秒数与退避取更大值，单次等待最多 8 秒。无效、负数或日期格式的头忽略，只使用指数退避。429 退避前关闭本次响应并释放信号量名额，下次尝试重新排队；不会占着名额等待。网络、5xx、超时继续共用 `LLM_MAX_RETRIES=1` 和从 `LLM_RETRY_BACKOFF_S=0.5` 秒开始的指数退避，普通退避仍持有名额；超时另受 `LLM_TIMEOUT_RETRIES=1` 限制并使用新连接池。429 不消耗或重置普通重试预算，一次 complete 最多为首次尝试加两类重试次数，但始终共用整请求截止时间；预算先耗尽时返回 HTTP 504 / 50401，不再重试。
+
+| 限流/忙碌来源 | 业务码 | HTTP 状态与文案 |
+| --- | --- | --- |
+| 本服务自身的 IP/session 限流 | 42901 | 429，提问有点快，休息一分钟再问吧 |
+| 上游 HTTP 429 重试耗尽 | 50302 | 503，服务有点忙，请稍后再试 |
+| 同步 IO 执行与等待容量已满 | 50302 | 503，服务有点忙，请稍后再试 |
+
+上游限流日志仍保留 `category=http_status`、`http_status=429`、脱敏 `error_code`（例如智谱的 1302）与重试序号，不记录供应商自由文本中的业务原文或 key。API 沿用 AppError 的统一错误结构，不把上游账号限流显示为本服务用户提问过快。
+
+`REFUSE_THRESHOLD` 默认由 0.5 调整为 0.2，依据 child 模式实测：应答类口语问题的低分约为 0.20–0.44，原阈值会误拒；应拒类最高约为 0.088。现有 eval 拒答类最高为 0.1396，且该题已被路由判为 sensitive。结合敏感路由和生成器 `NO_ANSWER` 兜底，采用 0.2 作为默认值；最高分严格低于阈值才拒答，等于 0.2 允许进入生成。显式环境配置仍优先于默认值；切换重排模式或精度后应重新评测。
+
+低分改写补充重排不再使用文本相似度门槛：对原问与 rewritten_query 去标点、空格并 casefold 后，只要不同且非空，就复用原候选追加一次重排，并按父块保留两次评分的较高值。即使只增加「店铺」两字也会触发；用户实测「支持哪些付款方式」从 0.083 提升到改写后的 0.688，文本相似度不足以判断评分是否会改善。规范化后完全相同、改写为空、重排关闭、原问已达阈值、可疑输入或无结果时仍跳过。在线 pipeline 与离线 `eval.check_retrieval` 共用 `needs_rewrite_rerank`；离线题目可附 rewritten_query 复现，未提供时默认原问、不增加重排或 LLM 调用。
+
+同步 IO 使用独立线程池。模型侧 `MODEL_IO_WORKERS=1`，新增 `MODEL_IO_QUEUE_SIZE=8`（除执行名额外的等待容量，可设为 0）、`MODEL_IO_QUEUE_TIMEOUT_S=20`（等待执行名额的秒数，必须大于 0）。默认同时接纳 1 个执行任务与 8 个等待任务，达到 workers + queue_size 才立即返回 HTTP 503 / 50302。等待队列是异步 FIFO，任务取得执行名额后才提交线程池，不阻塞事件循环、不向底层无界队列堆积任务。队列等待超时返回 HTTP 504 / 50401；整个请求仍受 `REQUEST_TIMEOUT_S=40` 限制。超时或取消的等待项立即移除、释放容量，其函数不再提交；已执行的同步任务不能强制停止，继续占执行名额直到真正结束。被丢弃的投机检索因此可能仍在运行，但下一请求可进入等待队列。
+
+`MODEL_IO_MAX_IN_FLIGHT` 仅保留为兼容旧配置的正整数，显式配置时记录固定弃用警告，不再参与模型容量计算；旧值 1 不会禁用新队列，也不再要求其小于等于 workers。应改用 workers 和 queue_size 两项。限流侧仍独立使用 `RATE_LIMIT_IO_WORKERS=2`、`RATE_LIMIT_IO_MAX_IN_FLIGHT=16`，保持原有满载立即拒绝、已提交任务取消后等底层退出才释放容量的语义。模型全局锁仍保证串行调用，提高 worker 数并不自动提高模型吞吐。线程池收尾最多等待 5 秒；关闭时唤醒并拒绝尚未提交的模型等待项，超时则记固定警告，放弃未完成线程及迟到清理。
+
+生成前上下文过滤由新增 `RAG_CONTEXT_MIN_SCORE=0.1` 控制（范围 0–1）：仅在重排开启时，保留最高分文档，并保留其他分数大于等于该值的文档；不改变 `REFUSE_THRESHOLD=0.2` 的拒答判定。关闭重排时不按分过滤 RRF 结果。过滤后按保留顺序从 1 重新编号，生成器的资料、有效引用和响应 sources 使用同一编号；之后仍按正文实际引用过滤来源，无有效引用时只保留最高分一条。
+
+生成器资料完全无法回答时只输出内部标记 `NO_ANSWER`；可部分回答时引用已知部分，并说明其余资料未提及。pipeline 对大小写、空白、外围标点容错：只有标记时返回现有 REFUSAL、route=fallback、sources=[]，仅记录 `reason=generator_no_answer`。标记夹在正常回答中时也会被移除；移除后只剩空白、标点、格式符或引用时同样拒答，标记不会作为生成答案发给用户。应用日志不记录原问题、答案、提示词或 key。
+
+新增 `data/eval_colloquial.jsonl` 共 32 题（23 条应答、6 条拒答/敏感、3 条闲聊）。在 backend 目录执行 `python -m eval.run_eval --eval-file data/eval_colloquial.jsonl --output logs/eval-colloquial.json`。`expected_route="answer"` 接受 faq/cache/rag，列表接受列出的任一路由；旧 cache 期望仍接受首次命中的 faq。`expected_doc` 可为空或省略，此时跳过引用命中统计；带参考文档且允许 rag 的失败行仍计入引用分母。终端和 JSON 分别提供「误拒答（应答却 fallback）」的 false_refusals 与「误答（应拒却回答）」的 false_answers 清单；错误单独汇总，不冒充误拒答。仅期望 fallback 却返回任何非拒答路由（包括 general）计为误答；列表允许 fallback 时不算误拒答。评测终端/文件按要求包含评测题和回答，不进入应用日志。需在本机运行原 24 题、口语 32 题及并发压测，核验实际质量、排队耗时、溢出 50302 和超时 50401；本次未运行真实依赖或完整 pytest。
 
 ## 3. MVP 功能与接口
 
@@ -84,9 +126,10 @@ P0 的判定标准只有一条：能用 curl 跑通「提问 → 缓存 / FAQ / 
 - `GET /health`（mysql / redis / milvus / llm 四项状态）与 `POST /api/v1/chat`（非流式）
 - C 端防滥用：按 IP 与 session 限流、提示词护栏、生产环境不返回 trace（见第 5 节）
 - Redis 精确缓存：只缓存 FAQ 命中结果，TTL 24h；Redis 连不上时自动跳过
-- FAQ：MySQL `faq_pairs` 启动时载入内存 → BM25 召回 Top5 → bge-m3 余弦 ≥ 0.8 判命中
+- FAQ：MySQL `faq_pairs` 启动时载入内存 → BM25 召回 Top5 → bge-m3 余弦 ≥ 0.9 判命中
 - LLM 路由（一次调用，结构化 JSON）：输出 `intent` 与 `rewritten_query`；解析失败默认 knowledge
 - RAG：direct 检索 → Milvus 混合检索（稠密 + 稀疏各 Top20，RRF k=60）→ 按 `parent_id` 去重 → Reranker 重排 → Top5 父块 → 带 [n] 引用生成
+- RAG 来源仅保留回答正文有效引用的编号，编号不重排；没有有效引用时仅保留最高分的一条。chat_log 与评测均使用过滤后的来源，评测导出保留原引用编号。超时、改写重排及本机验收步骤见[联调修复与验收](联调修复与验收.md)。
 - 拒答兜底：检索最高分低于阈值或上下文为空时，明确说「未找到」并建议转人工
 - 响应带 trace：每段的 stage、ms、hit / score
 - 离线入库脚本：MD / TXT / PDF / DOCX → 父子切块 → bge-m3 → Milvus upsert，可重复执行
@@ -99,7 +142,7 @@ P0 的判定标准只有一条：能用 curl 跑通「提问 → 缓存 / FAQ / 
 - 响应体：`request_id`、`session_id`、`answer`、`route`、`strategy`、`sources`、`is_mock`、`trace`
 - `route` 枚举：cache | faq | rag | general | fallback；P0 的 `strategy` 只会是 `direct` 或 `null`，枚举保留 direct | hyde | subquery | stepback 四个值以便扩展
 - `sources`：rag 时非空，`answer` 中的 [n] 对应 `index`；faq / cache 时给出命中的 FAQ 条目；general / fallback 为空数组
-- 错误结构：HTTP 状态码 + `{"code", "message", "request_id"}`；错误码 40001 参数非法、42901 限流、50001 内部错误、50201 LLM 调用失败、50301 Milvus / MySQL 不可用、50302 同步 IO 线程池满载（HTTP 503，服务有点忙，请稍后再试）、50401 超时
+- 错误结构：HTTP 状态码 + `{"code", "message", "request_id"}`；错误码 40001 参数非法、42901 仅本服务自身 IP/session 限流（HTTP 429）、50001 内部错误、50201 LLM 调用失败、50301 Milvus / MySQL 不可用、50302 同步 IO 线程池满载或上游模型持续限流（HTTP 503，服务有点忙，请稍后再试）、50401 超时
 - 可选字段 `user_id`（仅 chat_logs，可为空，请求体不加）：P0 不使用，为第 5 节的身份对接预留
 
 **模块边界**：`contracts.py` 定义模块间的函数签名（`retrieve` / `route` / `generate_answer` / `chat_general` / `faq_lookup` / `run_chat`），只有 `pipeline.py` 组装它们。签名的作用是给 AI 编码助手划清改动范围，并便于以后新增策略时不动 `pipeline.py`。模块内部异常一律包成 `AppError(code, message)`，由全局处理器转成统一错误结构。
@@ -152,8 +195,8 @@ ecom-rag/
 - [ ] 建仓库与脚手架：`schemas.py`、`contracts.py`、`config.py`、`CLAUDE.md`
 - [ ] 本机 `docker compose up` 起通 Milvus、MySQL、Redis（arm64 镜像）
 - [ ] 下载 bge-m3 与 bge-reranker-v2-m3（共约 4.5 GB）
-- [ ] 注册阿里云国际站 Model Studio，拿到 Qwen key，确认免费额度、有效期与限流；备一家备用
-- [ ] 样例数据：15–20 份文档、30 条 FAQ、20 条测试题（先定演示脚本的问题，再反向准备数据）
+- [ ] 配置智谱 glm-5.3-flash 账号凭据，确认额度、有效期与并发上限，验证 enabled/low 思考参数；备一家兼容服务
+- [ ] 样例数据：18 份文档、34 条 FAQ、24 条测试题（先定演示脚本的问题，再反向准备数据）
 - [ ] 买好海外 VPS 并试跑一次 compose
 
 **阶段 1 · 脚手架与入库（约 3.5 小时）→ M1**
@@ -174,7 +217,7 @@ ecom-rag/
 
 **阶段 4 · 校准、评测与部署（约 3 小时）→ M3**
 
-1. `eval/run_eval.py` 跑 20 条测试题，校准 FAQ 与拒答阈值
+1. `eval/run_eval.py` 跑 24 条测试题，校准 FAQ 与拒答阈值
 2. 部署到海外 VPS（第 8 节）
 3. 代码冻结，只修 bug；补 README「已知限制」；按演示脚本完整彩排一遍
 
@@ -254,15 +297,15 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 | 风险 | 影响 | 应对 / 降级 |
 | --- | --- | --- |
 | 某一步卡住超过 45 分钟 | 关键路径整体后移 | 立即走降级方案，把问题记入 README「已知限制」，继续下一步 |
-| Qwen 免费额度用尽、过期或限流 | 演示中断 | 准备阶段在控制台确认额度与 QPS；开发期多用缓存和小模型；备第二家 key，只改 `.env` 切换 |
+| LLM 账号额度用尽、过期或限流 | 演示中断 | 准备阶段在控制台确认额度与并发限制；开发期多用缓存；备用兼容服务须同时核对地址、模型名、思考参数与配额 |
 | 本机内存压力（Milvus + MySQL + Redis + bge-m3 + Reranker） | 卡顿或容器被杀 | 机器为 16 GB，正常可运行；模型使用全局单例，给容器设内存上限，卡顿时先关 Reranker |
 | Milvus（etcd + minio）compose 起不来 | 检索全断 | 准备阶段先实测；实在不行改用 Milvus Lite 只跑稠密检索，`retrieve()` 接口不变 |
 | 模型权重共约 4.5 GB，下载慢 | 开工即卡住 | 提前下载到本机，VPS 上单独下载一次；配 HF 镜像 |
 | VPS 无 GPU，Reranker 慢 | 公网版单次 +1–2s | 候选默认已是 10，可再下调；模型全局单例预热 |
 | 串行 LLM 调用延迟 6s+ | 演示体验差 | 路由用快速小模型；前端显示阶段进度 |
-| FAQ 阈值 0.8 误命中 | 答非所问 | 联调后用 20 条测试题复核；如有误命中再上调 |
+| FAQ 误命中 | 答非所问 | 默认阈值 0.9；联调后用 24 条测试题复核 |
 | LLM 编造政策（面向 C 端会变成客诉） | 可信度与纠纷 | 仅据上下文作答并标 [n]；低分走 fallback；提示词禁止承诺政策外的赔付 |
-| 评委和几十人同时访问 | Qwen 限流或额度耗尽、模型推理排队，延迟明显变长或报错 | 演示前预热缓存；后端限制并发并排队；提前压测；VPS 作为主入口，本机备用（见第 8 节） |
+| 评委和几十人同时访问 | 智谱账号限流或额度耗尽、模型推理排队，延迟明显变长或报错 | 演示前预热缓存；后端限制并发并排队；提前压测；VPS 作为主入口，本机备用（见第 8 节） |
 
 **演示脚本**
 
@@ -282,14 +325,14 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 - [ ] rag 回答均带 [n] 引用，引用文本可在原文件中找到
 - [ ] Redis 停掉后请求仍正常（跳过缓存）
 - [ ] 空消息、超长消息、LLM key 错误、触发限流时，前端有可读提示
-- [ ] `eval/run_eval.py` 在 20 条测试集上输出路由准确率、检索 Hit@5、各阶段平均耗时（如实记录，不设硬门槛）
+- [ ] `eval/run_eval.py` 在 24 条测试集上输出路由准确率、过滤后 RAG 来源命中率、各阶段平均耗时（如实记录，不设硬门槛）；检索 Hit@5 由 `eval/check_retrieval.py` 核验
 - [ ] 核心函数有 pytest 且通过；界面上的样例数据已标注
 
 **已定决策**
 
 | 决策 | 结论 |
 | --- | --- |
-| LLM 厂商 | 通义千问 Qwen，用阿里云国际站免费额度 |
+| LLM 厂商 | 智谱 glm-5.3-flash，enabled/low 思考；保留其他 OpenAI 兼容模型支持 |
 | 开发与演示机 | 本机 M1，16 GB 内存 |
 | 公网部署 | 海外 VPS（无需备案） |
 | 结构化存储 | MySQL 8 |
@@ -309,17 +352,17 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 3. compose 增加 `backend`（模型目录挂载）、`caddy`（托管 `vite build` 产物 + 反代 `/api`）；只有 Caddy 暴露 80 / 443
 4. Milvus、MySQL、Redis、etcd、minio 一律不映射公网端口
 5. 生产 `.env`：`DEBUG=false`、关闭 `/docs`、不返回 trace、CORS 只允许自己的域名；Caddy 拒绝 `/api/v1/admin/*`
-6. 开启第 5 节的限流；在阿里云控制台为该 key 设置用量上限，免费额度用尽后不自动转付费
+6. 开启第 5 节的限流；在模型服务控制台确认账号额度、并发限制与用量上限
 7. 运维：容器 `restart: unless-stopped`，用 `/health` 做存活检查，每天备份 MySQL
 
 **多人同时访问（评委与几十人在线）**
 
-几十人同时在线时，真正同时处理的请求通常只有几个；瓶颈不在隧道，而在 Qwen 限流、模型推理排队和本机内存。以下措施都要在演示前做完：
+几十人同时在线时，真正同时处理的请求通常只有几个；瓶颈不在隧道，而在模型账号限流、推理排队和本机内存。以下措施都要在演示前做完：
 
 - 入口：评委链接以 VPS 固定域名为主，本机用隧道做备用；不要把会变动的临时隧道链接发给评委。
-- 并发上限：后端同时最多处理 3–4 个 LLM 请求，超出的排队；前端显示「排队中」，比直接报错体验好。具体上限以压测结果为准。
+- 并发上限：每个 worker 默认同时最多发起 2 个 LLM HTTP 调用，其余异步排队；应与模型服务账号的并发上限一致，多 worker 时按 worker 数折算，不能让每个 worker 各自占满账号额度。具体上限以账号限制和压测结果为准。
 - 预热缓存：演示前把演示脚本里的问题和常见问题各问一遍，使 FAQ 与缓存命中，命中的请求不调 LLM。
 - 压测：在阶段 4 用 20–30 个并发请求跑一遍，记录延迟与报错，再定并发上限；写一个简单的压测脚本。
-- 额度：在控制台确认 Qwen 免费额度、有效期与 QPS；准备第二家厂商的 key，只改 `.env` 切换。
+- 额度：在智谱控制台确认额度、有效期与并发上限；备用兼容服务同时核对地址、模型名、思考参数和 token 配额，运行 llm_ping 后再切换。
 - 本机备用：演示期间接电源，运行 `caffeinate -dims` 防止休眠；不要合盖。
 - 降级：VPS 慢时先关 Reranker 或下调候选数（默认已是 10）；仍不够时让前端提示稍后再试。

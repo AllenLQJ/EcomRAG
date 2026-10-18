@@ -42,15 +42,17 @@ Compose 包含 Milvus Standalone 2.5.10、MySQL 8.0、Redis 7.4。Milvus 使用�
 
 配置名现统一为 `LLM_API_KEY`、`LLM_BASE_URL`。旧名 `QWEN_API_KEY`、`QWEN_BASE_URL` 暂作为兼容别名；新旧都有非空值时新名优先；新 key/地址为空（含纯空白）视为未设置，仍可使用有效旧名。采用旧名时记录弃用 WARNING；两者非空且不同时只记录配置名冲突 WARNING，不记录值。空地址且没有有效旧名时使用默认兼容地址。请把本机旧配置迁移到新名。
 
+当前使用智谱 `glm-5.3-flash`，下面的模板显式配置其兼容地址与两个模型角色。该模型始终思考，需开启思考并选择强度，推荐 `low`；不能使用 `thinking.type=disabled`。代码保留通用兼容配置默认值，切换到智谱须同时设置地址、模型名和 `LLM_EXTRA_BODY`。其他 OpenAI 兼容模型也可使用；非思考模型可省略 `LLM_EXTRA_BODY` 或按其文档设置。
+
 ```dotenv
 DOCKER_PLATFORM=linux/arm64
 LLM_API_KEY=
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-ROUTER_MODEL=qwen-turbo
-GENERATE_MODEL=qwen-plus
-ROUTER_MAX_TOKENS=64
-GENERATE_MAX_TOKENS=600
-LLM_EXTRA_BODY=
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+ROUTER_MODEL=glm-5.3-flash
+GENERATE_MODEL=glm-5.3-flash
+ROUTER_MAX_TOKENS=2048
+GENERATE_MAX_TOKENS=4096
+LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_DATABASE=ecomrag
@@ -77,10 +79,16 @@ RERANK_TEXT_MODE=child
 RERANK_FP16=false
 RERANK_TOP_K=5
 SPECULATIVE_RETRIEVAL=true
-REFUSE_THRESHOLD=0.5
-LLM_TIMEOUT_S=20
-LLM_MAX_CONCURRENCY=4
+REFUSE_THRESHOLD=0.2
+RAG_CONTEXT_MIN_SCORE=0.1
+MODEL_IO_WORKERS=1
+MODEL_IO_QUEUE_SIZE=8
+MODEL_IO_QUEUE_TIMEOUT_S=20
+LLM_TIMEOUT_S=12
+LLM_MAX_CONCURRENCY=2
 LLM_MAX_RETRIES=1
+LLM_RATE_LIMIT_RETRIES=3
+LLM_TIMEOUT_RETRIES=1
 LLM_RETRY_BACKOFF_S=0.5
 WARMUP_ON_START=true
 ALLOW_TRACE=false
@@ -103,8 +111,8 @@ DEBUG=false
 | `DOCKER_PLATFORM` | 仅供 Compose 使用；M1 为 `linux/arm64`，x86 VPS 为 `linux/amd64` |
 | `LLM_API_KEY`、`LLM_BASE_URL` | 任意 OpenAI 兼容接口的凭据和地址；默认地址为阿里云国内站，可改成其他兼容服务；客户端追加 `/chat/completions` |
 | `ROUTER_MODEL`、`GENERATE_MODEL` | 路由、生成模型名称；以所用 LLM 服务实际支持的模型名为准 |
-| `ROUTER_MAX_TOKENS`、`GENERATE_MAX_TOKENS` | 路由输出上限默认 64，RAG 生成与通用对话输出上限默认 600；均须大于 0。RAG 提示词要求通常不超过 150 字、最多 5 条，不重复问题或寒暄，保留事实引用 |
-| `LLM_EXTRA_BODY` | JSON 字符串，默认空（不添加参数）；解析为对象后合并进每次请求，用于关闭思考模式或传供应商特有参数；非法 JSON/非对象在配置阶段报错 |
+| `ROUTER_MAX_TOKENS`、`GENERATE_MAX_TOKENS` | 路由输出上限默认 2048，RAG 生成与通用对话输出上限默认 4096；均须大于 0。max_tokens 只是上限，不要求用满；推理模型的思考 token 计入配额，单次实际 HTTP 调用耗时由 LLM_TIMEOUT_S 兜底。RAG 提示词仍要求通常不超过 150 字、最多 5 条，不重复问题或寒暄，保留事实引用 |
+| `LLM_EXTRA_BODY` | JSON 字符串，默认空（不添加参数）；解析为对象后合并进每次请求，传供应商特有参数。glm-5.3-flash 使用上方 enabled/low 示例，其他模型按其文档设置；非法 JSON/非对象在配置阶段报错 |
 | `MYSQL_*` | 本机数据库地址、库名、用户及密码；root 密码供容器初始化 |
 | `REDIS_URL`、`MILVUS_URI` | 本机依赖服务地址 |
 | `MILVUS_TIMEOUT_S` | Milvus 检索/入库客户端建连及每次 `hybrid_search` / `upsert` 的超时秒数，默认 10；须大于 0，由运行入口注入 |
@@ -115,7 +123,11 @@ DEBUG=false
 | `PARENT_MAX_CHARS` | 父块最大字符数，超长小节继续按标点切分 |
 | `FAQ_THRESHOLD` | FAQ 稠密余弦相似度阈值，默认 0.9；实测误命中 0.852 / 0.806 / 0.885，最高 0.885；阶段 4 用测试集校准 |
 | `FAQ_CACHE_TTL_S` | FAQ Redis 精确缓存 TTL，默认 86400 秒（24 小时） |
-| `REFUSE_THRESHOLD` | 归一化 rerank 最高分低于此值时建议拒答，默认 0.5，仅在开启重排时生效，无检索结果始终拒答；关闭重排时不比较 RRF 分。历史 parent 分数为 RAG 最低 0.894、拒答最高 0.261。child 输入与 fp16 会改变分数分布，必须用 check_retrieval 重新校准，不能直接沿用历史依据 |
+| `REFUSE_THRESHOLD` | 归一化 rerank 最高分低于此值时建议拒答，默认 0.2，仅在开启重排时生效，无检索结果始终拒答；关闭重排时不比较 RRF 分。历史 parent 分数为 RAG 最低 0.894、拒答最高 0.261。child 输入与 fp16 会改变分数分布，必须用 check_retrieval 重新校准，不能直接沿用历史依据 |
+| `RAG_CONTEXT_MIN_SCORE` | 默认 0.1，范围 0–1；生成前保留最高分文档，其他文档需达到该分数。仅开启重排时过滤；过滤后统一重新编号，不改变拒答阈值 |
+| `MODEL_IO_WORKERS`、`MODEL_IO_QUEUE_SIZE`、`MODEL_IO_QUEUE_TIMEOUT_S` | 默认 1 个执行名额、8 个额外等待名额、等待 20 秒；异步 FIFO，满 workers + queue_size 才立即 50302，等待超时 50401，仍受整请求预算约束。queue_size 可为 0；取消等待项立即回收，正在执行的任务直到退出才回收 |
+| `MODEL_IO_MAX_IN_FLIGHT` | 旧正整数配置仍可读取，但已弃用且不参与容量计算；显式设置会提示改用 workers 和 queue_size。旧值 1 不会关闭新队列 |
+| `RATE_LIMIT_IO_WORKERS`、`RATE_LIMIT_IO_MAX_IN_FLIGHT` | 独立限流线程池仍默认 2 / 16，保持原有总在飞容量和满载立即拒绝语义 |
 | `RERANK_ENABLED`、`RERANK_CANDIDATES`、`RERANK_TOP_K` | 检索重排开关、去重后候选上限（10）、结果数量（5）；关闭重排只在无结果时拒答，RRF 分不与 REFUSE_THRESHOLD 比较；`retrieve` 的显式 `top_k` 优先。候选从 20 降为 10 是性能起点，先按剖析工具结果再微调并复核 Hit@1 |
 | `RERANK_MAX_LENGTH` | 送入 `FlagReranker.compute_score` 的 token 上限，默认 512 |
 | `RERANK_BATCH_SIZE` | 重排批大小，默认 16；先按文本长度排序分批，得分还原为原始候选顺序 |
@@ -123,9 +135,11 @@ DEBUG=false
 | `RERANK_TEXT_MODE` | child / parent，默认 child；child 重排已带标题的最佳命中子块（snippet），parent 重排父块正文 |
 | `RERANK_FP16` | 默认 false，仅在 mps 上允许半精度；cpu 始终 fp32。启用前对比耗时、Top1 与分数差异，应用中的加载/推理错误仍会正常上抛 |
 | `SPECULATIVE_RETRIEVAL` | 默认 true；FAQ 未命中且 history 为空时并行路由和原问题检索重排；false 或多轮 history 时等路由改写后检索 |
-| `LLM_TIMEOUT_S`、`REQUEST_TIMEOUT_S` | 单次传输（不含信号量排队）和整请求超时，默认 20 / 40 秒；限流、FAQ、排队、路由解析重试及网络退避共享一次整请求预算；直连 LLM/llm_ping 同样有总超时 |
-| `LLM_MAX_CONCURRENCY` | 全局模型调用并发上限，默认 4，超出时排队 |
-| `LLM_MAX_RETRIES`、`LLM_RETRY_BACKOFF_S` | 默认重试 1 次（总共至多 2 次尝试），首次退避 0.5 秒，后续按 2 倍递增；可设重试次数 0 关闭。重试与退避始终持有同一并发名额，均受 REQUEST_TIMEOUT_S 约束 |
+| `LLM_TIMEOUT_S`、`REQUEST_TIMEOUT_S` | 单次传输（不含信号量排队）和整请求超时，默认 12 / 40 秒；限流、FAQ、排队、路由解析重试及网络退避共享一次整请求预算；直连 LLM/llm_ping 同样有总超时 |
+| `LLM_TIMEOUT_RETRIES` | 默认 1，超时使用独立连接池重试；同时受 LLM_MAX_RETRIES 总次数约束，0 关闭超时重试 |
+| `LLM_MAX_CONCURRENCY` | 每 worker 的模型 HTTP 并发上限，默认 2，超出时异步排队；应与模型服务账号的并发上限一致，多 worker 部署时按 worker 数折算，信号量不跨进程共享 |
+| `LLM_MAX_RETRIES`、`LLM_RETRY_BACKOFF_S` | 网络、5xx、超时共用的普通重试上限默认 1，退避默认从 0.5 秒指数递增；普通重试与退避仍持有同一名额。429 使用独立预算，所有重试均受 REQUEST_TIMEOUT_S 约束 |
+| `LLM_RATE_LIMIT_RETRIES` | 上游 429 独立重试次数，默认 3（设 0 关闭），退避 1、2、4 秒；秒数 Retry-After 与退避取较大值，单次最多 8 秒。退避先释放名额，重试重新排队；不消耗或重置普通重试次数 |
 | `WARMUP_ON_START` | 默认 true，在 lifespan 启动时预热 FAQ、BM25、问句向量、本地模型和 Milvus；false 延迟初始化 |
 | `ALLOW_TRACE` | 默认 false；请求 debug=true 且此配置为 true 才返回内部耗时与分数；演示环境在 `.env` 设 true |
 | `TRUST_PROXY_HEADERS` | 默认 false；启用才信任 X-Forwarded-For 首个地址；受控 Caddy 反代部署时开启并确保反代覆盖伪造头 |
@@ -151,10 +165,11 @@ DEBUG=false
 | 40001 | 请求参数校验失败 | 400 |
 | 40401 | 路由或资源不存在 | 404 |
 | 40501 | 请求方法不允许 | 405 |
-| 42901 | 限流 | 429 |
+| 42901 | 仅本服务自身的 IP/session 限流 | 429 |
 | 50001 | 内部错误 | 500 |
 | 50201 | LLM 调用失败 | 502 |
 | 50301 | Milvus / MySQL 不可用 | 503 |
+| 50302 | 同步 IO 容量满载或上游模型持续限流，服务有点忙，请稍后再试 | 503 |
 | 50401 | 超时 | 504 |
 
 入口按 IP 和 session_id 独立累计，任一维度超限返回 HTTP 429 / 42901「提问有点快，休息一分钟再问吧」。IP 默认取 request.client.host。Redis 使用 INCR + EXPIRE 事务，不可用时静默退化为进程内计数（各进程独立，重启清空）。固定分钟窗口和 UTC 自然日窗口，超限请求也计数，每日超限需等次日。
@@ -163,9 +178,9 @@ DEBUG=false
 
 HTTPException 的 detail 不回显：404 为「请求的地址不存在」、405 为「请求方法不允许」、其他 4xx 为「请求无法处理」、5xx 为「服务暂时不可用」，错误码映射保持不变。
 
-模型上游 429 返回 42901「请求太频繁，请稍后再试」；超时返回 50401；其他网络/HTTP 错误及坏响应返回 50201，不回显密钥、用户原文或提示词。MySQL / Milvus 不可用返回 50301「服务暂时不可用，请稍后再试」；其他异常保持上抛，由 API 返回统一 50001。Redis FAQ 缓存故障仍跳过。
+模型上游 429 在独立重试耗尽后返回 HTTP 503 / 50302「服务有点忙，请稍后再试」；42901 / HTTP 429 仅用于本服务自身的 IP/session 限流。超时返回 50401；其他网络/HTTP 错误及坏响应返回 50201，不回显密钥、用户原文或提示词。MySQL / Milvus 不可用返回 50301「服务暂时不可用，请稍后再试」；其他异常保持上抛，由 API 返回统一 50001。Redis FAQ 缓存故障仍跳过。
 
-LLM 客户端默认对 ConnectError、连接重置/中断类网络错误、HTTP 5xx 和 429 额外尝试一次；不重试超时、其余 4xx、重定向或响应解析错误。退避默认 0.5 秒，次数增大时按指数递增。一次调用的全部尝试和退避占用同一并发名额；每次传输仍受 LLM_TIMEOUT_S 限制，整请求由 REQUEST_TIMEOUT_S 限制，取消会中断退避。每次重试记录 `llm_retry` WARNING，仅包含 category、HTTP 状态、重试序号、脱敏后的 host/model；最终失败沿用现有错误映射与诊断。
+LLM 客户端对超时、ConnectError、连接重置/中断类网络错误、HTTP 5xx 默认重试一次，普通退避从 0.5 秒指数递增且持有同一并发名额；超时仍使用独立连接池。上游 429 独立默认重试 3 次，退避从 1 秒指数递增，取有效秒数 Retry-After 与退避的较大值并封顶 8 秒；无效、负数或日期格式的头忽略。仅 429 退避释放名额并重新排队。不重试其余 4xx、重定向或响应解析错误。信号量等待不计入单次 LLM_TIMEOUT_S，但与全部尝试、退避共用 REQUEST_TIMEOUT_S=40 的截止时间，耗尽返回 50401。429 重试和最终日志保留 category=http_status、http_status=429、脱敏 error_code（如 1302），不记录供应商自由文本回显。
 
 ## 阶段 1：样例数据与入库
 
@@ -245,7 +260,7 @@ python -m eval.profile_rerank "怎么申请退货？"
 
 网格后新增 fp32/fp16 对比：取 RERANK_CANDIDATES 指定的同一批候选，按当前 RERANK_TEXT_MODE、RERANK_MAX_CHARS、RERANK_BATCH_SIZE 准备完全相同的文本，分别执行两次并丢弃首次；输出两种精度的前向耗时、Top1 是否一致、分数平均绝对差和最大差。CPU 会明确跳过 fp16；MPS fp16 加载或推理失败时仅显示异常类型和跳过提示，继续保留 fp32 结果。此对比不改变应用默认精度，也不自动修改配置。先根据剖析结果微调，再用 `eval.check_retrieval` 与完整 `eval.run_eval` 确认 Hit@1、引用和路由；单道题 Top1 一致不能证明测试集质量不变。
 
-`eval.check_retrieval` 在运行时调用 `get_settings()`，默认读取 `data/eval.jsonl`（可用 `--eval-file` 替换）。省略 `--rerank-text-mode` 时依次对比 child、parent；指定 child 或 parent 时只测该模式，`--candidates N` 可覆盖候选数量（必须大于 0）。两种模式复用同一精度模型并先预热一次，均固定开启 rerank。每题打印 expected_doc 的 Top5 命中、排名、归一化分和单次重排耗时 rerank_ms（不含召回），分别汇总 Hit@1/Hit@5；fallback 打印最高分、拒答阈值比较与重排耗时。替身若只提供旧 retrieve 接口则无法拆分计时，显示 `-`。此脚本不执行 LLM 路由或生成。REFUSE_THRESHOLD 默认仍是 0.5，但输入从 parent 改成 child 后分数分布会变化，需按新的 RAG 与拒答样本重新校准；启用 fp16 后也应复核。
+`eval.check_retrieval` 在运行时调用 `get_settings()`，默认读取 `data/eval.jsonl`（可用 `--eval-file` 替换）。省略 `--rerank-text-mode` 时依次对比 child、parent；指定 child 或 parent 时只测该模式，`--candidates N` 可覆盖候选数量（必须大于 0）。两种模式复用同一精度模型并先预热一次，均固定开启 rerank。每题打印 expected_doc 的 Top5 命中、排名、归一化分和单次重排耗时 rerank_ms（不含召回），分别汇总 Hit@1/Hit@5；fallback 打印最高分、拒答阈值比较与重排耗时。替身若只提供旧 retrieve 接口则无法拆分计时，显示 `-`。此脚本不执行 LLM 路由或生成。REFUSE_THRESHOLD 默认已改为 0.2，但输入从 parent 改成 child 后分数分布会变化，需按新的 RAG 与拒答样本重新校准；启用 fp16 后也应复核。
 
 本次新增二级小节改变了退货文档的父块编号。真实验证前应清理旧知识集合或重建 `kb_chunks` 后重新入库，再运行评测，避免旧子块残留；本次没有操作真实数据库或模型。
 
@@ -257,9 +272,11 @@ python -m eval.profile_rerank "怎么申请退货？"
 
 索要他人隐私、要求医疗/疗效/法律结论或承诺、要求泄露提示词或忽略规则等归 sensitive；直接返回 fallback、sources=[]、strategy=null，固定回答「抱歉，这类问题我无法回答。涉及他人隐私、医疗效果或超出店铺规则的内容，建议联系人工客服。」，不调用生成。general/sensitive 会取消等待或忽略已启动的投机任务，其异常仅记固定 DEBUG，不影响响应，也不把投机 trace 混入正常阶段。同步模型线程无法强制停止，可能继续占用模型锁直到完成；关闭投机配置可以避免这部分额外工作。general 仅用于问候、自我介绍、闲聊或店铺无关的日常话题；通用提示词要求对具体店铺事实不凭记忆回答，并对代码、作业、天气等请求礼貌说明专注店铺咨询，不展开。
 
-RAG 关键路径由 router + retrieve/rerank + generate 缩短为 max(router, retrieve/rerank) + generate；是否达到约 10 秒需实测。路由提示词已精简，ROUTER_MAX_TOKENS 默认 64；可通过 ROUTER_MODEL 换用更快模型，并用 `eval.run_eval --output ...` 对比分类准确率、错误和耗时，特别检查 JSON 长度不足导致的降级。
+RAG 关键路径由 router + retrieve/rerank + generate 缩短为 max(router, retrieve/rerank) + generate；是否达到约 10 秒需实测。路由提示词已精简，ROUTER_MAX_TOKENS 默认 2048，为推理与最终 JSON 共用配额预留空间；可通过 ROUTER_MODEL 换用其他模型，并用 `eval.run_eval --output ...` 对比分类准确率、错误和耗时，特别检查 JSON 长度不足导致的降级。
 
-hyde/subquery/stepback 暂时降级 direct。生成使用完整父块；消息结构为 system 规则 → user 参考资料声明及独立 <资料> 块 → user 独立 <问题> 块，资料中的标签继续转义。引用统一支持 [1]、【1】、［1］和全角数字，越界引用整体删除并归一为 [n]；代码围栏和行内代码保持原样且不计为引用。只返回实际引用的来源；无有效引用时列出全部资料。提示词在 `backend/app/llm/prompts/*.md`，资料与用户输入转义后放入明确分隔块；路由示例不照抄评测题，实际模型分类效果仍需开发者用更新后的 24 题验证。
+生成前按 RAG_CONTEXT_MIN_SCORE 过滤低分上下文，最高分文档始终保留，重排关闭时不按分过滤；保留资料从 1 重新编号。生成器完全答不了时输出内部 NO_ANSWER 标记，pipeline 返回固定拒答、fallback、无来源，并仅记录 reason=generator_no_answer。正常回答中误夹的标记也会清除，部分可答仍保留已知回答并说明缺失部分。模型队列与取消语义、上下文过滤和生成拒答详见 [开发文档](docs/电商RAG智能客服-开发文档.md)。
+
+hyde/subquery/stepback 暂时降级 direct。生成使用经过上下文筛选的完整父块；消息结构为 system 规则 → user 参考资料声明及独立 <资料> 块 → user 独立 <问题> 块，资料中的标签继续转义。引用统一支持 [1]、【1】、［1］和全角数字，越界引用整体删除并归一为 [n]；代码围栏和行内代码保持原样且不计为引用。只返回实际引用的来源，编号沿用生成时的编号；无有效引用时只保留最高分的一条。提示词在 `backend/app/llm/prompts/*.md`，资料与用户输入转义后放入明确分隔块；实际分类及回答效果需用原 24 题与新增口语评测集验证。
 
 在 `backend/` 手动运行（真实装配，运行时调用 get_settings）：
 
@@ -267,25 +284,26 @@ hyde/subquery/stepback 暂时降级 direct。生成使用完整父块；消息�
 python -m eval.chat_demo "签收后发现屏幕有划痕可以退吗？"
 python -m eval.run_eval
 python -m eval.run_eval --eval-file data/eval.jsonl
+python -m eval.run_eval --eval-file data/eval_colloquial.jsonl --output logs/eval-colloquial.json
 python -m eval.run_eval --output logs/eval-report.json
 python -m eval.llm_ping
 ```
 
 真实调用 LLM 服务 需要在 `.env` 配置 `LLM_API_KEY`、`LLM_BASE_URL`、`ROUTER_MODEL`、`GENERATE_MODEL`，由开发者在本机运行验证。本次实现不联网、不读取 `.env`，未验证 LLM 服务 或真实数据库/本地模型。
 
-支持任意 OpenAI 兼容接口，默认地址为阿里云国内站（可通过 `LLM_BASE_URL` 改成其他兼容服务）；模型名以所用 LLM 服务实际支持的为准。使用第三方中转服务时，API key 与对话内容会经过该服务，上线前需评估其可靠性与数据处理条款。
+当前配置示例使用智谱 `glm-5.3-flash`；仍支持其他 OpenAI 兼容接口，代码保留的默认地址为阿里云国内站，可通过 `LLM_BASE_URL` 覆盖。模型名与思考参数以所用服务实际支持的为准。`LLM_MAX_CONCURRENCY` 应与账号并发上限一致，多 worker 时折算各自额度。使用第三方中转服务时，API key 与对话内容会经过该服务，上线前需评估其可靠性与数据处理条款。
 
 演示与评测请求均带 debug=true；API 与 chat_demo 返回的 trace 仍由 ALLOW_TRACE 控制。run_eval 单独收集内部 trace，无论 ALLOW_TRACE 为何都统计耗时，报告 trace_enabled=true 和 api_trace_allowed（配置原值），不改变 API 对外开关。trace 记录 cache(hit)、faq(hit/top_score)、router(intent)、retrieve(candidates)、rerank(kept)、generate 和整个 pipeline 的 total；使用投机结果时 retrieve/rerank 标记 speculative=true。并行阶段独立计时，不能相加当作总耗时；total_ms 从评测调用的实际起止计算，包含失败请求。
 
 run_eval 终端打印总题数、路由准确率、RAG sources 命中率、各阶段均值与 p50/p90、总耗时 p50/p90、错误分布（例如 `50201 ×14`）和路由错误题目（问题、期望、实际路由）。`--output 路径` 保存完整 JSON，results 保留每一道题，包含 answer、sources（doc_id/title/score）、total_ms、stage_ms、error_code（成功为 null）、is_error、判定及引用命中；失败行的答案与来源为空，保留出错前已完成阶段的耗时。stage_mean_ms、stage_p50_ms、stage_p90_ms 仅统计实际执行的阶段，包含失败前已完成的阶段；total_p50_ms、total_p90_ms 包含所有请求，空样本为 null，分位数采用排序后线性插值；completed 只统计成功完成的题目。错误分布也存入 error_distribution。不设硬门槛。expected_route=cache 接受 cache 或首次运行的 faq；错误计入总数并视为路由不正确，RAG 命中率的分母包含失败的 RAG 题。资料按入库稳定 doc_id 匹配。脚本不清理 Redis，重复评测可能把 expected_route=faq 变成 cache，需结合缓存状态解读。
 
-llm_ping 不依赖数据库或本地模型，只对 ROUTER_MODEL、GENERATE_MODEL 各发送一次「回复ok」请求，max_tokens 固定为 64。它通过 get_settings 加载运行配置，打印目标 host、模型名、key 是否配置及长度；成功时只打印 success、耗时与回复长度，不打印回复正文，失败时打印脱敏诊断，任一失败以非零退出。LLM 的用户错误文案保持通用；应用 WARNING 另记 category（timeout/http_status/network/bad_response/truncated/unconfigured）、HTTP 状态、异常类型、供应商 error.code/error.message（各最多 200 字）、host、model。密钥、已知消息和扩展参数值的回显会被替换，不记录请求体、任意响应 body 或 URL 路径/查询参数。
+llm_ping 不依赖数据库或本地模型，对 ROUTER_MODEL、GENERATE_MODEL 各发送一个「回复ok」探测，失败重试遵循线上配置。分别使用线上 ROUTER_MAX_TOKENS、GENERATE_MAX_TOKENS（默认 2048/4096）和同一个 LLM_EXTRA_BODY，不再固定 64。它通过 get_settings 加载运行配置，打印目标 host、模型名、key 是否配置及长度；每项输出 success、max_tokens、耗时 ms、finish_reason 和 reasoning_tokens（缺失为 null），成功另打印回复长度，失败打印脱敏诊断，任一失败以非零退出。所有输出均不包含回复正文或推理文本。LLM 的用户错误文案保持通用；应用 WARNING 另记 category（timeout/http_status/network/bad_response/truncated/unconfigured）、HTTP 状态、异常类型、供应商 error.code/error.message（各最多 200 字）、host、model。密钥、已知消息和扩展参数值的回显会被替换，不记录请求体、任意响应 body 或 URL 路径/查询参数。
 
 推理模型可将 reasoning_content/reasoning 与最终 content 分开。客户端只返回最终 content：字符串直接使用，分段列表只拼接 text/output_text 文本段，忽略推理段和图片段。bad_response/truncated 诊断增加 response_structure：choices_count、finish_reason、content_type、content_empty、has_reasoning_content、has_reasoning，以及 usage 中的 prompt/completion/reasoning token 数；不记录任何最终或推理内容文本，缺失的计数为 null，未知 finish_reason 仅记 unknown。reasoning token 数支持 completion_tokens_details.reasoning_tokens 或 usage.reasoning_tokens。
 
-空最终内容且 finish_reason=length 时返回 HTTP 502 / 50201，用户文案仍通用，诊断 category=truncated、reason 为「输出被长度限制截断，可调大 max_tokens 或关闭思考模式」。content 非空时仍返回最终文本，不会用推理内容代替答案；非空但不完整的路由 JSON 会先解析重试，仍失败才走可疑输入规则与保守降级。推理是否占用了输出额度须用供应商返回的 usage 与 finish_reason 确认，不能仅根据 HTTP 200 或耗时推断。
+空最终内容且 finish_reason=length 时返回 HTTP 502 / 50201，用户文案仍通用，诊断 category=truncated。有 reasoning_content/reasoning 时，reason 为「思考消耗了全部输出配额，请调大 ROUTER_MAX_TOKENS/GENERATE_MAX_TOKENS，或在模型支持时降低思考强度」；没有推理字段时仅提示提高这两项配额。content 非空时仍返回最终文本，不会用推理内容代替答案；非空但不完整的路由 JSON 会先解析重试，仍失败才走可疑输入规则与保守降级。结合 usage 与 finish_reason 判断实际配额使用，不能仅根据 HTTP 200 或耗时推断。
 
-例如服务支持时，可设置 `LLM_EXTRA_BODY='{"thinking":{"type":"disabled"}}'` 关闭思考模式。该配置用于关闭推理模型的思考模式或传入供应商特有参数，具体参数名以供应商文档为准。只记录 extra_body_keys 顶层键名，不记录值；model/messages/temperature/max_tokens 及路由 JSON 格式等核心调用参数优先于同名扩展参数。使用 GLM 等模型时，应先由开发者在本机运行 llm_ping 验证供应商参数与输出结构，再运行完整评测。本次未调用真实服务。
+`glm-5.3-flash` 不支持关闭思考；推荐 `LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'`。上游 error_code=1210 时，诊断 reason 提示「该模型不支持关闭思考，请把 LLM_EXTRA_BODY 改为 {"thinking":{"type":"enabled","effort":"low"}}」，不会自动改写配置或重试 400。其他 OpenAI 兼容模型可省略该参数或遵循各自文档。只记录 extra_body_keys 顶层键名，不记录实际参数值；1210 的建议使用固定示例，绝不回显请求配置。model/messages/temperature/max_tokens 及路由 JSON 格式等核心调用参数优先于同名扩展参数。先由开发者在本机运行 llm_ping 验证供应商参数与输出结构，再运行完整评测。本次未调用真实服务。
 
 ## 阶段 2C：缓存维护、应用日志与对话记录
 
@@ -312,6 +330,8 @@ pytest 的 autouse fixture 将 LOG_DIR 指向每个测试的 tmp_path，并关�
 **对话原文会保存在 MySQL 的 chat_logs 中。C 端上线前请在界面告知用户，并设定保留期限。** CHAT_LOG_ENABLED 默认 true；成功、AppError 和未捕获异常响应生成后，后台任务只做非阻塞入队。有界队列最多保留 1000 条待处理记录，满时丢弃并记固定 WARNING。一个后台工作线程复用持久 MySQL 连接，空闲连接使用 ping 自动重连；失败行丢弃且下一条重新建立连接，避免提交状态不确定时重放当前行。任何写入失败不改变用户回答；禁用时不启动线程或连接。AppError 的 answer 为空、route=error、error_code 为业务码；未捕获异常同样写 error 行且 error_code=50001，并仅记录清洗后的类型和堆栈位置。退出 lifespan 最多等 5 秒排空队列，超时记 WARNING 并放弃待处理记录；已经执行中的同步 SQL 不能强制中止，由数据库连接超时结束。引用列表保存到 sources_json，user_id 暂为 NULL。后台任务不保证进程异常退出时可靠送达，需要可靠审计时应另设持久队列。
 
 chat_logs_view 是本机管理工具，默认显示时间(UTC)、session、route、耗时、问题与答案前 40 字，--full ID 才显示完整记录；筛选与清理均绑定 SQL 参数。purge_chat_logs 默认仅统计过期行，--yes 才删除；不会自动设置数据库保留期限，请按选定期限定期执行。评测 JSON 文件和管理工具终端也可能含问题与答案原文，分享前需自行检查。
+
+口语回归集 `data/eval_colloquial.jsonl` 共 32 题（应答 23、拒答/敏感 6、闲聊 3）。`expected_route="answer"` 接受 faq/cache/rag，也支持路由列表；均按匹配计入路由准确率。`expected_doc` 可为 null 或省略，跳过引用命中统计；有文档参考且允许 rag 的失败行仍计入引用分母。报告新增 false_refusals（应答却 fallback）与 false_answers（仅期望 fallback 却返回非拒答路由，含 general）题目清单，终端同步打印；错误仍单列。列表允许 fallback 时不算误拒答。按原 24 题和新 32 题分别回归，再用并发压测核对默认 1+8 容量及等待 20 秒/总预算 40 秒。评测文件和终端会包含评测原文，不写入应用日志。
 
 ## 目录结构
 
