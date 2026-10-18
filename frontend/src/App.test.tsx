@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import App from './App';
 import type { ChatResponse, TraceItem } from './api/types';
 import { fixtureFor } from './mocks/fixtures';
-import { MESSAGES_KEY, SESSION_KEY } from './lib/storage';
+import { mockMobile } from './test/media';
+import { MESSAGES_KEY, SESSION_KEY, TRACE_KEY } from './lib/storage';
 
 function result(question = '划痕', debug = false): ChatResponse {
   return { ...fixtureFor({ session_id: 'server-session', message: question, debug }), is_mock: false };
@@ -48,19 +49,21 @@ describe('chat flow', () => {
     expect(card).toHaveFocus();
     expect(card).toHaveClass('ring-2');
     expect(card.scrollIntoView).toHaveBeenCalled();
+    expect(screen.queryByText('after_sales_policy.md')).not.toBeInTheDocument();
+    expect(screen.queryByText('return_guide.md')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox')).toHaveValue('');
     expect(screen.getByRole('log')).toHaveAttribute('aria-live', 'polite');
     expect(screen.getAllByText(/\d+\.\d 秒/).length).toBeGreaterThan(0);
   });
 
-  it('quick questions send FAQ requests with FAQ source labels', async () => {
+  it('quick questions send FAQ requests without source filename labels', async () => {
     const fetchMock = vi.fn().mockResolvedValue(json(result('怎么申请退货？')));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
     await userEvent.setup().click(screen.getByRole('button', { name: '怎么申请退货？' }));
     await screen.findByRole('button', { name: '引用来源 1' });
     const source = screen.getByRole('article', { name: '引用 1：怎么申请退货？' });
-    expect(within(source).getByText('常见问题')).toBeInTheDocument();
+    expect(within(source).queryByText('常见问题')).not.toBeInTheDocument();
     expect(screen.queryByText('faq:12')).not.toBeInTheDocument();
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ message: '怎么申请退货？', debug: false });
   });
@@ -176,10 +179,12 @@ describe('chat flow', () => {
   });
 
   it.each([
-    ['null', null], ['empty', []], ['nonempty', [{ stage: 'retrieve', ms: 120, candidates: 20 }]],
+    ['null', null], ['empty', []], ['nonempty', [{ stage: 'retrieve', ms: 120, candidates: 10 }]],
   ] as [string, TraceItem[] | null][])('shows trace only for a nonempty array (%s)', async (_label, trace) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...result('你好'), trace })));
+    vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '1');
     render(<App />);
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看链路' }));
     await ask('你好');
     await screen.findByText('闲聊');
     if (trace?.length) {
@@ -187,18 +192,117 @@ describe('chat flow', () => {
       expect(summary.closest('details')).not.toHaveAttribute('open');
       await userEvent.setup().click(summary);
       expect(screen.getByText('120 ms')).toBeVisible();
-      expect(screen.getByText('candidates: 20')).toBeVisible();
+      expect(screen.getByText('候选数: 10')).toBeVisible();
     } else expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
   });
 
-  it.each(['url', 'storage'])('requests debug when enabled via %s', async origin => {
+  it.each(['url', 'storage', 'build'])('requires an explicit toggle before requesting debug via %s', async origin => {
     if (origin === 'url') window.history.replaceState({}, '', '/?debug=1');
-    else localStorage.setItem('ecomrag.debug', '1');
+    else if (origin === 'storage') localStorage.setItem('ecomrag.debug', '1');
+    else vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '1');
     const fetchMock = vi.fn().mockResolvedValue(json(result('你好')));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
     await ask('你好');
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).debug).toBe(true);
+    await screen.findByText('闲聊');
+    const toggle = screen.getByRole('button', { name: '查看链路' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).debug).toBe(false);
+    await userEvent.setup().click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await ask('再问一次');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).debug).toBe(true);
   });
+  it('hides all trace UI for ordinary users, including server-supplied and restored traces', async () => {
+    sessionStorage.setItem(TRACE_KEY, '1');
+    const fetchMock = vi.fn().mockResolvedValue(json(result('划痕', true)));
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(<App />);
+    expect(screen.queryByRole('button', { name: '查看链路' })).not.toBeInTheDocument();
+    await ask('划痕');
+    await screen.findByText('知识库回答');
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).debug).toBe(false);
+    view.unmount();
+    render(<App />);
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+  });
+
+  it('persists the trace switch in the current tab and hides existing panels when switched off', async () => {
+    vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '1');
+    const fetchMock = vi.fn().mockResolvedValue(json(result('划痕', true)));
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(<App />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: '查看链路' }));
+    expect(sessionStorage.getItem(TRACE_KEY)).toBe('1');
+    await ask('划痕');
+    await screen.findByText('链路 · 6 个阶段');
+    view.unmount();
+    render(<App />);
+    expect(screen.getByRole('button', { name: '查看链路' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('链路 · 6 个阶段')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看链路' }));
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(TRACE_KEY)).toBe('0');
+    await ask('继续');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).debug).toBe(false);
+    await screen.findByText('继续');
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+  });
+
+  it.each(['methods', 'accessors'])('keeps the trace switch usable when storage %s throw', async mode => {
+    window.history.replaceState({}, '', '/?debug=1');
+    if (mode === 'methods') {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    } else {
+      vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('SecurityError'); });
+      vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new Error('SecurityError'); });
+    }
+    const fetchMock = vi.fn().mockResolvedValue(json(result('划痕', true)));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    const toggle = screen.getByRole('button', { name: '查看链路' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.setup().click(toggle);
+    await ask('划痕');
+    await screen.findByText('链路 · 6 个阶段');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).debug).toBe(true);
+    await userEvent.setup().click(toggle);
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a single mobile welcome above the scrollable refusal conversation', async () => {
+    mockMobile();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(result('火星'))));
+    render(<App />);
+    await ask('火星');
+    await screen.findByText('未找到答案');
+    const headings = screen.getAllByRole('heading', { name: '你好，我是栖木的智能客服' });
+    expect(headings).toHaveLength(1);
+    expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
+    expect(screen.getByRole('log')).not.toContainElement(headings[0]);
+    expect(screen.getByRole('button', { name: /^常见问题$/ })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('shows the cache fixture with the 秒回 badge', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(result('秒回'))));
+    render(<App />);
+    await ask('秒回');
+    expect(await screen.findByText('秒回', { selector: 'span' })).toBeInTheDocument();
+  });
+
+  it('hides server-supplied trace while the visible switch is off', async () => {
+    vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '1');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(result('划痕', true))));
+    render(<App />);
+    await ask('划痕');
+    await screen.findByText('知识库回答');
+    expect(screen.getByRole('button', { name: '查看链路' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
+  });
+
 });

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { mockMobile } from '../test/media';
 import { Composer } from './Composer';
 
 function mount(initial = '', pending = false) {
@@ -67,4 +68,47 @@ describe('Composer', () => {
     expect(input).toBeDisabled();
     for (const button of screen.getAllByRole('button')) expect(button).toBeDisabled();
   });
+  it('collapses mobile quick questions, exposes controls, sends once and collapses again', async () => {
+    mockMobile();
+    const user = userEvent.setup();
+    const { input, onSend } = mount();
+    expect(input).toHaveAttribute('placeholder', '输入你的问题');
+    const toggle = screen.getByRole('button', { name: '常见问题' });
+    const group = screen.getByLabelText('快捷问题');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', group.id);
+    expect(group).not.toBeVisible();
+    expect(within(group).queryAllByRole('button')).toHaveLength(0);
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(within(group).getAllByRole('button')).toHaveLength(4);
+    await user.click(toggle);
+    expect(group).not.toBeVisible();
+    await user.click(toggle);
+    await user.click(screen.getByRole('button', { name: '运费怎么算' }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('运费怎么算');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(group).not.toBeVisible();
+  });
+
+  it('keeps all desktop quick questions and the original placeholder across breakpoint changes', () => {
+    const setMobile = mockMobile(false);
+    const { input } = mount();
+    expect(input).toHaveAttribute('placeholder', '输入你的问题，例如：签收后多久可以退货？');
+    expect(screen.queryByRole('button', { name: '常见问题' })).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText('快捷问题')).getAllByRole('button')).toHaveLength(4);
+    act(() => setMobile(true));
+    expect(input).toHaveAttribute('placeholder', '输入你的问题');
+    expect(screen.getByRole('button', { name: '常见问题' })).toHaveAttribute('aria-expanded', 'false');
+    act(() => setMobile(false));
+    expect(within(screen.getByLabelText('快捷问题')).getAllByRole('button')).toHaveLength(4);
+  });
+
+  it('disables mobile quick questions and their disclosure while pending', () => {
+    mockMobile();
+    mount('问题', true);
+    expect(screen.getByRole('button', { name: '常见问题' })).toBeDisabled();
+  });
+
 });

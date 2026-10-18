@@ -38,6 +38,7 @@ VITE_STORE_NAME=栖木 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 | `VITE_HUMAN_SUPPORT_URL` | 空 | 完整 http(s) 人工客服地址；空值或无效值隐藏顶栏与拒答链接 |
 | `VITE_SHOW_SAMPLE_BADGE` | `true` | 仅值为 `false` 时隐藏样例标签；手机端将样例标识放在页脚 |
 | `VITE_STORE_NAME` | `栖木` | 店铺名、欢迎语和网页标题；字标保持「栖」 |
+| `VITE_SHOW_TRACE_TOGGLE` | `0` | 严格为 `1` 时向所有人显示“查看链路”开关，仅用于演示部署 |
 | `VITE_MOCK` | `0` | 严格为 `1` 时只使用本地 fixtures，不请求后端 |
 
 Vite 的客户端变量在构建时注入，改变配置后需要重启开发服务或重新构建。不要把任何密钥放入 `VITE_*`。开发代理目标仅在 Vite 配置读取；没有前端健康检查轮询。
@@ -48,9 +49,13 @@ Vite 的客户端变量在构建时注入，改变配置后需要重启开发服
 VITE_MOCK=1 npm run dev
 ```
 
-每次模拟等待 600–1500ms，返回 `is_mock: true`，回答旁显示 Mock 样例标识。输入「划痕」显示三条引用的 RAG 回答；「火星」显示拒答；「你好」显示闲聊；「退货」显示 FAQ；「限流」和「超时」分别模拟 42901、50401；其他输入显示样例 RAG。划痕优先于退货关键词，错误关键词优先匹配。Mock 只是固定样例，不会针对其他问题生成政策。
+每次模拟等待 600–1500ms，返回 `is_mock: true`，回答旁显示 Mock 样例标识。输入「秒回」显示缓存命中的「秒回」来源标签；输入「划痕」显示三条引用的 RAG 回答（包含相邻 `[1][2]`，用于验收间距）；「火星」显示拒答；「你好」显示闲聊；「退货」显示 FAQ；「限流」和「超时」分别模拟 42901、50401；其他输入显示样例 RAG。错误关键词优先匹配，其次「秒回」，划痕优先于退货关键词。Mock 只是固定样例，不会针对其他问题生成政策。
 
-访问 <http://localhost:3000/?debug=1>，或在浏览器控制台执行 `localStorage.setItem('ecomrag.debug', '1')`，后续请求会带 `debug: true`；Mock RAG 此时返回六个阶段的演示 trace。移除 URL 参数并执行 `localStorage.removeItem('ecomrag.debug')` 恢复默认。真实后端可能禁止对外返回 trace，即使 debug 开启也不会出现链路区。
+构建时 `VITE_SHOW_TRACE_TOGGLE=1`，或访问 <http://localhost:3000/?debug=1>，或设置 `localStorage.setItem('ecomrag.debug', '1')`，才显示页头「查看链路」按钮。开发者标志只决定入口可见，不自动请求 debug；开关默认关闭，点击开启后请求才带 `debug: true` 并显示回答下方的非空链路折叠区。开关存在 `sessionStorage['ecomrag.trace']`，同标签页刷新保留；关闭后立即隐藏所有链路面板，后续请求带 `debug: false`，即使响应或恢复消息含 trace 也不展示。所有 storage 读写异常均退回内存状态，不影响切换与发送。移除 URL 参数和 `localStorage['ecomrag.debug']`，并保持构建配置为 0，可隐藏入口。
+
+前端隐藏不是安全边界。后端 `ALLOW_TRACE` 默认 `false`，只有请求 `debug: true` 且后端允许时才返回 trace；仅演示环境才开启，公网长期运行的版本应改回 `false`，前端 `VITE_SHOW_TRACE_TOGGLE` 也应恢复为 0。Mock RAG 开启后返回六阶段演示数据，候选数为 10，说明保留「本地模拟耗时」。
+
+已只读核对 `backend/app/pipeline.py`、`contracts.py`、`schemas.py`、`tracing.py` 及 FAQ/检索的记录调用：实际阶段为 cache、faq、router、retrieve、rerank、generate、total；当前记录字段为 stage、ms、hit、top_score、intent、candidates、kept，推测检索时另带 speculative。schema 还定义 route、strategy、detail（当前真实记录未填，可能序列化为 null；Mock 填入 strategy/detail）。当前 trace 不记录问题或答案原文、重写问题、文档正文、API key 或凭据；`contracts.py` 的 question/answer、rewritten_query/content 不会被这些 trace 调用写入。trace 仍暴露路由意图、命中情况、数量和耗时，后端开关需继续限制。未知阶段与字段由前端原样显示。
 
 ## 与后端联调
 
@@ -66,11 +71,16 @@ uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --relo
 
 ## 交互与存储
 
+- 手机（≤640px）使用短占位「输入你的问题」；快捷问题默认收起，点「常见问题」展开后换行排列，选中即发送并收起。桌面保持原占位与快捷问题样式。手机欢迎标题及说明常驻消息滚动区上方，与 Mobile.dc.html 一致，桌面仅空状态显示。
 - Enter 发送，Shift+Enter 换行；IME 组合期间的 Enter 不发送。请求期间锁定输入、发送、快捷提问与重试；新对话仍可用。
 - 匿名 UUID 存在 `localStorage['ecomrag.session_id']`；消息存在 `sessionStorage['ecomrag.messages']`，刷新恢复、关闭标签页由浏览器清理。新对话清空并更换 UUID。存储被禁用、内容损坏或配额满时继续以内存方式工作。
 - Markdown 支持加粗、列表、换行，不启用 raw HTML。仅语法树文本节点中的有效 `[n]` 会转为引用按钮，代码块、行内代码、已有链接内的编号保持原样；未知编号显示原文。模型给出的图片仅显示替代文本，不自动加载外部资源。
-- 来源默认展开，点击或按 Enter 激活引用会展开来源、滚动、聚焦并暂时高亮对应卡片；trace 默认折叠，只在非空时显示。FAQ 来源文件名显示为「常见问题」。
-- 接近底部时跟随新消息；上滑阅读时保留位置。触控目标至少 44px，快捷标签可视高度约 32px、外层点击区 44px；减弱动态效果设置下关闭脉冲。
+- 来源默认展开，点击或按 Enter 激活引用会展开来源、滚动、聚焦并暂时高亮对应卡片；trace 仅在开发者开关开启且非空时出现，默认折叠，阶段与字段中文显示。来源卡片只显示编号、标题、摘要，不显示 doc_id（包含 FAQ），字段仍保留在数据和类型中。
+- 接近底部时跟随新消息；上滑阅读时保留位置。手机触控目标至少 44px：引用使用独立的「引用」按钮组，相邻热区不重叠；桌面行内引用为紧凑的至少 24×24px 按钮，不撑开行高。快捷标签外层点击区至少 44px；减弱动态效果设置下关闭脉冲。
+
+## 本轮视觉规范补充
+
+受“只修改 frontend/”限制，本轮未编辑 `docs/UI设计规范.md`；其中旧规则“15px 正文”“11–12px 引用编号”“卡片含文件名”应以这里为准：回答正文 16px / 500（系统字体栈含非可变字体），加粗 600；用户正文 16px，所有辅助小字至少 12px；引用摘要 14px，使用 `body-muted` 语义 token，在卡片白底上对比度约 9.2:1。卡片仅含编号、标题、摘要。所有界面配色使用 Tailwind token；favicon 的独立 SVG 文档由 Vite 在开发与构建时注入 ink/canvas token，避免另写色值。
 
 ## 目录
 
@@ -88,7 +98,7 @@ frontend/
     └── test/         # RTL / jest-dom 的全局设置
 ```
 
-测试与模块就近放置：`citations.test.tsx`、`client.test.ts`、`Composer.test.tsx`、`App.test.tsx`、`storage.test.ts`、`fixtures.test.ts`。覆盖引用边界与代码跳过、所有错误码/网络/非 JSON/超时、输入与 IME、聊天及重试与新会话、存储异常与恢复、trace、debug 与 Mock。
+测试与模块就近放置：`format.test.ts`（中文与未知字段映射）、`citations.test.tsx`、`client.test.ts`、`Composer.test.tsx`、`App.test.tsx`、`storage.test.ts`、`fixtures.test.ts`。补充手机收起/展开/发送后收起、短占位与断点切换、独立引用按钮组、欢迎区保留、来源文件名消失、trace 默认关闭/入口条件/会话持久化/隐藏服务端 trace/存储异常、缓存样例与相邻引用；保留原有测试覆盖，包括引用边界与代码跳过、所有错误码/网络/非 JSON/超时、输入与 IME、聊天及重试与新会话、存储异常与恢复、trace、debug 与 Mock。
 
 ## 已知限制与待验证
 

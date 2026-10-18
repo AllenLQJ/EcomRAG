@@ -3,6 +3,7 @@ import { isChatResponse, isRecord } from '../api/validate';
 
 export const SESSION_KEY = 'ecomrag.session_id';
 export const MESSAGES_KEY = 'ecomrag.messages';
+export const TRACE_KEY = 'ecomrag.trace';
 
 export function createId(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -31,6 +32,18 @@ export function getSessionId(): string {
 export function debugEnabled(): boolean {
   if (new URLSearchParams(window.location.search).get('debug') === '1') return true;
   try { return localStorage.getItem('ecomrag.debug') === '1'; } catch { return false; }
+}
+
+export function traceToggleVisible(): boolean {
+  return import.meta.env.VITE_SHOW_TRACE_TOGGLE === '1' || debugEnabled();
+}
+
+export function loadTraceEnabled(): boolean {
+  try { return sessionStorage.getItem(TRACE_KEY) === '1'; } catch { return false; }
+}
+
+export function saveTraceEnabled(enabled: boolean): void {
+  try { sessionStorage.setItem(TRACE_KEY, enabled ? '1' : '0'); } catch { /* Keep the React state usable. */ }
 }
 
 function isMessage(value: unknown): value is ChatMessage {

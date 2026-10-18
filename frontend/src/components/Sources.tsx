@@ -40,9 +40,8 @@ export function Sources({ sources, selection }: Props) {
           aria-label={`引用 ${source.index}：${source.title}`}
           ref={node => { if (node) cards.current.set(source.index, node); else cards.current.delete(source.index); }}
           className={`min-w-0 scroll-m-4 rounded-card border bg-card px-4 py-3 outline-none ${highlighted === source.index ? 'border-accent ring-2 ring-accent' : 'border-line'} focus-visible:ring-2 focus-visible:ring-accent`}>
-          <h3 className="flex items-baseline gap-2 text-[13px] font-medium"><span className="shrink-0 font-mono text-[11px] text-accent">[{source.index}]</span>{source.title}</h3>
-          <p className="mt-1.5 line-clamp-3 whitespace-pre-line break-words text-[13px] leading-relaxed text-muted">{source.snippet}</p>
-          <p className="mt-1.5 break-all font-mono text-[11px] text-muted">{source.doc_id.startsWith('faq:') ? '常见问题' : source.doc_id}</p>
+          <h3 className="flex items-baseline gap-2 text-[13px] font-medium"><span className="shrink-0 font-mono text-xs text-accent">[{source.index}]</span>{source.title}</h3>
+          <p className="mt-1.5 line-clamp-3 whitespace-pre-line break-words text-sm leading-relaxed text-body-muted">{source.snippet}</p>
         </article>)}
       </div>
     </div>

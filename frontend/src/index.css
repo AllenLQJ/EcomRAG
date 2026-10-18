@@ -19,8 +19,18 @@
   .primary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card bg-accent px-4 text-sm font-medium text-card hover:opacity-80; }
   .secondary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card border border-outline bg-card px-4 text-sm text-ink hover:border-ink; }
   .citation-button {
-    @apply inline-flex h-11 min-w-11 items-center justify-center rounded-md font-mono text-[11px] text-accent hover:bg-line;
-    margin-block: -12px;
+    @apply inline-flex h-6 min-w-6 items-center justify-center rounded font-mono text-xs font-normal text-accent hover:bg-line;
+    padding-inline: 1px;
+    margin-block: -6px;
+    vertical-align: middle;
+    line-height: 1;
+  }
+  .answer-markdown sup {
+    position: relative;
+    top: -0.35em;
+    vertical-align: baseline;
+    font-size: 12px;
+    line-height: 0;
   }
   .answer-markdown > * + * { @apply mt-3; }
   .answer-markdown p { white-space: pre-line; }

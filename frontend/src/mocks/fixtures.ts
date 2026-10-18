@@ -19,6 +19,11 @@ export function fixtureFor(request: ChatRequest): ChatResponse {
   const { message } = request;
   if (message.includes('限流')) throw new ChatError(42901, common.request_id);
   if (message.includes('超时')) throw new ChatError(50401, common.request_id);
+  if (message.includes('秒回')) return { ...common, route: 'cache', strategy: null,
+    answer: '店铺支持在线申请售后，请在「我的订单」中选择对应商品。[1]',
+    sources: [{ index: 1, doc_id: 'faq:12', title: '怎么申请售后？',
+      snippet: '在「我的订单」中选择对应商品，点击「申请售后」。', score: 1 }],
+    trace: request.debug ? [{ stage: 'cache', ms: 2, hit: true }] : null };
   // Match the more specific product problem before the generic return keyword.
   if (!message.includes('划痕')) {
     if (message.includes('火星')) return { ...common, route: 'fallback', strategy: null,
@@ -31,13 +36,13 @@ export function fixtureFor(request: ChatRequest): ChatResponse {
         snippet: '在「我的订单」中找到该商品，点击「申请售后」，选择「退货退款」并填写原因即可。', score: 0.98 }] };
   }
   return { ...common,
-    answer: '可以。签收后 **7 天内**，商品存在质量问题可申请退货，运费由店铺承担[1]。如果划痕是到货时就有的外观瑕疵，申请时请上传开箱照片，审核通常在 1–2 个工作日内完成[2]。\n\n1. 在「我的订单」里找到对应商品。\n2. 点击「申请售后」，选择「退货退款」并填写原因。[3]\n\n以上为虚构店铺的样例政策，实际售后请以店铺确认为准。',
+    answer: '可以。签收后 **7 天内**，商品存在质量问题可申请退货，运费由店铺承担[1]。如果划痕是到货时就有的外观瑕疵，申请时请上传开箱照片，审核通常在 1–2 个工作日内完成。[1][2]\n\n1. 在「我的订单」里找到对应商品。\n2. 点击「申请售后」，选择「退货退款」并填写原因。[3]\n\n以上为虚构店铺的样例政策，实际售后请以店铺确认为准。',
     sources: ragSources.map(source => ({ ...source })),
     trace: request.debug ? [
       { stage: 'cache', ms: 2, hit: false },
       { stage: 'faq', ms: 35, hit: false, top_score: 0.61 },
       { stage: 'router', ms: 90, intent: 'knowledge', strategy: 'direct' },
-      { stage: 'retrieve', ms: 120, candidates: 20 },
+      { stage: 'retrieve', ms: 120, candidates: 10 },
       { stage: 'rerank', ms: 180, kept: 3 },
       { stage: 'generate', ms: 310, detail: '引用 3 · 本地模拟耗时' },
     ] : null,

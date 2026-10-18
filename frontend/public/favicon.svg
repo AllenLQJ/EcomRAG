@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Vite injects the ink/canvas palette from tailwind.config.ts for dev and build. -->
+  <rect width="64" height="64" rx="14" fill="var(--ink)" />
+  <text x="32" y="44" text-anchor="middle" font-family="'Songti SC', 'Noto Serif SC', serif" font-size="42" font-weight="600" fill="var(--canvas)">栖</text>
+</svg>

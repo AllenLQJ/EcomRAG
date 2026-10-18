@@ -1,6 +1,7 @@
-import { forwardRef, useId, useLayoutEffect, useRef } from 'react';
+import { forwardRef, useId, useLayoutEffect, useRef, useState } from 'react';
 import { characterCount } from '../lib/format';
-import { SendIcon } from './Brand';
+import { Chevron, SendIcon } from './Brand';
+import { useMobile } from '../hooks/useMobile';
 
 export const QUICK_QUESTIONS = ['运费怎么算', '发票怎么开', '签收后发现屏幕有划痕可以退吗？', '怎么申请退货？'];
 
@@ -15,6 +16,8 @@ interface Props {
 export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(
   { value, onChange, onSend, pending, sample }, forwardedRef,
 ) {
+  const mobile = useMobile();
+  const [quickOpen, setQuickOpen] = useState(false);
   const composing = useRef(false);
   const localRef = useRef<HTMLTextAreaElement | null>(null);
   const id = useId();
@@ -35,11 +38,18 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
 
   return <footer className="composer-footer shrink-0 bg-canvas px-4 pt-2 sm:px-10 sm:pt-3">
     <div className="mx-auto w-full max-w-chat">
-      <div aria-label="快捷问题" className="-mx-1 mb-2 flex gap-2 overflow-x-auto px-1 sm:flex-wrap sm:overflow-visible">
-        {QUICK_QUESTIONS.map(question => <button key={question} type="button" disabled={pending} onClick={() => onSend(question)}
-          className="group flex min-h-11 shrink-0 items-center rounded-full disabled:opacity-50">
-          <span className="rounded-full border border-line bg-card px-3 py-1.5 text-[13px] group-hover:border-outline">{question}</span>
-        </button>)}
+      {mobile && <button type="button" disabled={pending} aria-expanded={quickOpen} aria-controls={`${id}-quick`}
+        onClick={() => setQuickOpen(open => !open)} className="mb-1 inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted disabled:opacity-50">
+        常见问题<Chevron open={quickOpen} />
+      </button>}
+      <div id={`${id}-quick`} aria-label="快捷问题" hidden={mobile && !quickOpen}>
+        <div className="-mx-1 mb-2 flex flex-wrap gap-2 px-1">
+          {QUICK_QUESTIONS.map(question => <button key={question} type="button" disabled={pending}
+            onClick={() => { setQuickOpen(false); onSend(question); }}
+            className="group flex min-h-11 min-w-0 max-w-full items-center rounded-full disabled:opacity-50 sm:shrink-0">
+            <span className="rounded-full border border-line bg-card px-3 py-1.5 text-left text-[13px] group-hover:border-outline">{question}</span>
+          </button>)}
+        </div>
       </div>
       <form onSubmit={event => { event.preventDefault(); submit(); }}>
         <div className="flex items-end gap-2 rounded-composer border border-outline bg-card p-2 pl-4 shadow-composer focus-within:border-ink focus-within:ring-1 focus-within:ring-ink sm:gap-3 sm:p-3 sm:pl-5">
@@ -49,8 +59,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
             if (typeof forwardedRef === 'function') forwardedRef(node);
             else if (forwardedRef) forwardedRef.current = node;
           }} rows={1} value={value} disabled={pending} aria-invalid={invalid}
-            aria-describedby={`${id}-count ${id}-hint`} placeholder="输入你的问题，例如：签收后多久可以退货？"
-            className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-6 text-ink outline-none placeholder:text-muted disabled:cursor-wait"
+            aria-describedby={`${id}-count ${id}-hint`} placeholder={mobile ? '输入你的问题' : '输入你的问题，例如：签收后多久可以退货？'}
+            className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-ink outline-none placeholder:text-[13px] placeholder:text-muted disabled:cursor-wait"
             onChange={event => onChange(event.target.value)}
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
@@ -62,14 +72,14 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
           <button type="submit" aria-label="发送" disabled={disabled}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-send bg-accent text-card hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"><SendIcon /></button>
         </div>
-        <div className="mt-1 flex min-h-5 items-center justify-between gap-2 text-[11px] text-muted">
+        <div className="mt-1 flex min-h-5 items-center justify-between gap-2 text-xs text-muted">
           <span id={`${id}-hint`} className="hidden sm:inline">Enter 发送 · Shift + Enter 换行</span>
           <span id={`${id}-count`} aria-live="polite" className={`ml-auto ${invalid ? 'text-fallback-text' : ''}`}>
             {count > 0 && `${count} / 500${invalid ? ' · 已超出字数限制' : ''}`}
           </span>
         </div>
       </form>
-      <div className="mt-1 space-y-1 text-center text-[11px] leading-4 text-muted sm:text-xs">
+      <div className="mt-1 space-y-1 text-center text-xs leading-4 text-muted">
         <p>{sample && <span className="sm:hidden">样例数据 · </span>}回答由 AI 根据店铺资料生成，仅供参考</p>
         <p>对话内容会被记录，用于改进服务</p>
       </div>

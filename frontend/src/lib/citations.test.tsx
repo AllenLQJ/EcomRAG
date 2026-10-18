@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AnswerMarkdown } from '../components/AnswerMarkdown';
 import type { Source } from '../api/types';
+import { mockMobile } from '../test/media';
 import { parseCitations } from './citations';
 
 const sources: Source[] = [1, 2, 10].map(index => ({ index, doc_id: `doc-${index}`, title: `来源 ${index}`, snippet: '', score: 1 }));
@@ -43,4 +44,18 @@ describe('citations', () => {
     expect(container.querySelector('script')).toBeNull();
     expect(container.querySelector('img')).toBeNull();
   });
+  it('uses a separate mobile group with one touch target per source, keeping inline indices compact', () => {
+    mockMobile();
+    const onCitation = vi.fn();
+    const { container } = render(<AnswerMarkdown answer="说明。[1][2]再次引用[1]" sources={sources} onCitation={onCitation} />);
+    expect(screen.getByRole('group', { name: '回答引用' })).toBeInTheDocument();
+    expect(container.querySelector('.answer-markdown button')).toBeNull();
+    expect(container.querySelectorAll('.answer-markdown sup')).toHaveLength(3);
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+    const second = screen.getByRole('button', { name: '查看引用 2' });
+    expect(second).toHaveClass('min-h-11', 'min-w-11');
+    fireEvent.click(second);
+    expect(onCitation).toHaveBeenCalledWith(2);
+  });
+
 });

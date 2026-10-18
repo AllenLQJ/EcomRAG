@@ -3,9 +3,9 @@ import { sendChat } from '../api/client';
 import { ChatError } from '../api/errors';
 import type { ChatMessage } from '../api/types';
 import { characterCount } from '../lib/format';
-import { clearMessages, createId, debugEnabled, getSessionId, loadMessages, newSessionId, saveMessages } from '../lib/storage';
+import { clearMessages, createId, getSessionId, loadMessages, newSessionId, saveMessages } from '../lib/storage';
 
-export function useChat() {
+export function useChat(traceEnabled: boolean) {
   const [initial] = useState(() => {
     const sessionId = getSessionId();
     return { sessionId, messages: loadMessages(sessionId) };
@@ -29,7 +29,7 @@ export function useChat() {
       : [...previous, { id: createId(), kind: 'user', text: question }]);
     const started = performance.now();
     try {
-      const response = await sendChat({ session_id: sessionId, message: question, debug: debugEnabled() }, controller.signal);
+      const response = await sendChat({ session_id: sessionId, message: question, debug: traceEnabled }, controller.signal);
       if (controller.signal.aborted) return false;
       setMessages(previous => [...previous, {
         id: createId(), kind: 'assistant', response, elapsedMs: performance.now() - started, question,
@@ -44,7 +44,7 @@ export function useChat() {
       if (active.current === controller) { active.current = null; setPending(false); }
     }
     return true;
-  }, [sessionId]);
+  }, [sessionId, traceEnabled]);
 
   const reset = useCallback(() => {
     active.current?.abort();

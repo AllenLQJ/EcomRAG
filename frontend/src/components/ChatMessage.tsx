@@ -11,15 +11,16 @@ import { Trace } from './Trace';
 interface Props {
   message: Message;
   pending: boolean;
+  showTrace: boolean;
   supportUrl?: string;
   onRetry: (question: string, id: string) => void;
   onRephrase: (question: string) => void;
 }
 
-export function ChatMessage({ message, pending, supportUrl, onRetry, onRephrase }: Props) {
+export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, onRephrase }: Props) {
   const [selection, setSelection] = useState<{ index: number; sequence: number } | null>(null);
   if (message.kind === 'user') return <div className="flex justify-end">
-    <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-user bg-ink px-4 py-3 text-[15px] leading-relaxed text-card sm:max-w-bubble sm:px-[18px]">{message.text}</p>
+    <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-user bg-ink px-4 py-3 text-base leading-relaxed text-card sm:max-w-bubble sm:px-[18px]">{message.text}</p>
   </div>;
 
   const fallback = message.kind === 'assistant' && message.response.route === 'fallback';
@@ -33,7 +34,7 @@ export function ChatMessage({ message, pending, supportUrl, onRetry, onRephrase 
       </div> : <>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <RouteBadge route={message.response.route} /><span>{formatSeconds(message.elapsedMs)}</span>
-          {message.response.is_mock && <span className="font-mono text-[11px]">Mock · 样例</span>}
+          {message.response.is_mock && <span className="font-mono text-xs">Mock · 样例</span>}
         </div>
         <AnswerMarkdown answer={message.response.answer} sources={message.response.sources}
           onCitation={index => setSelection(previous => ({ index, sequence: (previous?.sequence || 0) + 1 }))} />
@@ -42,7 +43,7 @@ export function ChatMessage({ message, pending, supportUrl, onRetry, onRephrase 
           <button type="button" disabled={pending} onClick={() => onRephrase(message.question)} className="secondary-button flex-1 disabled:opacity-50 sm:flex-none">换个问法</button>
         </div>}
         <Sources sources={message.response.sources} selection={selection} />
-        <Trace trace={message.response.trace} />
+        {showTrace && <Trace trace={message.response.trace} />}
       </>}
     </div>
   </div>;

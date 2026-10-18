@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY } from './storage';
+import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled } from './storage';
 
 describe('storage', () => {
   it('creates/reuses a UUID and replaces it for a new conversation', () => {
@@ -36,6 +36,9 @@ describe('storage', () => {
     expect(() => saveMessages('s', [])).not.toThrow();
     expect(() => clearMessages()).not.toThrow();
     expect(debugEnabled()).toBe(false);
+    expect(traceToggleVisible()).toBe(false);
+    expect(loadTraceEnabled()).toBe(false);
+    expect(() => saveTraceEnabled(true)).not.toThrow();
   });
 
   it('survives throwing storage property accessors', () => {
@@ -45,6 +48,9 @@ describe('storage', () => {
     expect(loadMessages('s')).toEqual([]);
     expect(() => saveMessages('s', [])).not.toThrow();
     expect(() => clearMessages()).not.toThrow();
+    expect(traceToggleVisible()).toBe(false);
+    expect(loadTraceEnabled()).toBe(false);
+    expect(() => saveTraceEnabled(true)).not.toThrow();
   });
 
   it('enables debug only with the explicit URL or localStorage flag', () => {
@@ -55,4 +61,25 @@ describe('storage', () => {
     window.history.replaceState({}, '', '/?debug=1');
     expect(debugEnabled()).toBe(true);
   });
+  it('persists only the explicit trace switch in sessionStorage', () => {
+    expect(loadTraceEnabled()).toBe(false);
+    saveTraceEnabled(true);
+    expect(sessionStorage.getItem(TRACE_KEY)).toBe('1');
+    expect(loadTraceEnabled()).toBe(true);
+    saveTraceEnabled(false);
+    expect(loadTraceEnabled()).toBe(false);
+    expect(localStorage.getItem(TRACE_KEY)).toBeNull();
+  });
+
+  it.each(['true', 'yes', '0', ''])('ignores non-1 trace visibility flags (%s)', flag => {
+    vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', flag);
+    expect(traceToggleVisible()).toBe(false);
+  });
+
+  it('uses the build flag even when localStorage is inaccessible', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('SecurityError'); });
+    vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '1');
+    expect(traceToggleVisible()).toBe(true);
+  });
+
 });
