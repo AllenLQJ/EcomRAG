@@ -1,0 +1,55 @@
+services:
+  milvus:
+    image: milvusdb/milvus:v2.5.10
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
+    command: [milvus, run, standalone]
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    volumes:
+      - ./volumes/milvus:/var/lib/milvus
+      - ./backend/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9091/healthz]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 10
+
+  mysql:
+    image: mysql:8.0
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ecomrag}
+      MYSQL_USER: ${MYSQL_USER:-ecomrag}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 中设置 MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - ./volumes/mysql:/var/lib/mysql
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: [CMD, mysqladmin, ping, -h, localhost, --silent]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: [redis-server, --appendonly, "yes"]
+    volumes:
+      - ./volumes/redis:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 10

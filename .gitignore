@@ -8,6 +8,13 @@ node_modules/
 .venv/
 __pycache__/
 dist/
+volumes/
+models/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+backend/.python-version
 
 # 本机权限配置与验收记录
 .claude/
