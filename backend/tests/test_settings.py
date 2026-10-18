@@ -142,6 +142,9 @@ def test_performance_config_defaults_and_zero_char_limit():
     assert settings.generate_max_tokens == 4096
     assert settings.llm_max_retries == 1 and settings.llm_retry_backoff_s == 0.5
     assert settings.llm_max_concurrency == 2 and settings.llm_rate_limit_retries == 3
+    assert settings.llm_keepalive_s == 60 and settings.llm_network_retries == 3
+    assert settings.llm_stream_idle_timeout_s == 20
+    assert settings.client_ip_header == "x-forwarded-for" and settings.trust_proxy_headers is False
     assert settings.llm_timeout_s == 12 and settings.llm_timeout_retries == 1
     assert settings.request_timeout_s == 40 and settings.refuse_threshold == 0.2
     assert settings.model_io_workers == 1 and settings.model_io_max_in_flight == 1
@@ -156,6 +159,9 @@ def test_performance_config_defaults_and_zero_char_limit():
                                         ("rerank_text_mode", "invalid"), ("llm_max_retries", -1),
                                         ("llm_timeout_retries", -1), ("llm_timeout_s", 0),
                                         ("llm_max_concurrency", 0), ("llm_rate_limit_retries", -1),
+                                        ("llm_keepalive_s", -1), ("llm_network_retries", -1),
+                                        ("llm_stream_idle_timeout_s", 0), ("llm_stream_idle_timeout_s", -1),
+                                        ("client_ip_header", "arbitrary-header"),
                                         ("llm_retry_backoff_s", -0.1), ("rerank_top_k", 0), ("rerank_top_k", -1),
                                         ("model_io_workers", 0), ("model_io_max_in_flight", 0),
                                         ("model_io_queue_size", -1), ("model_io_queue_timeout_s", 0),
@@ -190,6 +196,18 @@ def test_zero_queue_and_context_score_boundaries_are_valid():
         assert settings.model_io_queue_size == 0 and settings.rag_context_min_score == score
 
 
+def test_network_config_environment_overrides_and_zero_boundaries(monkeypatch):
+    monkeypatch.setenv("LLM_KEEPALIVE_S", "75.5")
+    monkeypatch.setenv("LLM_NETWORK_RETRIES", "5")
+    monkeypatch.setenv("LLM_STREAM_IDLE_TIMEOUT_S", "25")
+    monkeypatch.setenv("CLIENT_IP_HEADER", "cf-connecting-ip")
+    settings = Settings(_env_file=None)
+    assert settings.llm_keepalive_s == 75.5 and settings.llm_network_retries == 5
+    assert settings.llm_stream_idle_timeout_s == 25 and settings.client_ip_header == "cf-connecting-ip"
+    settings = Settings(_env_file=None, llm_keepalive_s=0, llm_network_retries=0)
+    assert settings.llm_keepalive_s == settings.llm_network_retries == 0
+
+
 @pytest.mark.parametrize("size,overlap", [(50, 50), (49, 50), (50, 49), (300, 299), (1, 0)])
 def test_chunk_overlap_reserves_at_least_one_prefix_character(size, overlap):
     from pydantic import ValidationError
@@ -200,3 +218,17 @@ def test_chunk_overlap_reserves_at_least_one_prefix_character(size, overlap):
 @pytest.mark.parametrize("size,overlap", [(50, 0), (50, 48), (300, 298), (300, 50), (2, 0)])
 def test_valid_chunk_overlap_boundaries(size, overlap):
     assert Settings(_env_file=None, child_chunk_size=size, child_chunk_overlap=overlap).child_chunk_overlap == overlap
+
+
+def test_trusted_proxies_default_and_json_environment(monkeypatch):
+    assert Settings(_env_file=None).trusted_proxies == ['127.0.0.1', '::1']
+    monkeypatch.setenv('TRUSTED_PROXIES', '["10.0.0.0/8", "2001:db8::/32"]')
+    assert Settings(_env_file=None).trusted_proxies == ['10.0.0.0/8', '2001:db8::/32']
+    assert Settings(_env_file=None, trusted_proxies=[]).trusted_proxies == []
+
+
+@pytest.mark.parametrize('networks', [['invalid'], [''], ['10.0.0.0/99'], ['2001:db8::/129']])
+def test_trusted_proxies_reject_invalid_addresses_and_cidrs(networks):
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match='TRUSTED_PROXIES'):
+        Settings(_env_file=None, trusted_proxies=networks)

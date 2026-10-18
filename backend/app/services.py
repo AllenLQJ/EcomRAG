@@ -118,6 +118,12 @@ class Services:
     async def chat_general(self, question, history):
         return await self.generator.chat_general(question, history)
 
+    def generate_answer_stream(self, question, docs, history):
+        return self.generator.generate_answer_stream(question, docs, history)
+
+    def chat_general_stream(self, question, history):
+        return self.generator.chat_general_stream(question, history)
+
     async def aclose(self):
         await self.llm.aclose()
         # 等待已超时请求的同步工作退出，再关闭共享连接。

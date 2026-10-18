@@ -181,10 +181,10 @@ def test_local_capacity_lru_eviction_and_expired_windows():
     assert len(instance._counts) == 4 and all(count == 1 for count, _ in instance._counts.values())
 
 
-@pytest.mark.parametrize("trusted,expected", [(False, "socket-ip"), (True, "proxy-ip")])
+@pytest.mark.parametrize("trusted,expected", [(False, "127.0.0.1"), (True, "203.0.113.1")])
 def test_forwarded_header_only_when_trusted(trusted, expected):
-    request = SimpleNamespace(client=SimpleNamespace(host="socket-ip"),
-                              headers={"x-forwarded-for": "proxy-ip, proxy2"})
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"),
+                              headers={"x-forwarded-for": "203.0.113.1, 192.0.2.1"})
     assert client_ip(request, Settings(_env_file=None, trust_proxy_headers=trusted)) == expected
 
 
@@ -203,11 +203,56 @@ def test_api_429_body_and_independent_app_state(app_factory):
 
 def test_api_trusted_proxy_and_session_limits(app_factory):
     from fastapi.testclient import TestClient
-    with TestClient(app_factory(rate_limit_per_min=1, trust_proxy_headers=True)) as client:
+    with TestClient(app_factory(rate_limit_per_min=1, trust_proxy_headers=True),
+                    client=("127.0.0.1", 50000)) as client:
         def ask(ip, session):
             return client.post("/api/v1/chat", headers={"X-Forwarded-For": ip},
                                json={"session_id": session, "message": "问题"})
-        assert ask("proxy1", "one").status_code == 200
-        assert ask("proxy2", "two").status_code == 200
-        assert ask("proxy3", "one").status_code == 429
-        assert ask("proxy2", "three").status_code == 429
+        assert ask("203.0.113.1", "one").status_code == 200
+        assert ask("203.0.113.2", "two").status_code == 200
+        assert ask("203.0.113.3", "one").status_code == 429
+        assert ask("203.0.113.2", "three").status_code == 429
+
+
+@pytest.mark.parametrize('trusted', [False, True])
+@pytest.mark.parametrize('header,value,expected', [
+    ('cf-connecting-ip', '203.0.113.7', '203.0.113.7'),
+    ('cf-connecting-ip', '2001:db8::1', '2001:db8::1'),
+    ('cf-connecting-ip', '', '127.0.0.1'),
+    ('cf-connecting-ip', 'not-an-ip', '127.0.0.1'),
+    ('cf-connecting-ip', '203.0.113.7, 203.0.113.8', '127.0.0.1'),
+    ('x-forwarded-for', '203.0.113.8, 192.0.2.2', '203.0.113.8'),
+    ('x-forwarded-for', 'invalid, 203.0.113.8', '127.0.0.1'),
+])
+def test_configured_ip_header_only_trusted_valid_addresses(trusted, header, value, expected):
+    request = SimpleNamespace(client=SimpleNamespace(host='127.0.0.1'), headers={header: value})
+    settings = Settings(_env_file=None, trust_proxy_headers=trusted, client_ip_header=header)
+    assert client_ip(request, settings) == (expected if trusted else '127.0.0.1')
+
+
+def test_cloudflare_header_does_not_fall_back_to_spoofed_forwarded_header():
+    request = SimpleNamespace(client=None, headers={'x-forwarded-for': '203.0.113.8'})
+    assert client_ip(request, Settings(_env_file=None, trust_proxy_headers=True,
+                                       client_ip_header='cf-connecting-ip')) == 'unknown'
+
+
+@pytest.mark.parametrize('header', ['x-forwarded-for', 'cf-connecting-ip'])
+@pytest.mark.parametrize('peer,networks,accepted', [
+    ('127.0.0.1', ['127.0.0.1', '::1'], True),
+    ('::1', ['127.0.0.1', '::1'], True),
+    ('10.8.0.2', ['10.8.0.0/24'], True),
+    ('2001:db8:1::2', ['2001:db8:1::/48'], True),
+    ('10.8.1.2', ['10.8.0.0/24'], False),
+    ('203.0.113.9', ['127.0.0.1', '::1'], False),
+    ('127.0.0.1', [], False),
+    ('not-an-address', ['127.0.0.1', '::1'], False),
+])
+def test_only_trusted_socket_peers_can_supply_client_ip(header, peer, networks, accepted):
+    request = SimpleNamespace(client=SimpleNamespace(host=peer), headers={header: '198.51.100.7'})
+    settings = Settings(_env_file=None, trust_proxy_headers=True, client_ip_header=header, trusted_proxies=networks)
+    assert client_ip(request, settings) == ('198.51.100.7' if accepted else peer)
+
+
+def test_proxy_allowlist_does_not_enable_headers_without_explicit_trust():
+    request = SimpleNamespace(client=SimpleNamespace(host='127.0.0.1'), headers={'x-forwarded-for': '198.51.100.7'})
+    assert client_ip(request, Settings(_env_file=None, trusted_proxies=['127.0.0.0/8'])) == '127.0.0.1'

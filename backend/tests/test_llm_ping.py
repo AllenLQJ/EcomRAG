@@ -19,7 +19,7 @@ QUESTION = "PRIVATE_USER_QUESTION_72"
 def settings(**overrides):
     values = dict(llm_api_key=KEY, llm_base_url=f"https://vendor.example/v1/{KEY}",
                   router_model="router-test", generate_model="generate-test", llm_max_retries=0,
-                  llm_rate_limit_retries=0)
+                  llm_rate_limit_retries=0, llm_network_retries=0)
     values.update(overrides)
     return Settings(_env_file=None, **values)
 

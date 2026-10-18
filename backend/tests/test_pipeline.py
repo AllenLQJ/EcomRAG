@@ -166,7 +166,7 @@ def test_generator_and_response_share_renumbered_filtered_sources():
 
 @pytest.mark.parametrize("marker", ["NO_ANSWER", " \nno_answer\t ", "【No_Answer】。", "!!!NO_ANSWER???",
                                    "n o _ a n s w e r", "`NO_ANSWER`", "NO_ANSWER[1]",
-                                   "NO_ANSWER。 nO_aNsWeR"])
+                                   "NO_ANSWER。 nO_aNsWeR", "ＮＯ＿ＡＮＳＷＥＲ", "ｎｏ＿ａｎｓｗｅｒ"])
 def test_generator_no_answer_returns_fixed_fallback_and_safe_reason(marker, caplog):
     caplog.set_level("INFO", logger="app.pipeline")
     services = FakeServices().knowledge()

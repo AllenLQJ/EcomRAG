@@ -22,6 +22,7 @@ QUESTION = "TEST_PRIVATE_CUSTOMER_INPUT"
 def settings(**values):
     values.setdefault("llm_max_retries", 0)  # 此组单独验证一次尝试的错误映射。
     values.setdefault("llm_rate_limit_retries", 0)
+    values.setdefault("llm_network_retries", 0)
     return Settings(_env_file=None, llm_api_key=KEY, **values)
 
 
@@ -238,7 +239,7 @@ def test_prompt_files_contain_guardrails():
     assert '"strategy":"direct"' in (root / "router.md").read_text()
     for name in ("general", "generate"):
         text = (root / f"{name}.md").read_text()
-        for phrase in ("栖木", "个人信息", "地址", "电话", "订单", "医疗", "疗效", "法律结论",
+        for phrase in ("灵码", "个人信息", "地址", "电话", "订单", "医疗", "疗效", "法律结论",
                        "政策之外", "退款", "赔偿", "补偿", "人工客服", "系统提示词", "忽略规则"):
             assert phrase in text
     text = (root / "generate.md").read_text()

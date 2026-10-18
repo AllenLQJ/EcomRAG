@@ -1,6 +1,7 @@
 import json
 import logging
 from functools import lru_cache
+from ipaddress import ip_network
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -66,14 +67,22 @@ class Settings(BaseSettings):
     refuse_threshold: float = Field(default=0.2, ge=0, le=1)
     rag_context_min_score: float = Field(default=0.1, ge=0, le=1)
     llm_timeout_s: float = Field(default=12, gt=0)
+    # 重试前整请求预算至少还要剩下这么多（与 llm_timeout_s 取小）；正常调用 2–5 秒即可完成。
+    llm_min_attempt_s: float = Field(default=5, gt=0)
+    llm_stream_idle_timeout_s: float = Field(default=20, gt=0)
     llm_max_concurrency: int = Field(default=2, gt=0)
+    llm_keepalive_s: float = Field(default=60, ge=0)
+    llm_network_retries: int = Field(default=3, ge=0)
+    # 兼容旧配置：只控制 5xx；网络错误和超时使用独立的 llm_network_retries。
     llm_max_retries: int = Field(default=1, ge=0)
     llm_rate_limit_retries: int = Field(default=3, ge=0)
-    llm_timeout_retries: int = Field(default=1, ge=0)
+    llm_timeout_retries: int = Field(default=1, ge=0)  # 已弃用，仅接受旧配置，不再限制超时重试。
     llm_retry_backoff_s: float = Field(default=0.5, ge=0)
     warmup_on_start: bool = True
     allow_trace: bool = False
     trust_proxy_headers: bool = False
+    client_ip_header: Literal["x-forwarded-for", "cf-connecting-ip"] = "x-forwarded-for"
+    trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
     request_timeout_s: float = Field(default=40, gt=0)
     model_io_workers: int = Field(default=1, gt=0)
     model_io_queue_size: int = Field(default=8, ge=0)
@@ -130,6 +139,16 @@ class Settings(BaseSettings):
         if conflict:
             logger.warning("LLM_* 与 QWEN_* 配置冲突，以 LLM_* 为准")
         return self
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def validate_trusted_proxies(cls, values):
+        try:
+            for value in values:
+                ip_network(value, strict=False)
+        except ValueError:
+            raise ValueError("TRUSTED_PROXIES 必须为 IP 地址或 CIDR 网段") from None
+        return values
 
     @field_validator("llm_extra_body", mode="before")
     @classmethod

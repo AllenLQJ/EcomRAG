@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class SampleDataTests(unittest.TestCase):
     def test_documents_have_headings_size_and_fiction_label(self):
         docs = list((ROOT / "data/docs").glob("*.md"))
-        self.assertTrue(16 <= len(docs) <= 20)
+        self.assertEqual(len(docs), 19)
         for path in docs:
             with self.subTest(path=path.name):
                 text = path.read_text(encoding="utf-8")
@@ -31,14 +31,14 @@ class SampleDataTests(unittest.TestCase):
             reader = csv.DictReader(handle)
             self.assertEqual(reader.fieldnames, ["question", "answer", "category"])
             rows = list(reader)
-        self.assertEqual(len(rows), 34)
-        self.assertEqual(len({row["question"] for row in rows}), 34)
+        self.assertEqual(len(rows), 37)
+        self.assertEqual(len({row["question"] for row in rows}), 37)
         self.assertIn("怎么申请退货？", {row["question"] for row in rows})
         self.assertEqual(sum(row["question"] == "怎么申请退货？" for row in rows), 1)
         self.assertEqual({row["category"] for row in rows}, CATEGORIES)
         self.assertTrue(all("虚构样例" in row["answer"] for row in rows))
 
-    def test_shipping_and_invoice_short_faq_answers_are_document_excerpts(self):
+    def test_shipping_invoice_and_catalog_faq_answers_are_document_excerpts(self):
         with (ROOT / "data/faq.csv").open(encoding="utf-8", newline="") as handle:
             faq = {row["question"]: row for row in csv.DictReader(handle)}
         compact = lambda text: re.sub(r"\s+", "", text)
@@ -47,6 +47,9 @@ class SampleDataTests(unittest.TestCase):
             ("运费多少钱？", "logistics", "logistics_shipping.md"),
             ("发票怎么开？", "payment", "payment_invoices.md"),
             ("怎么开发票？", "payment", "payment_invoices.md"),
+            ("你们有什么商品？", "product", "product_catalog.md"),
+            ("店里卖哪些东西？", "product", "product_catalog.md"),
+            ("有哪些耳机？", "product", "product_catalog.md"),
         ):
             with self.subTest(question=question):
                 row = faq[question]
@@ -56,6 +59,44 @@ class SampleDataTests(unittest.TestCase):
                 for sentence in compact(row["answer"].removeprefix("虚构样例：")).split("。"):
                     if sentence:
                         self.assertIn(sentence, document)
+
+    def test_catalog_product_names_and_key_facts_are_grounded_in_details(self):
+        compact = lambda text: re.sub(r"[\s|]", "", text)
+        catalog = (ROOT / "data/docs/product_catalog.md").read_text(encoding="utf-8")
+        products = {
+            "product_tinglan_s1.md": ["日常通勤与语音通话", "单次音乐续航8小时", "含充电盒总续航32小时",
+                                     "单只耳机重量4.2克", "通话环境降噪，无主动降噪"],
+            "product_tinglan_s2.md": ["支持主动降噪和通话环境降噪", "关闭主动降噪单次续航10小时",
+                                     "含盒总续航40小时", "开启主动降噪单次续航6小时", "含盒总续航24小时",
+                                     "单只耳机重量4.8克"],
+            "product_qiguang_l1.md": ["适合书桌阅读和普通室内照明", "额定功率6瓦", "输入要求5伏直流、2安",
+                                     "色温档位3000、4000、5000开尔文", "没有内置电池，断电后不会继续照明"],
+            "product_muche_c1.md": ["日常饮水用保温杯", "标称容量450毫升", "食品接触用不锈钢",
+                                   "室温20摄氏度、初始水温95摄氏度，6小时后不低于55摄氏度"],
+        }
+        names = set()
+        for filename, facts in products.items():
+            detail = (ROOT / "data/docs" / filename).read_text(encoding="utf-8")
+            names.add(detail.splitlines()[0].removeprefix("# ").split("｜")[0])
+            for fact in facts:
+                with self.subTest(product=filename, fact=fact):
+                    self.assertIn(fact, compact(detail))
+                    self.assertIn(fact, compact(catalog))
+        self.assertEqual(set(re.findall(r"^### (.+)$", catalog, re.MULTILINE)), names)
+        self.assertIn("目前资料收录的商品为以上 4 款", catalog)
+        self.assertNotRegex(catalog, r"只销售|价格|库存|促销")
+
+    def test_catalog_overview_survives_default_chunking_with_all_four_products(self):
+        document = next(doc for doc in load_directory(ROOT / "data/docs") if doc.source == "product_catalog.md")
+        chunks = split_document(document)
+        self.assertEqual(document.category, "product")
+        self.assertEqual((len({chunk.parent_id for chunk in chunks}), len(chunks)), (4, 5))
+        first = chunks[0]
+        for phrase in ("你这里有什么商品", "你们卖什么", "听岚 S1", "听岚 S2", "栖光 L1", "木澈 C1",
+                       "无线耳机", "桌面台灯", "保温杯"):
+            self.assertIn(phrase, first.child_text)
+        self.assertTrue(all(chunk.child_text.startswith(document.title + "\n") for chunk in chunks))
+        self.assertTrue(all(len(chunk.child_text) <= 300 and len(chunk.parent_text) <= 1200 for chunk in chunks))
 
     def test_eval_exact_coverage_and_document_references(self):
         rows = [json.loads(line) for line in (ROOT / "data/eval.jsonl").read_text(encoding="utf-8").splitlines()]

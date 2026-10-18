@@ -14,10 +14,16 @@ class FakeServices:
     def __init__(self):
         self.faq_lookup = Mock(return_value=None)
         self.route = AsyncMock(return_value=RouteDecision(intent="general", rewritten_query="店铺服务"))
-        self.chat_general = AsyncMock(return_value="你好，我是栖木客服助手。")
+        self.chat_general = AsyncMock(return_value="你好，我是灵码客服助手。")
         self.retrieve = Mock(return_value=[document()])
         self.generate_answer = AsyncMock(return_value=GeneratedAnswer("说明[1]", {1}))
         self.warmup = AsyncMock()
+
+    async def chat_general_stream(self, question, history):
+        yield await self.chat_general(question, history)
+
+    async def generate_answer_stream(self, question, docs, history):
+        yield (await self.generate_answer(question, docs, history)).answer
 
     def knowledge(self):
         self.route.return_value = RouteDecision(intent="knowledge", rewritten_query="改写后的检索问题")

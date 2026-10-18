@@ -1,5 +1,6 @@
 """IP、session 分别按固定分钟/自然日窗口计数；Redis 故障退化为本进程。"""
 import hashlib
+from ipaddress import ip_address, ip_network
 import threading
 import time
 from collections import OrderedDict
@@ -71,8 +72,21 @@ class RateLimiter:
 
 
 def client_ip(request, settings):
-    if settings.trust_proxy_headers:
-        forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
-        if forwarded:
-            return forwarded
-    return request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else "unknown"
+    if not settings.trust_proxy_headers:
+        return peer
+    try:
+        address = ip_address(peer)
+        trusted = any(address in ip_network(network, strict=False) for network in settings.trusted_proxies)
+    except ValueError:
+        trusted = False
+    if trusted:
+        header = settings.client_ip_header
+        forwarded = request.headers.get(header, "").strip()
+        if header == "x-forwarded-for":
+            forwarded = forwarded.split(",", 1)[0].strip()
+        try:
+            return str(ip_address(forwarded))
+        except ValueError:
+            pass
+    return peer

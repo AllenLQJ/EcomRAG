@@ -28,6 +28,7 @@ from app.pipeline import run_chat
 from app.rate_limit import RateLimiter, client_ip
 from app.schemas import ChatRequest, ChatResponse
 from app.services import Services
+from app.streaming import SSEStreamingResponse, chat_events
 
 logger = logging.getLogger(__name__)
 
@@ -218,5 +219,15 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                         json.dumps(session), result.route if result else "error",
                         result.strategy if result else None, (perf_counter() - started) * 1000,
                         json.dumps(stages), len(result.sources) if result else 0)
+
+    @app.post("/api/v1/chat/stream")
+    async def chat_stream(payload: ChatRequest, request: Request):
+        return SSEStreamingResponse(
+            chat_events(payload, request.state.request_id, settings=settings, services=services,
+                        before_chat=lambda: limiter.check_async(client_ip(request, settings), payload.session_id),
+                        chat_logs=chat_logs),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Content-Encoding": "identity"},
+        )
 
     return app

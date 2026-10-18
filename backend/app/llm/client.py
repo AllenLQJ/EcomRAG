@@ -1,10 +1,13 @@
 """OpenAI 兼容客户端：对用户保持通用错误，日志提供经过脱敏的供应商诊断。"""
 import asyncio
 import errno
+import inspect
 import json
 import logging
 import math
-from contextlib import AsyncExitStack
+import random
+import socket
+from contextlib import AsyncExitStack, aclosing
 from dataclasses import dataclass, field
 from weakref import WeakKeyDictionary
 
@@ -13,7 +16,7 @@ import httpx
 from app.contracts import AppError, LLM_ERROR, SERVICE_BUSY, TIMEOUT
 from app.llm.diagnostics import diagnostic_info, extra_body_keys
 from app.llm.responses import extract_text, response_structure
-from app.budget import request_budget
+from app.budget import deadline, request_budget
 
 logger = logging.getLogger(__name__)
 # 每个运行中的事件循环共享同一上限；隔离测试/CLI 创建的不同事件循环。
@@ -33,7 +36,8 @@ class Completion:
 
 
 def retryable_network(exc):
-    if isinstance(exc, (httpx.ConnectError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError,
+                        ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
         return True
     seen = set()
     current = exc
@@ -42,9 +46,9 @@ def retryable_network(exc):
         if isinstance(current, OSError) and current.errno in {errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE}:
             return True
         current = current.__cause__ or current.__context__
-    # 有些兼容传输丢弃了 errno，只留下 ReadError/WriteError 的连接重置说明。
+    # 有些兼容传输丢弃了 errno，只留下 WriteError 的连接重置说明。
     # 这些文本只用于分类，从不记录到日志或错误响应。
-    return isinstance(exc, (httpx.ReadError, httpx.WriteError)) and any(
+    return isinstance(exc, httpx.WriteError) and any(
         term in str(exc).lower() for term in ("connection reset", "connection aborted", "broken pipe"))
 
 
@@ -74,8 +78,28 @@ class LLMClient:
         self._http = self._new_http()
 
     def _new_http(self):
-        return httpx.AsyncClient(transport=self._transport, timeout=self.settings.llm_timeout_s,
+        limits = httpx.Limits(max_keepalive_connections=self.settings.llm_max_concurrency,
+                              max_connections=self.settings.llm_max_concurrency,
+                              keepalive_expiry=self.settings.llm_keepalive_s)
+        transport = self._transport
+        if transport is None:
+            options = dict(limits=limits, trust_env=False, retries=0)
+            # 老版本 httpx 未公开 socket_options 时跳过 TCP keepalive；连接池仍照常复用 TLS。
+            if "socket_options" in inspect.signature(httpx.AsyncHTTPTransport).parameters:
+                options["socket_options"] = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+            transport = httpx.AsyncHTTPTransport(**options)
+        return httpx.AsyncClient(transport=transport, limits=limits, timeout=self.settings.llm_timeout_s,
                                  follow_redirects=False, trust_env=False)
+
+    def _can_retry(self, delay):
+        # 为退避后的一次尝试预留最少时间；不重置路由/生成共用的整请求 deadline，重试本身仍受其约束。
+        end = deadline.get()
+        floor = min(self.settings.llm_timeout_s, self.settings.llm_min_attempt_s)
+        return end is None or end - asyncio.get_running_loop().time() > delay + floor
+
+    def _network_delay(self, number):
+        base = self.settings.llm_retry_backoff_s * 2 ** (number - 1)
+        return base + random.uniform(0, min(0.1, base * 0.1))
 
     def _failure(self, category, code, status, message, *, model, messages, key,
                  response=None, exception_type=None):
@@ -106,12 +130,12 @@ class LLMClient:
         await self._sleep(self.settings.llm_retry_backoff_s * 2 ** (number - 1) if delay is None else delay)
 
     async def _request(self, payload, context):
-        # 429 使用独立计数，退避前释放名额；网络/5xx/超时仍共用普通重试预算并持有名额。
+        # 网络/超时、5xx、429 独立计数；429 退避释放名额，其他退避持有名额。
         semaphore = _semaphore(self.settings.llm_max_concurrency)
         acquired = False
         async with AsyncExitStack() as clients:
             http = self._http
-            retries = timeout_retries = rate_limit_retries = 0
+            retries = network_retries = rate_limit_retries = 0
             try:
                 while True:
                     if not acquired:
@@ -124,25 +148,28 @@ class LLMClient:
                                 self.settings.llm_base_url.rstrip("/") + "/chat/completions",
                                 headers={"Authorization": f'Bearer {context["key"]}'}, json=payload)
                     except (httpx.TimeoutException, TimeoutError):
-                        if retries >= self.settings.llm_max_retries \
-                                or timeout_retries >= self.settings.llm_timeout_retries:
+                        delay = self._network_delay(network_retries + 1)
+                        if network_retries >= self.settings.llm_network_retries or not self._can_retry(delay):
                             raise
-                        retries += 1
-                        timeout_retries += 1
-                        await self._retry("timeout", None, retries, context)
+                        network_retries += 1
+                        await self._retry("timeout", None, network_retries, context, delay=delay)
                         # 独立连接池，避免复用挂起连接；不关闭其他并发请求共享的客户端。
                         # 整请求预算触发的是 CancelledError，不会进入此超时重试分支。
                         http = await clients.enter_async_context(self._new_http())
                         continue
                     except (httpx.RequestError, OSError) as exc:
-                        if retries >= self.settings.llm_max_retries or not retryable_network(exc):
+                        delay = self._network_delay(network_retries + 1)
+                        if network_retries >= self.settings.llm_network_retries \
+                                or not retryable_network(exc) or not self._can_retry(delay):
                             raise
-                        retries += 1
-                        await self._retry("network", None, retries, context)
+                        network_retries += 1
+                        await self._retry("network", None, network_retries, context, delay=delay)
                         continue
                     if response.status_code == 429 and rate_limit_retries < self.settings.llm_rate_limit_retries:
+                        delay = rate_limit_delay(response, rate_limit_retries + 1)
+                        if not self._can_retry(delay):
+                            return response
                         rate_limit_retries += 1
-                        delay = rate_limit_delay(response, rate_limit_retries)
                         await response.aclose()
                         semaphore.release()
                         acquired = False
@@ -150,6 +177,9 @@ class LLMClient:
                                           response=response, delay=delay)
                         continue
                     if 500 <= response.status_code < 600 and retries < self.settings.llm_max_retries:
+                        delay = self.settings.llm_retry_backoff_s * 2 ** retries
+                        if not self._can_retry(delay):
+                            return response
                         retries += 1
                         await response.aclose()
                         await self._retry("http_status", response.status_code, retries, context)
@@ -227,3 +257,10 @@ class LLMClient:
 
     async def aclose(self):
         await self._http.aclose()
+
+    async def stream(self, *, model, messages, temperature, max_tokens):
+        from app.llm.streaming import stream_completion
+        async with aclosing(stream_completion(self, model=model, messages=messages,
+                                              temperature=temperature, max_tokens=max_tokens)) as chunks:
+            async for text in chunks:
+                yield text

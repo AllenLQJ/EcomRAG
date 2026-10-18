@@ -57,7 +57,7 @@ def test_eval_empty_input_and_internal_trace_with_api_trace_disabled():
     assert set(report["stage_mean_ms"]) == {"cache", "faq", "router", "generate", "total"}
     assert report["trace_enabled"] is True and report["api_trace_allowed"] is False
     row = report["results"][0]
-    assert row["answer"] == "你好，我是栖木客服助手。" and row["sources"] == []
+    assert row["answer"] == "你好，我是灵码客服助手。" and row["sources"] == []
     assert row["total_ms"] >= 0 and set(row["stage_ms"]) == set(report["stage_mean_ms"])
 
 

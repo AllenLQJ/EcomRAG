@@ -195,7 +195,8 @@ def test_rate_backoff_releases_slot_for_another_client_before_retry():
 
 
 @pytest.mark.parametrize("ordinary", ["503", "network", "timeout"])
-def test_rate_retries_do_not_consume_or_reset_ordinary_retry_budget(ordinary):
+def test_rate_retries_do_not_consume_or_reset_ordinary_retry_budget(ordinary, monkeypatch):
+    monkeypatch.setattr("app.llm.client.random.uniform", lambda low, high: 0)
     calls = []
     def handler(request):
         calls.append(request)
@@ -208,7 +209,7 @@ def test_rate_retries_do_not_consume_or_reset_ordinary_retry_budget(ordinary):
         return httpx.Response(503)
     sleep = AsyncMock()
     async def run():
-        client = LLMClient(settings(llm_max_retries=1, llm_rate_limit_retries=3),
+        client = LLMClient(settings(llm_max_retries=1, llm_network_retries=1, llm_rate_limit_retries=3),
                            transport=httpx.MockTransport(handler), sleep=sleep)
         try:
             with pytest.raises(AppError) as caught:
@@ -237,7 +238,7 @@ def test_request_deadline_interrupts_rate_retry_and_reclaims_permit(phase, monke
             occupied.set()
             await free.wait()
             return success()
-        configured = settings(llm_max_concurrency=1, request_timeout_s=60, llm_timeout_s=60)
+        configured = settings(llm_max_concurrency=1, request_timeout_s=120, llm_timeout_s=60)
         client = LLMClient(configured, transport=httpx.MockTransport(limited_handler), sleep=sleep)
         holder = LLMClient(configured, transport=httpx.MockTransport(holder_handler))
         task = asyncio.create_task(complete(client))

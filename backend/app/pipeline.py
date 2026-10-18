@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.contracts import AppError, TIMEOUT
 from app.executor import BoundedExecutor
 from app.llm.strategies import build_queries
+from app.llm.answer_stream import forward_answer
 from app.llm.generator import clean_generated_answer, validate_citations
 from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 from app.schemas import ChatRequest, ChatResponse, Source
@@ -117,7 +118,7 @@ def select_context(docs, settings):
 
 
 async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings, services,
-                   trace_sink=None, history=None, before_chat=None) -> ChatResponse:
+                   trace_sink=None, history=None, before_chat=None, on_status=None, on_delta=None) -> ChatResponse:
     trace = [] if trace_sink is None else trace_sink
     token = items.set(trace)
     started, result = perf_counter(), None
@@ -133,7 +134,7 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
             if before_chat is not None:
                 await before_chat()
             result = await _run(chat, request_id or str(uuid4()), settings, services, trace,
-                                [] if history is None else history, executor)
+                                [] if history is None else history, executor, on_status=on_status, on_delta=on_delta)
             return result
     except TimeoutError:
         raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
@@ -146,12 +147,14 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
             executor.shutdown()
 
 
-async def _run(chat, request_id, settings, services, trace, history, executor):
+async def _run(chat, request_id, settings, services, trace, history, executor, *, on_status=None, on_delta=None):
     def response(answer, route, sources=(), strategy=None):
         return ChatResponse(request_id=request_id, session_id=chat.session_id,
                             answer=answer, route=route, strategy=strategy, sources=list(sources),
                             is_mock=False, trace=trace if chat.debug and settings.allow_trace else None)
 
+    if on_status is not None:
+        await on_status("faq")
     started = perf_counter()
     try:
         hit = await call(services.faq_lookup, chat.message, executor=executor)
@@ -174,6 +177,8 @@ async def _run(chat, request_id, settings, services, trace, history, executor):
                                                     executor=executor, top_k=settings.rerank_top_k))
     try:
         started = perf_counter()
+        if on_status is not None:
+            await on_status("routing")
         decision = await services.route(chat.message, history)
         record("router", started, intent=decision.intent)
         if decision.intent in {"sensitive", "general"}:
@@ -183,13 +188,20 @@ async def _run(chat, request_id, settings, services, trace, history, executor):
             if decision.intent == "sensitive":
                 return response(SENSITIVE_REFUSAL, "fallback")
             started = perf_counter()
-            answer = await services.chat_general(chat.message, history)
+            if on_delta is not None:
+                if on_status is not None:
+                    await on_status("generating")
+                answer = await forward_answer(services.chat_general_stream(chat.message, history), on_delta)
+            else:
+                answer = await services.chat_general(chat.message, history)
             record("generate", started)
             answer, no_answer = clean_generated_answer(answer)
             if no_answer:
                 logger.info("chat_fallback reason=generator_no_answer")
                 return response(REFUSAL, "fallback")
             return response(answer, "general")
+        if on_status is not None:
+            await on_status("retrieving")
         if speculative is not None:
             try:
                 docs, candidates = await speculative
@@ -216,7 +228,13 @@ async def _run(chat, request_id, settings, services, trace, history, executor):
     # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
     docs = select_context(docs, settings)
     started = perf_counter()
-    generated = await services.generate_answer(chat.message, docs, history)
+    if on_delta is not None:
+        if on_status is not None:
+            await on_status("generating")
+        raw = await forward_answer(services.generate_answer_stream(chat.message, docs, history), on_delta)
+        generated = validate_citations(raw, len(docs))
+    else:
+        generated = await services.generate_answer(chat.message, docs, history)
     record("generate", started)
     # 以文本中的有效引用为准；也防止替身/其他生成器的元数据与文本不一致。
     answer, no_answer = clean_generated_answer(generated.answer)

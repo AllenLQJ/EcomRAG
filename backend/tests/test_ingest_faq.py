@@ -62,9 +62,9 @@ class FaqImportTests(unittest.TestCase):
     def test_reimport_is_idempotent_and_updates_answer(self):
         rows = read_faq(ROOT / "data/faq.csv")
         connection = FakeConnection()
-        self.assertEqual(upsert_faq(connection, rows), 34)
-        self.assertEqual(upsert_faq(connection, rows), 34)
-        self.assertEqual(len(connection.rows), 34)
+        self.assertEqual(upsert_faq(connection, rows), 37)
+        self.assertEqual(upsert_faq(connection, rows), 37)
+        self.assertEqual(len(connection.rows), 37)
         upsert_faq(connection, [FaqRow("怎么申请退货？", "更新后的虚构样例答案", "after_sales")])
         self.assertEqual(connection.rows["怎么申请退货？"][0], "更新后的虚构样例答案")
         self.assertFalse(connection.locked)
