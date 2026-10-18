@@ -22,7 +22,6 @@ from app.contracts import (
     INVALID_ARGUMENT,
     METHOD_NOT_ALLOWED,
     NOT_FOUND,
-    TIMEOUT,
 )
 from app.logging_config import configure_logging, log_exception, request_id as request_id_context
 from app.pipeline import run_chat
@@ -77,6 +76,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
     @asynccontextmanager
     async def lifespan(app):
         try:
+            if settings.chat_log_enabled and callable(getattr(chat_logs, "start", None)):
+                chat_logs.start()
             if settings.warmup_on_start and settings.chat_log_enabled:
                 try:
                     await chat_logs.ensure_schema()
@@ -90,7 +91,11 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                 if owned:
                     await services.aclose()
             finally:
-                await limiter.aclose()
+                try:
+                    await limiter.aclose()
+                finally:
+                    if settings.chat_log_enabled and callable(getattr(chat_logs, "aclose", None)):
+                        await chat_logs.aclose()
 
     app = FastAPI(
         lifespan=lifespan,
@@ -122,9 +127,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             response.headers["X-Request-ID"] = request.state.request_id
             return response
         except Exception as exc:
-            log_exception(logger, exc)
             # 不再把带原文的异常交给 ASGI 服务器重复记录。
-            return error_response(request, INTERNAL_ERROR, "内部错误", 500)
+            return await unexpected_error_handler(request, exc)
         finally:
             logger.info("request_done method=%s path=%s status=%d ms=%.3f",
                         request.method, json.dumps(request.url.path), status,
@@ -151,14 +155,25 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             404: NOT_FOUND,
             405: METHOD_NOT_ALLOWED,
         }.get(exc.status_code, HTTP_ERROR if exc.status_code < 500 else INTERNAL_ERROR)
-        response = error_response(request, code, str(exc.detail), exc.status_code)
+        message = {404: "请求的地址不存在", 405: "请求方法不允许"}.get(
+            exc.status_code, "请求无法处理" if exc.status_code < 500 else "服务暂时不可用")
+        response = error_response(request, code, message, exc.status_code)
         if exc.headers:
             response.headers.update(exc.headers)
         return response
 
     @app.exception_handler(Exception)
     async def unexpected_error_handler(request: Request, exc: Exception):
-        return error_response(request, INTERNAL_ERROR, "内部错误", 500)
+        if not getattr(request.state, "unexpected_logged", False):
+            log_exception(logger, exc)
+            request.state.unexpected_logged = True
+        response = error_response(request, INTERNAL_ERROR, "内部错误", 500)
+        payload = getattr(request.state, "chat_payload", None)
+        if settings.chat_log_enabled and payload is not None:
+            row = ChatLog(request.state.request_id, payload.session_id, payload.message, "", "error",
+                          (perf_counter() - request.state.chat_started) * 1000, error_code=INTERNAL_ERROR)
+            response.background = BackgroundTask(persist, chat_logs, row)
+        return response
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -180,18 +195,15 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         request.state.chat_payload, request.state.chat_started = payload, started
         trace, result = [], None
         try:
-            async with asyncio.timeout(settings.request_timeout_s):
-                await limiter.check_async(client_ip(request, settings), payload.session_id)
-                result = await run_chat(payload, request_id=request.state.request_id,
-                                        settings=settings, services=services, trace_sink=trace)
+            result = await run_chat(payload, request_id=request.state.request_id,
+                                    settings=settings, services=services, trace_sink=trace,
+                                    before_chat=lambda: limiter.check_async(client_ip(request, settings), payload.session_id))
             if settings.chat_log_enabled:
                 row = ChatLog(result.request_id, result.session_id, payload.message, result.answer,
                               result.route, (perf_counter() - started) * 1000, strategy=result.strategy,
                               sources=[source.model_dump() for source in result.sources])
                 background_tasks.add_task(persist, chat_logs, row)
             return result
-        except TimeoutError:
-            raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
         finally:
             stages = {}
             for item in trace:

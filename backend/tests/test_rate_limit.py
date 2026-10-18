@@ -131,6 +131,28 @@ def test_local_counter_is_atomic_and_instances_are_isolated():
     fresh.check("ip", "s")
 
 
+def test_local_capacity_lru_eviction_and_expired_windows():
+    settings = Settings(_env_file=None, rate_limit_per_min=100, rate_limit_per_day=100)
+    assert RateLimiter(settings).capacity == 10000
+    clock = [100000.0]
+    instance = RateLimiter(settings, capacity=8, clock=lambda: clock[0])
+    instance.cache._client = lambda: None
+    instance.check("a", "a")
+    a_keys = set(instance._counts)
+    instance.check("b", "b")
+    b_keys = set(instance._counts) - a_keys
+    instance.check("a", "a")  # 更新 a 的访问顺序。
+    instance.check("c", "c")
+    assert len(instance._counts) == 8
+    assert a_keys <= instance._counts.keys() and not b_keys & instance._counts.keys()
+    for i in range(30):
+        instance.check(str(i), str(i))
+        assert len(instance._counts) <= 8
+    clock[0] += 86400
+    instance.check("fresh", "fresh")
+    assert len(instance._counts) == 4 and all(count == 1 for count, _ in instance._counts.values())
+
+
 @pytest.mark.parametrize("trusted,expected", [(False, "socket-ip"), (True, "proxy-ip")])
 def test_forwarded_header_only_when_trusted(trusted, expected):
     request = SimpleNamespace(client=SimpleNamespace(host="socket-ip"),

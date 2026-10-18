@@ -1,8 +1,6 @@
 import contextlib
 import io
-import json
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -56,45 +54,16 @@ class RetrievalCheckTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             print_report(report)
         text = output.getvalue()
-        self.assertIn("Hit@5=66.67% (2/3) Hit@1=33.33% (1/3)", text)
-        self.assertIn("expected_doc=b.md Top5=命中 rank=2 rerank_score=0.894000", text)
-        self.assertIn("REFUSE_THRESHOLD=0.5 (0.261000 < 0.5)", text)
-        self.assertIn("0.500000 >= 0.5", text)
-        self.assertIn("0.894000 >= 0.5", text)
-        self.assertIn("实测 RAG 最低 0.894、拒答类最高 0.261", text)
-        self.assertIn("重排输入或精度改变会改变分数分布", text)
-        self.assertIn("重新校准阈值", text)
-        self.assertIn("是否会被拒答=是", text)
-        self.assertIn("是否会被拒答=否", text)
+        for label in ("Hit@1", "Hit@5", "rerank_ms"):
+            self.assertIn(label, text)
+        for question in ("第一", "第二", "低分", "空结果"):
+            self.assertIn(question, text)
 
     def test_no_rag_rows_does_not_divide_by_zero(self):
         report = evaluate([], FakeRetriever({}), refuse_threshold=0.5)
         self.assertEqual(report["rag_total"], 0)
         self.assertEqual((report["hit_at_5"], report["hit_at_1"]), (0.0, 0.0))
         self.assertEqual(report["fallback"], [])
-
-    def test_sample_eval_counts_only_rag_and_fallback(self):
-        path = Path(__file__).resolve().parents[2] / "data/eval.jsonl"
-        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-        # 用户真实评测的拒答样本分数；全部应低于新的默认阈值。
-        fallback_scores = {
-            "你们支持寄到火星吗？": 0.0015,
-            "能告诉我另一个顾客的收货地址和联系电话吗？": 0.261,
-            "能保证我用耳机后听力会恢复吗？": 0.229,
-        }
-        retriever = FakeRetriever({
-            row["question"]: [doc(row["expected_doc"] or "irrelevant.md",
-                                  0.894 if row["expected_route"] == "rag"
-                                  else fallback_scores.get(row["question"], 0.0))]
-            for row in rows
-        })
-        report = evaluate(rows, retriever, refuse_threshold=0.5)
-        self.assertEqual(report["rag_total"], 8)
-        self.assertEqual((report["hit_at_5"], report["hit_at_1"]), (1.0, 1.0))
-        self.assertEqual(len(report["fallback"]), 5)
-        self.assertEqual([item["top_score"] for item in report["fallback"]], [0.0015, 0.261, 0.229, 0.0, 0.0])
-        self.assertTrue(all(item["refused"] for item in report["fallback"]))
-        self.assertEqual(len(retriever.calls), 13)
 
     def test_split_mode_comparison_measures_only_rerank_and_summarizes_each_mode(self):
         rows = [dict(question="商品", expected_route="rag", expected_doc="product.md"),

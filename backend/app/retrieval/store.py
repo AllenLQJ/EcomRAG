@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 from dataclasses import asdict
 
 from app.retrieval.embedder import DENSE_DIM, EmbeddingBatch, validate_embeddings
@@ -18,7 +19,10 @@ class MilvusStore:
     """显式写入时才加载 SDK；测试可同时注入客户端和字段类型。"""
 
     def __init__(self, uri: str = "http://127.0.0.1:19530", *,
-                 collection_name: str = "kb_chunks", client=None, data_type=None):
+                 collection_name: str = "kb_chunks", client=None, data_type=None, timeout_s=10):
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("Milvus 超时必须是正的有限秒数")
+        self.timeout_s = timeout_s
         self.uri = uri
         self.collection_name = collection_name
         self.client = client
@@ -32,7 +36,7 @@ class MilvusStore:
             except ImportError as exc:
                 raise RuntimeError("写入 Milvus 需要 pymilvus，请通过 uv 安装声明的依赖") from exc
             if self.client is None:
-                self.client = module.MilvusClient(uri=self.uri)
+                self.client = module.MilvusClient(uri=self.uri, timeout=self.timeout_s)
             if self.data_type is None:
                 self.data_type = module.DataType
         return self.client
@@ -69,4 +73,4 @@ class MilvusStore:
                     raise ValueError(f"字段 {name} 超出 Milvus 的 {limit} 字节限制")
             rows.append({**row, "dense": dense, "sparse": sparse})
         self.ensure_collection()
-        return self.client.upsert(collection_name=self.collection_name, data=rows)
+        return self.client.upsert(collection_name=self.collection_name, data=rows, timeout=self.timeout_s)

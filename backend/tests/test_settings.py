@@ -31,9 +31,11 @@ def test_llm_environment_names_priority_and_safe_deprecation(monkeypatch, caplog
     assert settings.llm_base_url == (old_url if mode == "legacy" else new_url)
     assert not any(name.startswith("legacy_llm_") for name in settings.model_dump())
     warnings = [record for record in caplog.records if record.name == "app.config"]
-    assert len(warnings) == (1 if mode == "legacy" else 0)
-    if warnings:
+    assert len(warnings) == (0 if mode == "current" else 1)
+    if mode == "legacy":
         assert warnings[0].getMessage() == "QWEN_* 配置名已弃用，请改用 LLM_*"
+    if mode == "both":
+        assert "冲突" in warnings[0].getMessage()
     assert all(value not in caplog.text for value in (old_key, new_key, old_url, new_url))
 
 
@@ -46,20 +48,31 @@ def test_legacy_url_alone_warns_without_logging_value(monkeypatch, caplog):
     assert "private-path" not in caplog.text and "CURRENT_PRIVATE_KEY_93" not in caplog.text
 
 
-def test_explicit_current_fields_override_legacy_environment(monkeypatch, caplog):
+def test_blank_current_key_falls_back_while_nonempty_current_url_wins(monkeypatch, caplog):
     monkeypatch.setenv("QWEN_API_KEY", "LEGACY_PRIVATE_KEY_94")
     monkeypatch.setenv("QWEN_BASE_URL", "https://legacy.example")
     settings = Settings(_env_file=None, llm_api_key="", llm_base_url="https://explicit.example")
-    assert settings.llm_api_key.get_secret_value() == ""
+    assert settings.llm_api_key.get_secret_value() == "LEGACY_PRIVATE_KEY_94"
     assert settings.llm_base_url == "https://explicit.example"
-    assert "配置名已弃用" not in caplog.text
+    assert "配置名已弃用" in caplog.text
 
 
-def test_empty_current_key_takes_priority_over_legacy_key(monkeypatch, caplog):
+def test_empty_current_key_uses_valid_legacy_key(monkeypatch, caplog):
     monkeypatch.setenv("QWEN_API_KEY", "LEGACY_PRIVATE_KEY_95")
     monkeypatch.setenv("LLM_API_KEY", "")
-    assert Settings(_env_file=None).llm_api_key.get_secret_value() == ""
-    assert "配置名已弃用" not in caplog.text
+    assert Settings(_env_file=None).llm_api_key.get_secret_value() == "LEGACY_PRIVATE_KEY_95"
+    assert "配置名已弃用" in caplog.text
+
+
+def test_blank_current_url_uses_valid_legacy_and_equal_values_do_not_conflict(monkeypatch, caplog):
+    monkeypatch.setenv("LLM_BASE_URL", " ")
+    monkeypatch.setenv("QWEN_BASE_URL", "https://legacy.test/private-path")
+    monkeypatch.setenv("LLM_API_KEY", "same-private-key")
+    monkeypatch.setenv("QWEN_API_KEY", "same-private-key")
+    settings = Settings(_env_file=None)
+    assert settings.llm_base_url == "https://legacy.test/private-path"
+    assert "冲突" not in caplog.text and "已弃用" in caplog.text
+    assert "private-path" not in caplog.text and "same-private-key" not in caplog.text
 
 
 def test_unconfigured_health_and_client_do_not_use_network(monkeypatch):

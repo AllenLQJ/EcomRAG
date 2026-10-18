@@ -120,7 +120,13 @@ def test_uncaught_exception_records_safe_stack_and_uniform_response(tmp_path, ca
     for secret in (QUESTION, ANSWER, KEY):
         assert secret not in caplog.text
         assert secret not in (tmp_path / "logs/app.log").read_text()
-    assert "unhandled_exception" in caplog.text and "stack=" in caplog.text
+    records = [record for record in caplog.records if record.name == "app.main"
+               and record.getMessage().startswith("unhandled_exception")]
+    assert len(records) == 1 and "RuntimeError" in records[0].getMessage() and "stack=" in records[0].getMessage()
+    writer.write.assert_awaited_once()
+    row = writer.write.call_args.args[0]
+    assert (row.question, row.answer, row.route, row.error_code) == (QUESTION, "", "error", 50001)
+    assert row.request_id == response.json()["request_id"]
     assert "status=500" in caplog.text
 
 

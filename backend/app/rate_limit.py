@@ -3,16 +3,20 @@ import asyncio
 import hashlib
 import threading
 import time
+from collections import OrderedDict
 
 from app.contracts import AppError, RATE_LIMITED
 from app.faq.cache import FaqCache
 
 
 class RateLimiter:
-    def __init__(self, settings, *, redis=None, clock=time.time):
+    def __init__(self, settings, *, redis=None, clock=time.time, capacity=10000):
+        if capacity <= 0:
+            raise ValueError("本地限流容量必须大于零")
         self.settings, self.clock = settings, clock
         self.cache = FaqCache(redis, url=settings.redis_url)
-        self._counts = {}
+        self._counts = OrderedDict()
+        self.capacity = capacity
         self._lock = threading.Lock()
 
     def check(self, ip, session_id):
@@ -28,12 +32,17 @@ class RateLimiter:
                                 max(1, int(end - now) + 1), end, limit))
         # 即使 Redis 正常也保留本地计数，断线后沿用已接受请求的计数。
         with self._lock:
-            self._counts = {key: pair for key, pair in self._counts.items() if pair[1] > now}
+            for key in list(self._counts):
+                if self._counts[key][1] <= now:
+                    del self._counts[key]
             local = []
             for key, _, end, _ in entries:
                 count = self._counts.get(key, (0, end))[0] + 1
                 self._counts[key] = (count, end)
+                self._counts.move_to_end(key)
                 local.append(count)
+            while len(self._counts) > self.capacity:
+                self._counts.popitem(last=False)
         counts = local
         try:
             client = self.cache._client()

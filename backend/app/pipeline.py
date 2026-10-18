@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import logging
 from contextvars import copy_context
-from functools import partial
 from time import perf_counter
 from uuid import uuid4
 
@@ -11,6 +10,7 @@ from app.llm.strategies import build_queries
 from app.schemas import ChatRequest, ChatResponse, Source
 from app.services import dependency_error, unavailable
 from app.tracing import items, record
+from app.budget import request_budget
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,18 @@ SENSITIVE_REFUSAL = "抱歉，这类问题我无法回答。涉及他人隐私�
 async def call(function, *args, **kwargs):
     if inspect.iscoroutinefunction(function):
         return await function(*args, **kwargs)
-    # run_in_executor 不自动复制 ContextVar；保留工作线程内各阶段 trace 的请求归属。
-    return await asyncio.get_running_loop().run_in_executor(
-        None, copy_context().run, partial(function, *args, **kwargs))
+    # 工作线程只写自己的列表；成功 await 后在事件循环内交接，超时/取消时直接丢弃。
+    target, worker_trace = items.get(), []
+    def invoke():
+        token = items.set(worker_trace)
+        try:
+            return function(*args, **kwargs)
+        finally:
+            items.reset(token)
+    result = await asyncio.get_running_loop().run_in_executor(None, copy_context().run, invoke)
+    if target is not None:
+        target.extend(worker_trace)
+    return result
 
 
 def discard(task):
@@ -34,7 +43,7 @@ def discard(task):
             outcome = "completed"
         except asyncio.CancelledError:
             outcome = "cancelled"
-        except Exception:
+        except BaseException:
             outcome = "error"
         logger.debug("speculative_retrieval_discarded outcome=%s", outcome)
     task.add_done_callback(consume)
@@ -73,12 +82,14 @@ async def speculate(services, question, trace):
 
 
 async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings, services,
-                   trace_sink=None, history=None) -> ChatResponse:
+                   trace_sink=None, history=None, before_chat=None) -> ChatResponse:
     trace = [] if trace_sink is None else trace_sink
     token = items.set(trace)
     started, result = perf_counter(), None
     try:
-        async with asyncio.timeout(settings.request_timeout_s):
+        async with request_budget(settings.request_timeout_s):
+            if before_chat is not None:
+                await before_chat()
             result = await _run(chat, request_id or str(uuid4()), settings, services, trace,
                                 [] if history is None else history)
             return result
@@ -131,21 +142,22 @@ async def _run(chat, request_id, settings, services, trace, history):
             record("generate", started)
             return response(answer, "general")
         if speculative is not None:
-            pending, speculative = speculative, None
             try:
-                docs = await pending
-            finally:
-                # 只在知识路径合并：被取消的线程即使稍后完成也不能污染主 trace。
-                for item in speculative_trace:
-                    item.speculative = True
-                trace.extend(speculative_trace)
+                docs = await speculative
+            except BaseException:
+                discard(speculative)
+                speculative = None
+                raise
+            speculative = None
+            # 只有完整成功的任务才能交接；私有列表与其中对象不再被主流程共享。
+            trace.extend(item.model_copy(update={"speculative": True}) for item in tuple(speculative_trace))
         else:
             docs = await retrieve(services, build_queries(decision, chat.message), chat.message, trace)
     finally:
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:
             discard(speculative)
-    if not docs or max(doc.score for doc in docs) < settings.refuse_threshold:
+    if not docs or (settings.rerank_enabled and max(doc.score for doc in docs) < settings.refuse_threshold):
         return response(REFUSAL, "fallback", strategy="direct")
     started = perf_counter()
     generated = await services.generate_answer(chat.message, docs, history)

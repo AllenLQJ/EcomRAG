@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import Mock, patch
 
 from app.config import Settings
@@ -41,3 +42,11 @@ def test_assembly_is_lazy_singleton_and_warmup_initializes_once():
                 await second.aclose()
         asyncio.run(run())
     _models.cache_clear()
+
+
+def test_disabled_rerank_startup_warns_about_rrf_units(caplog):
+    settings = Settings(_env_file=None, rerank_enabled=False)
+    with patch("app.services._models", return_value=(Mock(), Mock(), threading.Lock())):
+        services = Services(settings)
+        asyncio.run(services.llm.aclose())
+    assert "RRF" in caplog.text and "REFUSE_THRESHOLD" in caplog.text

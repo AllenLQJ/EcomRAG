@@ -1,6 +1,6 @@
 # 电商 RAG 智能客服
 
-面向 C 端顾客的 Python 3.11 / FastAPI / Pydantic v2 后端，依赖由 uv 管理。当前链路为限流 → 缓存 → FAQ → 一次 LLM 路由 → 通用对话 / RAG 检索 → 带引用生成 / 拒答兜底。聊天接口返回真实服务结果，离线测试全部注入假服务或假 LLM。
+面向 C 端顾客的 Python 3.11 / FastAPI / Pydantic v2 后端，依赖由 uv 管理。当前链路为限流 → 缓存 → FAQ → LLM 路由 → 通用对话 / RAG 检索 → 带引用生成 / 拒答兜底。聊天接口返回真实服务结果，离线测试全部注入假服务或假 LLM。
 
 ## 本地启动
 
@@ -38,7 +38,7 @@ Compose 包含 Milvus Standalone 2.5.10、MySQL 8.0、Redis 7.4。Milvus 使用�
 
 配置统一由 `backend/app/config.py` 读取仓库根目录 `.env`，进程环境变量优先；从 `backend/` 启动同样有效。导入 `app.main` 不创建应用、不读取 `.env`；Uvicorn 通过 `--factory` 调用 `create_app()` 时才加载配置。测试调用 `create_app(settings, services=假服务)`，以 `Settings(_env_file=None, ...)` 禁止读取环境文件，并在每项测试开始前清除继承的应用配置环境变量；日志统一写入临时目录。专门测试环境变量读取的用例自行设置假值。Compose 从根目录 `.env` 读取凭据及平台配置。以下全部为示例或明显占位值，没有真实密钥：
 
-配置名现统一为 `LLM_API_KEY`、`LLM_BASE_URL`。旧名 `QWEN_API_KEY`、`QWEN_BASE_URL` 暂作为兼容别名；新旧同时存在时新名优先（新 key 为空也优先）。只使用旧名时，加载配置会记录弃用 WARNING，仅包含配置名。请把本机旧配置迁移到新名。
+配置名现统一为 `LLM_API_KEY`、`LLM_BASE_URL`。旧名 `QWEN_API_KEY`、`QWEN_BASE_URL` 暂作为兼容别名；新旧都有非空值时新名优先；新 key/地址为空（含纯空白）视为未设置，仍可使用有效旧名。采用旧名时记录弃用 WARNING；两者非空且不同时只记录配置名冲突 WARNING，不记录值。空地址且没有有效旧名时使用默认兼容地址。请把本机旧配置迁移到新名。
 
 ```dotenv
 DOCKER_PLATFORM=linux/arm64
@@ -105,7 +105,7 @@ DEBUG=false
 | `LLM_EXTRA_BODY` | JSON 字符串，默认空（不添加参数）；解析为对象后合并进每次请求，用于关闭思考模式或传供应商特有参数；非法 JSON/非对象在配置阶段报错 |
 | `MYSQL_*` | 本机数据库地址、库名、用户及密码；root 密码供容器初始化 |
 | `REDIS_URL`、`MILVUS_URI` | 本机依赖服务地址 |
-| `MILVUS_TIMEOUT_S` | Milvus 检索客户端建连及每次 `hybrid_search` 的超时秒数，默认 10；须大于 0，运行入口加载配置后注入检索器 |
+| `MILVUS_TIMEOUT_S` | Milvus 检索/入库客户端建连及每次 `hybrid_search` / `upsert` 的超时秒数，默认 10；须大于 0，由运行入口注入 |
 | `BGE_M3_PATH` | 已准备好的本地 BGE-M3 目录；不存在或文件不完整时失败，不自动下载 |
 | `RERANKER_PATH` | 本地 BAAI/bge-reranker-v2-m3 目录；首次重排才加载，不自动下载 |
 | `EMBED_BATCH_SIZE` | 每次编码及 upsert 的子块数量，默认 16 |
@@ -113,15 +113,15 @@ DEBUG=false
 | `PARENT_MAX_CHARS` | 父块最大字符数，超长小节继续按标点切分 |
 | `FAQ_THRESHOLD` | FAQ 稠密余弦相似度阈值，默认 0.9；实测误命中 0.852 / 0.806 / 0.885，最高 0.885；阶段 4 用测试集校准 |
 | `FAQ_CACHE_TTL_S` | FAQ Redis 精确缓存 TTL，默认 86400 秒（24 小时） |
-| `REFUSE_THRESHOLD` | 归一化 rerank 最高分低于此值时建议拒答，默认 0.5，无检索结果也拒答；历史 parent 分数为 RAG 最低 0.894、拒答最高 0.261。child 输入与 fp16 会改变分数分布，必须用 check_retrieval 重新校准，不能直接沿用历史依据 |
-| `RERANK_ENABLED`、`RERANK_CANDIDATES`、`RERANK_TOP_K` | 检索重排开关、去重后候选上限（10）、结果数量（5）；`retrieve` 的显式 `top_k` 优先。候选从 20 降为 10 是性能起点，先按剖析工具结果再微调并复核 Hit@1 |
+| `REFUSE_THRESHOLD` | 归一化 rerank 最高分低于此值时建议拒答，默认 0.5，仅在开启重排时生效，无检索结果始终拒答；关闭重排时不比较 RRF 分。历史 parent 分数为 RAG 最低 0.894、拒答最高 0.261。child 输入与 fp16 会改变分数分布，必须用 check_retrieval 重新校准，不能直接沿用历史依据 |
+| `RERANK_ENABLED`、`RERANK_CANDIDATES`、`RERANK_TOP_K` | 检索重排开关、去重后候选上限（10）、结果数量（5）；关闭重排只在无结果时拒答，RRF 分不与 REFUSE_THRESHOLD 比较；`retrieve` 的显式 `top_k` 优先。候选从 20 降为 10 是性能起点，先按剖析工具结果再微调并复核 Hit@1 |
 | `RERANK_MAX_LENGTH` | 送入 `FlagReranker.compute_score` 的 token 上限，默认 512 |
 | `RERANK_BATCH_SIZE` | 重排批大小，默认 16；先按文本长度排序分批，得分还原为原始候选顺序 |
 | `RERANK_MAX_CHARS` | 仅 parent 模式下的重排父块字符上限，默认 600；0 不截断。child 模式不使用此限制；生成始终使用完整父块 |
 | `RERANK_TEXT_MODE` | child / parent，默认 child；child 重排已带标题的最佳命中子块（snippet），parent 重排父块正文 |
 | `RERANK_FP16` | 默认 false，仅在 mps 上允许半精度；cpu 始终 fp32。启用前对比耗时、Top1 与分数差异，应用中的加载/推理错误仍会正常上抛 |
 | `SPECULATIVE_RETRIEVAL` | 默认 true；FAQ 未命中且 history 为空时并行路由和原问题检索重排；false 或多轮 history 时等路由改写后检索 |
-| `LLM_TIMEOUT_S`、`REQUEST_TIMEOUT_S` | 单次模型调用和整请求超时，默认 20 / 40 秒；排队等待计入整请求超时 |
+| `LLM_TIMEOUT_S`、`REQUEST_TIMEOUT_S` | 单次传输（不含信号量排队）和整请求超时，默认 20 / 40 秒；限流、FAQ、排队、路由解析重试及网络退避共享一次整请求预算；直连 LLM/llm_ping 同样有总超时 |
 | `LLM_MAX_CONCURRENCY` | 全局模型调用并发上限，默认 4，超出时排队 |
 | `LLM_MAX_RETRIES`、`LLM_RETRY_BACKOFF_S` | 默认重试 1 次（总共至多 2 次尝试），首次退避 0.5 秒，后续按 2 倍递增；可设重试次数 0 关闭。重试与退避始终持有同一并发名额，均受 REQUEST_TIMEOUT_S 约束 |
 | `WARMUP_ON_START` | 默认 true，在 lifespan 启动时预热 FAQ、BM25、问句向量、本地模型和 Milvus；false 延迟初始化 |
@@ -133,14 +133,14 @@ DEBUG=false
 | `LOG_DIR` | 日志目录，默认启动工作目录下的 logs；从 backend 启动为 backend/logs |
 | `LOG_BACKUP_DAYS` | 午夜滚动日志保留份数，默认 14；0 不自动删除历史文件 |
 | `LOG_TO_CONSOLE` | 默认 true，同时输出控制台日志 |
-| `CHAT_LOG_ENABLED` | 默认 true，在响应后台任务中向 MySQL 写入对话原文；false 不写入也不启动补列 |
+| `CHAT_LOG_ENABLED` | 默认 true，响应后台任务将原文放入 1000 容量队列，由单线程复用连接写库；false 不启动线程、连接或补列；退出最多排空 5 秒 |
 | `CORS_ORIGINS` | 允许跨域的来源，格式为 JSON 字符串数组 |
 | `DEBUG` | 默认关闭 `/docs` 和 `/openapi.json`；请求体 `debug` 与 `ALLOW_TRACE` 共同控制 trace |
 
 ## 接口与错误
 
 - `GET /health`：返回 `mysql`、`redis`、`milvus` 的 `up/down`，仅检测 TCP；返回 `llm` 的 `configured/unconfigured`，只检查 key 是否非空。依赖断开仍返回 HTTP 200，不代表认证或协议正常。此接口不发起 LLM 请求。
-- `POST /api/v1/chat`：接受 `session_id`、1–500 字的 `message`、可选 `debug`。返回 UUID `request_id`、原 `session_id`、真实 `answer`、`route=cache|faq|rag|general|fallback`、`strategy`、带编号的 `sources`、`is_mock=false`。RAG 与检索不足的拒答策略为 direct，敏感意图拒答和其他路由为 null。请求 `debug=true` 且 `ALLOW_TRACE=true` 才附带 trace，否则为 `null`。纯空白消息也会被拒绝。
+- `POST /api/v1/chat`：接受 1–128 字的 `session_id`、1–500 字的 `message`、可选 `debug`。返回 UUID `request_id`、原 `session_id`、真实 `answer`、`route=cache|faq|rag|general|fallback`、`strategy`、带编号的 `sources`、`is_mock=false`。RAG 与检索不足的拒答策略为 direct，敏感意图拒答和其他路由为 null。请求 `debug=true` 且 `ALLOW_TRACE=true` 才附带 trace，否则为 `null`。纯空白消息也会被拒绝。
 - 响应头 `X-Request-ID` 与响应体对应。请求参数校验失败返回 HTTP 400 和 `{"code":40001,"message":"请求参数非法","request_id":"..."}`；`AppError` 转换成同样结构的错误体。404、405 分别返回 `40401`、`40501`，其他 HTTP 客户端错误返回 `40000`，均保留原 HTTP 状态；未捕获异常返回 `50001`，仅记录清洗后的异常类型与堆栈位置，DEBUG 下也不回显可能包含原文的异常。
 
 | 错误码 | 含义 | HTTP 状态 |
@@ -156,6 +156,10 @@ DEBUG=false
 | 50401 | 超时 | 504 |
 
 入口按 IP 和 session_id 独立累计，任一维度超限返回 HTTP 429 / 42901「提问有点快，休息一分钟再问吧」。IP 默认取 request.client.host。Redis 使用 INCR + EXPIRE 事务，不可用时静默退化为进程内计数（各进程独立，重启清空）。固定分钟窗口和 UTC 自然日窗口，超限请求也计数，每日超限需等次日。
+
+上线前需评估这些限制：Redis 故障时多 worker 各自计数，N 个 worker 的实际限额约为 N×配置；轮换 session_id 只能由 IP 桶约束。本地计数器最多保留 10000 个窗口 key，先清理过期窗口，再按最久未访问淘汰；高基数流量可使旧计数提前丢失。仅在可信反向代理之后才开启 TRUST_PROXY_HEADERS，且代理必须覆盖 X-Forwarded-For，不能保留客户端伪造的首个地址。
+
+HTTPException 的 detail 不回显：404 为「请求的地址不存在」、405 为「请求方法不允许」、其他 4xx 为「请求无法处理」、5xx 为「服务暂时不可用」，错误码映射保持不变。
 
 模型上游 429 返回 42901「请求太频繁，请稍后再试」；超时返回 50401；其他网络/HTTP 错误及坏响应返回 50201，不回显密钥、用户原文或提示词。MySQL / Milvus 不可用返回 50301「服务暂时不可用，请稍后再试」；其他异常保持上抛，由 API 返回统一 50001。Redis FAQ 缓存故障仍跳过。
 
@@ -216,7 +220,7 @@ python -m unittest discover -s tests -p 'test_ingest*.py' -v
 
 本阶段提供可注入依赖的同步 `FaqService.faq_lookup(question)` 和 `Retriever.retrieve(queries, rerank_query, top_k=5)`。`contracts.py` 中相应契约为同步签名；阶段 2B 的异步 API 在线程池中运行这些同步数据库及模型操作。
 
-FAQ 启动时通过 `FaqRepo.load_enabled()` 以参数化 SQL 读取 MySQL 中 `enabled=1` 的问答，用 jieba 和 rank-bm25 构建内存索引，并一次性预计算 FAQ 问句的稠密向量。`FaqService.reload()` 完整重建索引与向量后替换快照并清理 FAQ 缓存；单独的 `Bm25Index.reload()` 仅刷新 BM25 索引。查询先查 Redis，再对 BM25 Top5 问句计算稠密余弦分数，最高分达到当前阈值则返回 `FaqHit` 并写缓存。缓存保存 score，读取时若 score 小于当前阈值则视为 miss 并尽力删除；无 score 的旧格式、坏 JSON 或非法字段也视为 miss。阈值从 0.8 升到 0.9 后旧误命中无需等 24h 自动失效。缓存 key 为 `faq:cache:{md5(normalize(question))}`：全角 ASCII/空格转半角、小写、去首尾空白与标点，保留内部空白和标点。Redis 不可用时只记录固定 warning 并跳过，序列化等程序错误继续上抛。reload 与清理命令只扫描 `faq:cache:*`，保留限流计数。
+FAQ 启动时通过 `FaqRepo.load_enabled()` 以参数化 SQL 读取 MySQL 中 `enabled=1` 的问答，用 jieba 和 rank-bm25 构建内存索引，并一次性预计算 FAQ 问句的稠密向量。`FaqService.reload()` 完整重建索引与向量后替换快照并清理 FAQ 缓存；单独的 `Bm25Index.reload()` 仅刷新 BM25 索引。查询先查 Redis，再对 BM25 Top5 问句计算稠密余弦分数，最高分达到当前阈值则返回 `FaqHit` 并写缓存。缓存保存 score，读取时若 score 小于当前阈值则视为 miss，并用 Lua compare-and-delete 仅在值仍等于所读旧值时删除，防止误删并发写入的新条目；无 score 的旧格式、坏 JSON 或非法字段也视为 miss。阈值从 0.8 升到 0.9 后旧误命中无需等 24h 自动失效。缓存 key 为 `faq:cache:{md5(normalize(question))}`：全角 ASCII/空格转半角、小写、去首尾空白与标点，保留内部空白和标点。Redis 不可用时只记录固定 warning 并跳过，序列化等程序错误继续上抛。reload 与清理命令只扫描 `faq:cache:*`，保留限流计数。
 
 `FaqHit` 序列化字段包含 `faq_id`、`question`、`answer`、`score`、`category`、`source`（`cache` 或 `faq`）；兼容旧 `id` 输入与读取。缓存通过 `model_dump_json()` / `model_validate_json()` 保存和读取完整字段，保留 `category`，读取后仅把 `source` 标记为 `cache`。`hit.top_score` 等于命中分数；`service.top_score` 为当前调用上下文的最高分，未达阈值时仍可用于 trace，无候选时为 `None`。依赖与阈值均通过构造函数注入，不在服务内部读取 `.env`。
 
@@ -245,15 +249,15 @@ python -m eval.profile_rerank "怎么申请退货？"
 
 ## 阶段 2B：完整聊天链路与评测
 
-`create_app(settings, services=假服务)` 支持离线注入，不传 services 时使用真实装配。全进程复用本地 embedder/reranker，锁保护首次加载和模型调用；同步 FAQ、数据库和检索在线程池执行。关闭 WARMUP_ON_START 后，首次请求延迟初始化 FAQ 和模型。预热失败会阻止应用就绪，须先准备本地依赖。同步工作交给线程后无法强制中断，但请求到时会返回超时，关闭服务时等待线程释放连接。
+`create_app(settings, services=假服务)` 支持离线注入，不传 services 时使用真实装配。全进程复用本地 embedder/reranker，锁保护首次加载和模型调用；同步 FAQ、FAQ 数据库访问和检索在线程池执行；对话日志由专用队列线程处理。关闭 WARMUP_ON_START 后，首次请求延迟初始化 FAQ 和模型。预热失败会阻止应用就绪，须先准备本地依赖。同步工作交给线程后无法强制中断，但请求到时会返回超时，关闭服务时等待线程释放连接。
 
-缓存/FAQ 命中直接返回 FAQ 来源；未命中仅调用一次 router，分为 general、knowledge、sensitive，优先级为 sensitive > knowledge > general。路由 JSON 非法时降级为 knowledge/direct/原问题。配送范围、能否寄往某地等所有店铺具体问题均归 knowledge，问法奇怪或答案可能是不支持也要检索。默认同时启动 router 与原问题的召回+线程池重排；knowledge 且 history 为空时直接使用投机结果，不再用 rewritten_query 重新检索。关闭 SPECULATIVE_RETRIEVAL 或 history 非空时保持顺序路径：改写问题检索、原问题重排。无资料或最高分严格低于 REFUSE_THRESHOLD 时固定拒答，不调用生成模型，等于阈值时允许生成。
+缓存/FAQ 命中直接返回 FAQ 来源；未命中先调用 router，分为 general、knowledge、sensitive，优先级为 sensitive > knowledge > general。路由先剥除 Markdown 围栏并提取第一个完整 JSON 对象；解析/字段校验失败时再调用一次路由，网络重试策略保持独立。第二次仍失败时，仅启用 suspicious.py 的常量规则兜底：涉及他人个人信息/订单、隐藏提示词、忽略规则/切换角色、医疗疗效保证或法律结论的可疑输入走 sensitive 固定拒答，其他输入才按 knowledge/direct/原问题继续。规则不是主要分类器；每次解析降级只记录原因类别 WARNING。配送范围、能否寄往某地等所有店铺具体问题均归 knowledge，问法奇怪或答案可能是不支持也要检索。默认同时启动 router 与原问题的召回+线程池重排；knowledge 且 history 为空时直接使用投机结果，不再用 rewritten_query 重新检索。关闭 SPECULATIVE_RETRIEVAL 或 history 非空时保持顺序路径：改写问题检索、原问题重排。无资料，或开启重排且最高分严格低于 REFUSE_THRESHOLD 时固定拒答，不调用生成模型，等于阈值时允许生成。
 
 索要他人隐私、要求医疗/疗效/法律结论或承诺、要求泄露提示词或忽略规则等归 sensitive；直接返回 fallback、sources=[]、strategy=null，固定回答「抱歉，这类问题我无法回答。涉及他人隐私、医疗效果或超出店铺规则的内容，建议联系人工客服。」，不调用生成。general/sensitive 会取消等待或忽略已启动的投机任务，其异常仅记固定 DEBUG，不影响响应，也不把投机 trace 混入正常阶段。同步模型线程无法强制停止，可能继续占用模型锁直到完成；关闭投机配置可以避免这部分额外工作。general 仅用于问候、自我介绍、闲聊或店铺无关的日常话题；通用提示词要求对具体店铺事实不凭记忆回答，并对代码、作业、天气等请求礼貌说明专注店铺咨询，不展开。
 
 RAG 关键路径由 router + retrieve/rerank + generate 缩短为 max(router, retrieve/rerank) + generate；是否达到约 10 秒需实测。路由提示词已精简，ROUTER_MAX_TOKENS 默认 64；可通过 ROUTER_MODEL 换用更快模型，并用 `eval.run_eval --output ...` 对比分类准确率、错误和耗时，特别检查 JSON 长度不足导致的降级。
 
-hyde/subquery/stepback 暂时降级 direct。生成使用父块，清除越界引用，只返回实际引用的来源；无有效引用时列出全部资料。提示词在 `backend/app/llm/prompts/*.md`，资料与用户输入转义后放入明确分隔块；路由示例不照抄评测题，实际模型分类效果仍需开发者用更新后的 24 题验证。
+hyde/subquery/stepback 暂时降级 direct。生成使用完整父块；消息结构为 system 规则 → user 参考资料声明及独立 <资料> 块 → user 独立 <问题> 块，资料中的标签继续转义。引用统一支持 [1]、【1】、［1］和全角数字，越界引用整体删除并归一为 [n]；代码围栏和行内代码保持原样且不计为引用。只返回实际引用的来源；无有效引用时列出全部资料。提示词在 `backend/app/llm/prompts/*.md`，资料与用户输入转义后放入明确分隔块；路由示例不照抄评测题，实际模型分类效果仍需开发者用更新后的 24 题验证。
 
 在 `backend/` 手动运行（真实装配，运行时调用 get_settings）：
 
@@ -273,11 +277,11 @@ python -m eval.llm_ping
 
 run_eval 终端打印总题数、路由准确率、RAG sources 命中率、各阶段均值与 p50/p90、总耗时 p50/p90、错误分布（例如 `50201 ×14`）和路由错误题目（问题、期望、实际路由）。`--output 路径` 保存完整 JSON，results 保留每一道题，包含 answer、sources（doc_id/title/score）、total_ms、stage_ms、error_code（成功为 null）、is_error、判定及引用命中；失败行的答案与来源为空，保留出错前已完成阶段的耗时。stage_mean_ms、stage_p50_ms、stage_p90_ms 仅统计实际执行的阶段，包含失败前已完成的阶段；total_p50_ms、total_p90_ms 包含所有请求，空样本为 null，分位数采用排序后线性插值；completed 只统计成功完成的题目。错误分布也存入 error_distribution。不设硬门槛。expected_route=cache 接受 cache 或首次运行的 faq；错误计入总数并视为路由不正确，RAG 命中率的分母包含失败的 RAG 题。资料按入库稳定 doc_id 匹配。脚本不清理 Redis，重复评测可能把 expected_route=faq 变成 cache，需结合缓存状态解读。
 
-llm_ping 不依赖数据库或本地模型，只对 ROUTER_MODEL、GENERATE_MODEL 各发送一次「回复ok」请求，max_tokens 固定为 64。它通过 get_settings 加载运行配置，打印目标 host、模型名、key 是否配置及长度；成功时打印耗时与回复前 20 字，失败时打印脱敏诊断，任一失败以非零退出。LLM 的用户错误文案保持通用；应用 WARNING 另记 category（timeout/http_status/network/bad_response/truncated/unconfigured）、HTTP 状态、异常类型、供应商 error.code/error.message（各最多 200 字）、host、model。密钥、已知消息和扩展参数值的回显会被替换，不记录请求体、任意响应 body 或 URL 路径/查询参数。
+llm_ping 不依赖数据库或本地模型，只对 ROUTER_MODEL、GENERATE_MODEL 各发送一次「回复ok」请求，max_tokens 固定为 64。它通过 get_settings 加载运行配置，打印目标 host、模型名、key 是否配置及长度；成功时只打印 success、耗时与回复长度，不打印回复正文，失败时打印脱敏诊断，任一失败以非零退出。LLM 的用户错误文案保持通用；应用 WARNING 另记 category（timeout/http_status/network/bad_response/truncated/unconfigured）、HTTP 状态、异常类型、供应商 error.code/error.message（各最多 200 字）、host、model。密钥、已知消息和扩展参数值的回显会被替换，不记录请求体、任意响应 body 或 URL 路径/查询参数。
 
 推理模型可将 reasoning_content/reasoning 与最终 content 分开。客户端只返回最终 content：字符串直接使用，分段列表只拼接 text/output_text 文本段，忽略推理段和图片段。bad_response/truncated 诊断增加 response_structure：choices_count、finish_reason、content_type、content_empty、has_reasoning_content、has_reasoning，以及 usage 中的 prompt/completion/reasoning token 数；不记录任何最终或推理内容文本，缺失的计数为 null，未知 finish_reason 仅记 unknown。reasoning token 数支持 completion_tokens_details.reasoning_tokens 或 usage.reasoning_tokens。
 
-空最终内容且 finish_reason=length 时返回 HTTP 502 / 50201，用户文案仍通用，诊断 category=truncated、reason 为「输出被长度限制截断，可调大 max_tokens 或关闭思考模式」。content 非空时仍返回最终文本，不会用推理内容代替答案；非空但不完整的路由 JSON 仍按原规则降级 knowledge。推理是否占用了输出额度须用供应商返回的 usage 与 finish_reason 确认，不能仅根据 HTTP 200 或耗时推断。
+空最终内容且 finish_reason=length 时返回 HTTP 502 / 50201，用户文案仍通用，诊断 category=truncated、reason 为「输出被长度限制截断，可调大 max_tokens 或关闭思考模式」。content 非空时仍返回最终文本，不会用推理内容代替答案；非空但不完整的路由 JSON 会先解析重试，仍失败才走可疑输入规则与保守降级。推理是否占用了输出额度须用供应商返回的 usage 与 finish_reason 确认，不能仅根据 HTTP 200 或耗时推断。
 
 例如服务支持时，可设置 `LLM_EXTRA_BODY='{"thinking":{"type":"disabled"}}'` 关闭思考模式。该配置用于关闭推理模型的思考模式或传入供应商特有参数，具体参数名以供应商文档为准。只记录 extra_body_keys 顶层键名，不记录值；model/messages/temperature/max_tokens 及路由 JSON 格式等核心调用参数优先于同名扩展参数。使用 GLM 等模型时，应先由开发者在本机运行 llm_ping 验证供应商参数与输出结构，再运行完整评测。本次未调用真实服务。
 
@@ -301,11 +305,17 @@ create_app 初始化统一日志：默认 `backend/logs/app.log`（从 backend �
 
 pytest 的 autouse fixture 将 LOG_DIR 指向每个测试的 tmp_path，并关闭该测试创建的文件处理器；不会写入仓库真实运行的 logs/app.log。日志隐私断言只检查应用日志文件及 app.* logger，不把测试客户端等第三方捕获记录当作应用输出。httpx、httpx2、httpcore 均设为 WARNING，兼容两种客户端包名，避免出站 INFO 请求行进入应用日志。
 
-**对话原文会保存在 MySQL 的 chat_logs 中。C 端上线前请在界面告知用户，并设定保留期限。** CHAT_LOG_ENABLED 默认 true，成功响应和 AppError 响应生成后通过后台任务在线程池中写入，不阻塞事件循环；任何写入失败只记录固定 warning，不改变用户回答。AppError 的 answer 为空字符串、route=error、error_code 为业务错误码。引用列表保存到 sources_json，user_id 暂为 NULL。后台任务不保证进程异常退出时可靠送达，需要可靠审计时应另设持久队列。
+工作线程始终写私有 trace，只有成功 await 后才交接到请求列表；投机 handoff 后发生超时/取消/异常时全部丢弃，不把半完成阶段并入 trace/chat_done。取消不强制终止同步模型线程，后续结果或异常会被消费。FAQ reload 保持「先替换完整快照、再清缓存」的顺序；旧快照上已运行的查询在跨进程或绕过服务锁的调用中仍可能稍后写回旧答案，reload 与并发写回不具备全局原子性。
+
+**对话原文会保存在 MySQL 的 chat_logs 中。C 端上线前请在界面告知用户，并设定保留期限。** CHAT_LOG_ENABLED 默认 true；成功、AppError 和未捕获异常响应生成后，后台任务只做非阻塞入队。有界队列最多保留 1000 条待处理记录，满时丢弃并记固定 WARNING。一个后台工作线程复用持久 MySQL 连接，空闲连接使用 ping 自动重连；失败行丢弃且下一条重新建立连接，避免提交状态不确定时重放当前行。任何写入失败不改变用户回答；禁用时不启动线程或连接。AppError 的 answer 为空、route=error、error_code 为业务码；未捕获异常同样写 error 行且 error_code=50001，并仅记录清洗后的类型和堆栈位置。退出 lifespan 最多等 5 秒排空队列，超时记 WARNING 并放弃待处理记录；已经执行中的同步 SQL 不能强制中止，由数据库连接超时结束。引用列表保存到 sources_json，user_id 暂为 NULL。后台任务不保证进程异常退出时可靠送达，需要可靠审计时应另设持久队列。
 
 chat_logs_view 是本机管理工具，默认显示时间(UTC)、session、route、耗时、问题与答案前 40 字，--full ID 才显示完整记录；筛选与清理均绑定 SQL 参数。purge_chat_logs 默认仅统计过期行，--yes 才删除；不会自动设置数据库保留期限，请按选定期限定期执行。评测 JSON 文件和管理工具终端也可能含问题与答案原文，分享前需自行检查。
 
 ## 目录结构
+
+阶段 2I 文件清单（相对 `backend/`）：新增 `app/budget.py`、`app/llm/suspicious.py`、`tests/test_llm_audit_helpers.py`、`tests/test_llm_deadlines.py`、`tests/test_chat_log_queue.py`、`tests/test_request_audit.py`。
+修改 `app/{config,schemas,main,pipeline,services,rate_limit,chat_log}.py`、`app/llm/{client,router,generator}.py`、`app/faq/{cache,service}.py`、`app/retrieval/store.py`、`eval/llm_ping.py`、`ingest/run.py` 和根目录 README。
+同步修改 `tests/faq_fakes.py`、`tests/test_{api,app_observability,settings,llm,llm_ping,llm_audit_helpers,router_safety,services,speculative_pipeline,pipeline,rate_limit,faq_service,ingest_retrieval,cli_config,check_retrieval,chat_log_storage,online_imports}.py`；新增文件的测试清单见上一行，所有配置用例显式禁用环境文件并隔离进程应用配置变量。
 
 ```text
 .
@@ -320,6 +330,7 @@ chat_logs_view 是本机管理工具，默认显示时间(UTC)、session、route
     ├── pyproject.toml
     ├── app/
     │   ├── main.py            # 入口、路由、健康检查、异常转换
+    │   ├── budget.py          # 请求共享总 deadline，直连 LLM 也覆盖排队
     │   ├── config.py          # 环境配置
     │   ├── schemas.py         # API 模型
     │   ├── contracts.py       # 业务契约、错误码
@@ -406,6 +417,7 @@ chat_logs_view 是本机管理工具，默认显示时间(UTC)、session、route
 
 ## 待验收
 
+- 阶段 2I：A1–A6、B1–B7、C1–C4 的代码和离线用例已补齐，阈值默认值与提示词语气保持不变。指定 pytest 命令仍被 uv 缓存权限阻止，工作区缓存的离线替代运行又因 Python 3.9.6 不满足项目 3.11 要求失败；完整 pytest 未执行。真实路由/引用质量、MySQL 重连与 Redis Lua 行为，以及端到端性能仍待本机评测。
 - 阶段 2H：默认 child 重排、可选 MPS fp16、同文本精度对比、检索双模式/候选数参数与独立重排计时、LLM 有限重试及 600 token/150 字生成约束已实现。指定 pytest 仍因 uv 用户缓存权限未启动，工作区缓存的离线替代运行又因 Python 3.9.6 不满足项目 3.11 要求失败；完整 pytest 未验证。110 项标准库离线测试、语法与差异检查通过；真实 child/parent Hit@1、拒答阈值、MPS fp16 稳定性和端到端耗时须在本机重新评测。
 - 阶段 2G：重排配置、分批与顺序还原、两阶段检索、投机并行、剖析工具和 p50/p90 汇总已实现。指定 pytest 仍因 uv 用户缓存权限未启动；改为工作区缓存并禁止下载后，可用 Python 3.9.6 不满足项目 3.11 要求，完整 pytest 未验证。105 项标准库离线测试通过，语法与差异检查通过。真实设备的 tokenize/前向耗时、约 10 秒目标和 Hit@1 是否保持，须在本机运行 profile_rerank、check_retrieval 与 run_eval 复核。
 - 阶段 2F：配置统一为 LLM_API_KEY / LLM_BASE_URL，保留旧名兼容与安全弃用警告。日志脱敏用例改为仅统计诊断 WARNING，显式启用 INFO 验证不会误计；测试前清除应用配置环境变量并隔离日志目录。指定 pytest 命令仍受 uv 缓存权限限制，离线指定系统 Python 后因 3.9.6 不满足项目 3.11 要求失败，完整 pytest 未执行；97 项标准库离线测试、语法检查与 git diff --check 通过。新旧名环境读取和 API 集成 pytest 仍须在本机完整依赖环境验证。

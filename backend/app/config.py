@@ -86,16 +86,26 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def apply_legacy_llm_names(self):
         legacy_used = False
+        conflict = False
         for current, legacy in (
             ("llm_api_key", "legacy_llm_api_key"),
             ("llm_base_url", "legacy_llm_base_url"),
         ):
-            # 显式设置的新名（包括空 key）优先；未设置新名时才采用旧名。
-            if current not in self.model_fields_set and getattr(self, legacy) is not None:
-                setattr(self, current, getattr(self, legacy))
+            value, old = getattr(self, current), getattr(self, legacy)
+            plain = value.get_secret_value() if hasattr(value, "get_secret_value") else value
+            previous = old.get_secret_value() if hasattr(old, "get_secret_value") else old
+            supplied = current in self.model_fields_set and bool(plain.strip())
+            if not supplied and previous and previous.strip():
+                setattr(self, current, old)
                 legacy_used = True
+            elif supplied and previous and previous.strip() and plain != previous:
+                conflict = True
+            elif current == "llm_base_url" and not plain.strip():
+                self.llm_base_url = type(self).model_fields[current].default
         if legacy_used:
             logger.warning("QWEN_* 配置名已弃用，请改用 LLM_*")
+        if conflict:
+            logger.warning("LLM_* 与 QWEN_* 配置冲突，以 LLM_* 为准")
         return self
 
     @field_validator("llm_extra_body", mode="before")

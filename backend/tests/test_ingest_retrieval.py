@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from app.retrieval.embedder import BgeM3Embedder, EmbeddingBatch, FakeEmbedder, sparse_token_ids
 from app.retrieval.store import MilvusStore, TEXT_FIELDS
-from ingest.loaders import Document
+from ingest.loaders import Document, load_document
 from ingest.run import ingest_directory
 from ingest.splitter import split_document
 
@@ -53,7 +53,8 @@ class FakeMilvusClient:
     def create_collection(self, **kwargs):
         self.created = kwargs
 
-    def upsert(self, collection_name, data):
+    def upsert(self, collection_name, data, timeout):
+        self.upsert_timeout = timeout
         self.batches.append(len(data))
         self.rows.update({row["chunk_id"]: row for row in data})
         return {"upsert_count": len(data)}
@@ -196,3 +197,14 @@ print("imports OK")
         self.assertEqual(len(client.rows), stats["child_chunks"])
         self.assertTrue(all(size <= 16 for size in client.batches))
         self.assertIn(16, client.batches)
+
+    def test_store_passes_timeout_to_connection_and_upsert(self):
+        client = FakeMilvusClient()
+        sdk = SimpleNamespace(MilvusClient=Mock(return_value=client), DataType=FakeDataType)
+        store = MilvusStore("http://milvus.test:19530", timeout_s=2.5)
+        with patch("app.retrieval.store.importlib.import_module", return_value=sdk):
+            store._connect()
+        sdk.MilvusClient.assert_called_once_with(uri="http://milvus.test:19530", timeout=2.5)
+        chunks = split_document(load_document(BACKEND / "tests/fixtures/after_sales_policy.md"))
+        store.upsert(chunks, FakeEmbedder().encode([chunk.child_text for chunk in chunks]))
+        self.assertEqual(client.upsert_timeout, 2.5)

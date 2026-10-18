@@ -10,6 +10,7 @@ import httpx
 from app.contracts import AppError, LLM_ERROR, RATE_LIMITED, TIMEOUT
 from app.llm.diagnostics import diagnostic_info, extra_body_keys
 from app.llm.responses import extract_text
+from app.budget import request_budget
 
 logger = logging.getLogger(__name__)
 # 每个运行中的事件循环共享同一上限；隔离测试/CLI 创建的不同事件循环。
@@ -92,6 +93,16 @@ class LLMClient:
                 return response
 
     async def complete(self, *, model, messages, temperature, max_tokens, json_mode=False):
+        try:
+            async with request_budget(self.settings.request_timeout_s):
+                return await self._complete(model=model, messages=messages, temperature=temperature,
+                                            max_tokens=max_tokens, json_mode=json_mode)
+        except TimeoutError:
+            raise self._failure("timeout", TIMEOUT, 504, "请求超时，请稍后再试", model=model, messages=messages,
+                                key=self.settings.llm_api_key.get_secret_value().strip(),
+                                exception_type="TimeoutError") from None
+
+    async def _complete(self, *, model, messages, temperature, max_tokens, json_mode=False):
         key = self.settings.llm_api_key.get_secret_value().strip()
         context = dict(model=model, messages=messages, key=key)
         if not key:
@@ -134,6 +145,9 @@ class LLMClient:
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise self._failure("bad_response", LLM_ERROR, 502, "模型服务返回异常",
                                 response=response, exception_type=type(exc).__name__, **context) from None
+        finally:
+            if response is not None:
+                await response.aclose()
 
     async def aclose(self):
         await self._http.aclose()

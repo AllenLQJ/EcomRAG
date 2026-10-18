@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None, *, settings: Settings | None = None) -> 
 
             options.update({
                 "embedder": BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size),
-                "store": MilvusStore(settings.milvus_uri),
+                "store": MilvusStore(settings.milvus_uri, timeout_s=settings.milvus_timeout_s),
             })
         stats = ingest_directory(resolve_data_path(args.dir), dry_run=args.dry_run, **options)
         print(json.dumps(stats, ensure_ascii=False))

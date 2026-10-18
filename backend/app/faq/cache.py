@@ -8,6 +8,7 @@ import string
 import unicodedata
 
 logger = logging.getLogger(__name__)
+COMPARE_DELETE = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end"
 
 
 def normalize(question: str) -> str:
@@ -77,18 +78,21 @@ class FaqCache:
             hit = FaqHit.model_validate_json(raw)
         except ValidationError:
             logger.warning("FAQ 缓存内容无效，按未命中处理")
-            self.delete(question)
+            self.delete(question, expected=raw)
             return None
         if not math.isfinite(hit.score) or hit.score < threshold:
-            self.delete(question)
+            self.delete(question, expected=raw)
             return None
         return hit.model_copy(update={"source": "cache"})
 
-    def delete(self, question):
+    def delete(self, question, *, expected=None):
         try:
             client = self._client()
             if client is not None:
-                client.delete(cache_key(question))
+                if expected is None:
+                    client.delete(cache_key(question))
+                else:
+                    client.eval(COMPARE_DELETE, 1, cache_key(question), expected)
         except self._redis_errors:
             logger.warning("FAQ 缓存删除失败，跳过删除")
 

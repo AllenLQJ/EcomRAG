@@ -28,6 +28,7 @@ import app.services, app.rate_limit, app.llm.client, app.llm.router, app.llm.gen
 import eval.chat_demo, eval.run_eval
 import eval.llm_ping, app.llm.diagnostics
 import eval.profile_rerank, eval.metrics
+import app.budget, app.llm.suspicious
 import app.chat_log, app.logging_config
 import ingest.clear_cache, ingest.migrate_db, ingest.purge_chat_logs, eval.chat_logs_view
 print("imports OK")

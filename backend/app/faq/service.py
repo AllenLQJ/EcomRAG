@@ -41,6 +41,8 @@ class FaqService:
             raise ValueError("FAQ 问句与向量数量不一致")
         # 完整构建后一次替换，失败时保留上一个快照。
         self._snapshot = (index, {row.id: vector for row, vector in zip(records, dense)})
+        # 先替换快照再清缓存；已在旧快照上运行的并发查询仍可能稍后写回旧答案。
+        # 服务装配的模型锁限制同实例查询竞争；跨进程/管理员写入不具备全局原子性。
         self.cache.clear()
 
     def faq_lookup(self, question: str) -> FaqHit | None:

@@ -6,7 +6,7 @@ from time import perf_counter
 
 from app.contracts import AppError
 from app.llm.client import LLMClient
-from app.llm.diagnostics import configuration, redact
+from app.llm.diagnostics import configuration
 
 
 async def ping(settings, *, transport=None):
@@ -22,7 +22,7 @@ async def ping(settings, *, transport=None):
                                                temperature=0, max_tokens=64)
                 result = {"role": role, "model": safe[f"{role}_model"], "success": True,
                           "ms": round((perf_counter() - started) * 1000, 3),
-                          "reply": redact(answer, (settings.llm_api_key.get_secret_value().strip(),), limit=20)}
+                          "reply_length": len(answer)}
             except AppError as exc:
                 result = {"role": role, "model": safe[f"{role}_model"], "success": False,
                           "ms": round((perf_counter() - started) * 1000, 3), "error_code": exc.code,

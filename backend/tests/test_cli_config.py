@@ -57,7 +57,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         }
         if mode == "documents":
             encoder.assert_called_once_with(resolve_data_path(settings.bge_m3_path), 7)
-            client.assert_called_once_with(settings.milvus_uri)
+            client.assert_called_once_with(settings.milvus_uri, timeout_s=settings.milvus_timeout_s)
             expected.update(embedder=encoder.return_value, store=client.return_value)
         else:
             encoder.assert_not_called()

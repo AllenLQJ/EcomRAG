@@ -148,6 +148,19 @@ class FaqServiceTests(unittest.TestCase):
         with self.assertLogs("app.faq.cache", "WARNING"):
             self.assertIsNone(cache.get("q", threshold=0.9))
 
+    def test_stale_cache_does_not_delete_concurrently_replaced_value(self):
+        redis = FakeRedis()
+        cache = FaqCache(redis)
+        old = FaqHit(faq_id=1, question="q", answer="old", score=0.8).model_dump_json()
+        new = FaqHit(faq_id=2, question="q", answer="new", score=0.95).model_dump_json()
+        key = cache_key("q")
+        def racing_get(key):
+            redis.values[key] = new
+            return old
+        redis.get = racing_get
+        self.assertIsNone(cache.get("q", threshold=0.9))
+        self.assertEqual(redis.values[key], new)
+
     def test_reload_redis_down_does_not_block_new_snapshot(self):
         service, _, redis = self.build([0, 1])
         redis.scan = Mock(side_effect=ConnectionError("down"))

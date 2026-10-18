@@ -1,6 +1,7 @@
 """应用持有服务生命周期；导入及构造不加载模型，不读取配置文件。"""
 import asyncio
 import threading
+import logging
 from functools import lru_cache
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE
@@ -14,6 +15,8 @@ from app.retrieval.embedder import BgeM3Embedder
 from app.retrieval.reranker import BgeReranker
 from app.retrieval.retriever import Retriever
 from ingest.loaders import resolve_data_path
+
+logger = logging.getLogger(__name__)
 
 
 def dependency_error(exc):
@@ -43,6 +46,8 @@ def _models(embed_path, batch_size, rerank_path, rerank_max_length, rerank_batch
 class Services:
     def __init__(self, settings, *, transport=None):
         self.settings = settings
+        if not settings.rerank_enabled:
+            logger.warning("重排已关闭：RRF 分不与 REFUSE_THRESHOLD 比较，仅在无检索结果时拒答")
         self.embedder, self.reranker, self._model_lock = _models(
             str(resolve_data_path(settings.bge_m3_path)), settings.embed_batch_size,
             str(resolve_data_path(settings.reranker_path)),

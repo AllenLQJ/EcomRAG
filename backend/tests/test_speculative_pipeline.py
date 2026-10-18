@@ -218,3 +218,57 @@ def test_discarded_worker_finishes_later_without_delaying_response_or_leaking_tr
         assert not {"retrieve", "rerank"} & {item.stage for item in trace}
         assert [item.stage for item in result.trace] == [item.stage for item in trace]
     asyncio.run(run())
+
+
+def test_handoff_timeout_drops_all_speculative_trace_and_consumes_worker_exception(caplog):
+    async def run():
+        loop = asyncio.get_running_loop()
+        entered, finished = asyncio.Event(), asyncio.Event()
+        release = threading.Event()
+        unhandled = []
+        loop.set_exception_handler(lambda loop, context: unhandled.append(context))
+        services = FakeServices().knowledge()
+        services.retrieve_candidates = AsyncMock(return_value=[document()])
+        def rerank(*args, **kwargs):
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                release.wait(2)
+                from time import perf_counter
+                record("rerank", perf_counter(), kept=1)
+                raise RuntimeError("PRIVATE_LATE_EXCEPTION")
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+        services.rerank_candidates = rerank
+        trace = []
+        try:
+            with pytest.raises(AppError) as caught:
+                await run_chat(request(), settings=Settings(_env_file=None, request_timeout_s=0.1),
+                               services=services, trace_sink=trace)
+            assert caught.value.code == 50401 and entered.is_set()
+            assert [item.stage for item in trace] == ["cache", "faq", "router", "total"]
+        finally:
+            release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        await asyncio.sleep(0)
+        assert not unhandled and not {"retrieve", "rerank"} & {item.stage for item in trace}
+    asyncio.run(run())
+    assert "PRIVATE_LATE_EXCEPTION" not in caplog.text
+
+
+def test_handoff_baseexception_is_reraised_and_private_trace_discarded():
+    class Abort(BaseException):
+        pass
+    async def run():
+        services = FakeServices().knowledge()
+        async def candidates(*args):
+            from time import perf_counter
+            record("retrieve", perf_counter(), candidates=1)
+            return [document()]
+        services.retrieve_candidates = candidates
+        services.rerank_candidates = AsyncMock(side_effect=Abort())
+        trace = []
+        with pytest.raises(Abort):
+            await run_chat(request(), settings=Settings(_env_file=None), services=services, trace_sink=trace)
+        await asyncio.sleep(0)
+        assert not {"retrieve", "rerank"} & {item.stage for item in trace}
+    asyncio.run(run())

@@ -104,7 +104,10 @@ class ChatLogStorageTests(unittest.TestCase):
             seen.append(threading.get_ident())
             return connection
         writer = ChatLogWriter(config(), connection_factory=factory)
-        asyncio.run(writer.write(ChatLog("r", "s", "q", "a", "general", 1)))
+        async def run():
+            await writer.write(ChatLog("r", "s", "q", "a", "general", 1))
+            await writer.aclose()
+        asyncio.run(run())
         self.assertNotEqual(seen[0], caller)
         self.assertTrue(connection.closed)
 
@@ -113,6 +116,7 @@ class ChatLogStorageTests(unittest.TestCase):
         async def run():
             await writer.write(ChatLog("r", "s", "PRIVATE_Q", "PRIVATE_A", "general", 1))
             await writer.ensure_schema()
+            await writer.aclose()
         with self.assertLogs("app.chat_log", "WARNING") as logs:
             asyncio.run(run())
         self.assertEqual(len(logs.output), 2)
@@ -122,11 +126,14 @@ class ChatLogStorageTests(unittest.TestCase):
     def test_disabled_skips_connection_and_migration(self):
         factory = Mock(side_effect=AssertionError("不得连接"))
         writer = ChatLogWriter(config(False), connection_factory=factory)
+        writer.start()
+        self.assertEqual(writer.queue.maxsize, 1000)
         async def run():
             await writer.write(ChatLog("r", "s", "q", "a", "general", 1))
             await writer.ensure_schema()
         asyncio.run(run())
         factory.assert_not_called()
+        self.assertIsNone(writer._thread)
 
     def test_injected_writer_failure_is_contained(self):
         writer = SimpleNamespace(write=AsyncMock(side_effect=ValueError("private")))

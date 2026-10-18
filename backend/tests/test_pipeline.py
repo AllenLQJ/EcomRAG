@@ -1,15 +1,18 @@
 import asyncio
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.contracts import AppError, FaqHit
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, _semaphore
 from app.llm.generator import GeneratedAnswer
 from app.pipeline import REFUSAL, run_chat
 from app.schemas import ChatRequest
 from chat_fakes import FakeServices, document
+from deadline_helpers import ControlledDeadlines
 
 
 def run(services, *, debug=True, **overrides):
@@ -76,6 +79,17 @@ def test_refusal_boundary_and_skips_generation(score, expected):
         services.generate_answer.assert_awaited_once()
 
 
+@pytest.mark.parametrize("docs,expected", [([], "fallback"), ([document(score=0.001)], "rag")])
+def test_disabled_rerank_never_compares_rrf_to_refusal_threshold(docs, expected):
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = docs
+    assert run(services, rerank_enabled=False).route == expected
+    if docs:
+        services.generate_answer.assert_awaited_once()
+    else:
+        services.generate_answer.assert_not_awaited()
+
+
 @pytest.mark.parametrize("debug", [False, True])
 @pytest.mark.parametrize("allow", [False, True])
 def test_trace_requires_both_flags(debug, allow):
@@ -118,31 +132,51 @@ def test_programming_and_model_errors_are_not_swallowed(stage, error):
     assert caught.value is error
 
 
-def test_queue_wait_counts_toward_request_timeout():
+def test_queue_wait_counts_toward_request_timeout(monkeypatch):
     async def scenario():
         entered, release = asyncio.Event(), asyncio.Event()
+        deadlines = ControlledDeadlines(monkeypatch, _semaphore(1))
+        calls = []
 
         async def handler(request):
+            calls.append(request)
             entered.set()
             await release.wait()
             return httpx.Response(200, json={"choices": [{"message": {"content": "你好"}}]})
-        settings = Settings(_env_file=None, llm_api_key="TEST", llm_max_concurrency=1, request_timeout_s=0.02)
+        settings = Settings(_env_file=None, llm_api_key="TEST", llm_base_url="https://model.test/v1",
+                            llm_max_concurrency=1, request_timeout_s=60, llm_timeout_s=60,
+                            speculative_retrieval=False)
         client = LLMClient(settings, transport=httpx.MockTransport(handler))
         services = FakeServices()
+        services.faq_lookup = AsyncMock(return_value=None)
 
         async def general(*args):
             return await client.complete(model="test", messages=[], temperature=0, max_tokens=10)
         services.chat_general = general
-        task = asyncio.create_task(general())
+        holder = asyncio.create_task(general())
+        queued = None
         try:
-            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(entered.wait(), 5)
+            queued = asyncio.create_task(run_chat(ChatRequest(session_id="queue", message="你好"),
+                                                  settings=settings, services=services))
+            assert await asyncio.wait_for(deadlines.waiters.get(), 5) is queued
+            # 只触发排队请求的整请求 deadline；持有者有独立、充裕的预算。
+            deadlines.expire(queued)
             with pytest.raises(AppError) as caught:
-                await run_chat(ChatRequest(session_id="queue", message="你好"), settings=settings, services=services)
-            assert caught.value.code == 50401
-            assert not task.done()
+                await asyncio.wait_for(queued, 5)
+            assert (caught.value.code, caught.value.http_status) == (50401, 504)
+            assert not holder.done()
+            assert len(calls) == 1  # 排队没有启动 HTTP 传输或单次调用超时。
+            release.set()
+            assert await asyncio.wait_for(holder, 5) == "你好"
         finally:
             release.set()
-            await task
+            tasks = [task for task in (holder, queued) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # 清理不得用另一个任务的异常覆盖测试本身的失败。
+            await asyncio.gather(*tasks, return_exceptions=True)
             await client.aclose()
     asyncio.run(scenario())
 

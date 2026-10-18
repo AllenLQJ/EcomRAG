@@ -129,6 +129,27 @@ def test_http_400_is_not_a_validation_error(app, client):
     response = client.get("/test-http-error")
     assert response.status_code == 400
     assert response.json()["code"] == 40000
+    assert response.json()["message"] == "请求无法处理"
+
+
+@pytest.mark.parametrize("status,message", [(404, "请求的地址不存在"), (405, "请求方法不允许"),
+                                           (403, "请求无法处理"), (503, "服务暂时不可用")])
+def test_http_exception_detail_never_echoed(app, status, message):
+    @app.get("/private-http-detail")
+    async def fail():
+        raise HTTPException(status_code=status, detail="PRIVATE_QUESTION_KEY")
+    with TestClient(app) as client:
+        result = client.get("/private-http-detail")
+    assert result.status_code == status and result.json()["message"] == message
+    assert "PRIVATE_QUESTION_KEY" not in result.text
+
+
+def test_session_id_maximum_length(client):
+    for size, status in ((128, 200), (129, 400)):
+        result = client.post("/api/v1/chat", json={"session_id": "s" * size, "message": "你好"})
+        assert result.status_code == status
+        if status == 400:
+            assert result.json()["code"] == 40001
 
 
 def test_llm_configured_without_network(app_factory):

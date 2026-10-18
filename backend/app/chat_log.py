@@ -6,6 +6,9 @@ import importlib
 import json
 import logging
 from dataclasses import dataclass, field
+from concurrent.futures import Future, InvalidStateError
+from queue import Queue, Empty, Full
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -69,32 +72,125 @@ def insert_chat_log(connection, row):
 
 
 class ChatLogWriter:
-    def __init__(self, settings, *, connection_factory=None):
+    def __init__(self, settings, *, connection_factory=None, capacity=1000):
+        if capacity <= 0:
+            raise ValueError("对话记录队列容量必须大于零")
         self.settings = settings
         self.connection_factory = connection_factory or (lambda: connect_mysql(settings))
+        self.queue = Queue(maxsize=capacity)
+        self._thread = None
+        self._lock = threading.Lock()
+        self._stop, self._abandon = threading.Event(), threading.Event()
+        self._closed = False
 
-    def _with_connection(self, operation):
-        connection = self.connection_factory()
+    def _start_locked(self):
+        if self._thread is None:
+            thread = threading.Thread(target=self._work, name="chat-log-writer", daemon=True)
+            thread.start()
+            self._thread = thread
+
+    def start(self):
+        if self.settings.chat_log_enabled:
+            with self._lock:
+                if not self._closed:
+                    self._start_locked()
+
+    def _enqueue(self, kind, row=None, future=None):
+        if not self.settings.chat_log_enabled:
+            return False
+        with self._lock:
+            if self._closed:
+                logger.warning("对话记录队列已关闭，已丢弃")
+                return False
+            self._start_locked()
+            try:
+                self.queue.put_nowait((kind, row, future))
+                return True
+            except Full:
+                logger.warning("对话记录队列已满，已丢弃")
+                return False
+
+    @staticmethod
+    def _close(connection):
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                logger.warning("对话记录连接关闭失败")
+
+    @staticmethod
+    def _resolve(future, value):
+        if future is not None:
+            try:
+                future.set_result(value)
+            except InvalidStateError:
+                pass  # 等待迁移的启动任务可能已经被取消。
+
+    def _work(self):
+        connection = None
         try:
-            operation(connection)
+            while not self._abandon.is_set():
+                if self._stop.is_set() and self.queue.empty():
+                    break
+                try:
+                    kind, row, future = self.queue.get(timeout=0.05)
+                except Empty:
+                    continue
+                success = False
+                try:
+                    if connection is None:
+                        connection = self.connection_factory()
+                    elif callable(getattr(connection, "ping", None)):
+                        connection.ping(reconnect=True)
+                    if kind == "schema":
+                        ensure_chat_logs_schema(connection)
+                    else:
+                        insert_chat_log(connection, row)
+                    success = True
+                except Exception:
+                    logger.warning("对话表补列失败，请运行 ingest.migrate_db" if kind == "schema"
+                                   else "对话记录写入失败，已跳过；下一条将重连")
+                    # 提交结果不确定时不重放当前行；丢弃失败行，下一条自动重连。
+                    self._close(connection)
+                    connection = None
+                finally:
+                    self._resolve(future, success)
+                    self.queue.task_done()
         finally:
-            connection.close()
+            self._close(connection)
 
     async def write(self, row):
-        if not self.settings.chat_log_enabled:
-            return
-        try:
-            await asyncio.to_thread(self._with_connection, lambda conn: insert_chat_log(conn, row))
-        except Exception:
-            logger.warning("对话记录写入失败，已跳过")
+        return self._enqueue("row", row)
 
     async def ensure_schema(self):
         if not self.settings.chat_log_enabled:
             return
-        try:
-            await asyncio.to_thread(self._with_connection, ensure_chat_logs_schema)
-        except Exception:
-            logger.warning("对话表补列失败，请运行 ingest.migrate_db")
+        future = Future()
+        if self._enqueue("schema", future=future):
+            await asyncio.wrap_future(future)
+
+    async def aclose(self, *, timeout=5):
+        with self._lock:
+            self._closed = True
+            self._stop.set()
+            thread = self._thread
+        if thread is None:
+            return
+        # 不把 join 排入可能已被模型任务占满的线程池，确保退出等待本身也最多 5 秒。
+        loop = asyncio.get_running_loop()
+        end = loop.time() + min(max(timeout, 0), 5)
+        while thread.is_alive() and loop.time() < end:
+            await asyncio.sleep(min(0.02, max(0, end - loop.time())))
+        if thread.is_alive():
+            logger.warning("对话记录队列关闭超时，放弃未完成记录")
+            self._abandon.set()
+            while True:
+                try:
+                    _, _, future = self.queue.get_nowait()
+                except Empty:
+                    break
+                self._resolve(future, False)
+                self.queue.task_done()
 
 
 async def persist(writer, row):

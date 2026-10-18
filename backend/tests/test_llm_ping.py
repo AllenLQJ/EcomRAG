@@ -58,7 +58,8 @@ def test_ping_outputs_safe_diagnostics_for_both_models(mode, status, category, c
     for result in results:
         assert result["ms"] >= 0
         if mode == "200":
-            assert result["success"] is True and len(result["reply"]) <= 20
+            assert result["success"] is True and result["reply_length"] == len("ok" + KEY + "文" * 40)
+            assert "reply" not in result and "文" * 20 not in output
         else:
             info = result["diagnostic"]
             assert result["success"] is False
@@ -112,3 +113,13 @@ def test_ping_loads_runtime_settings_and_unconfigured_never_calls_transport(monk
     lines = capsys.readouterr().out.splitlines()
     assert json.loads(lines[0].removeprefix("配置："))["key_length"] == 0
     assert all(json.loads(line)["diagnostic"]["category"] == "unconfigured" for line in lines[1:])
+
+
+def test_direct_ping_total_timeout_and_no_reply_body(capsys):
+    async def blocked(request):
+        await asyncio.Event().wait()
+    configured = settings(request_timeout_s=0.02, llm_timeout_s=1)
+    assert llm_ping.main([], settings=configured, transport=httpx.MockTransport(blocked)) == 1
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()[1:]]
+    assert len(rows) == 2 and all(row["error_code"] == 50401 for row in rows)
+    assert all("reply" not in row and row["diagnostic"]["category"] == "timeout" for row in rows)

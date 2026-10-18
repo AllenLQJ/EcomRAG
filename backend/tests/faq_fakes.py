@@ -43,6 +43,10 @@ class FakeRedis:
             self.values.pop(key, None)
         return count
 
+    def eval(self, script, numkeys, key, expected):
+        assert numkeys == 1 and "GET" in script and "DEL" in script
+        return self.delete(key) if self.values.get(key) == expected else 0
+
     def scan(self, cursor=0, match=None, count=200):
         return 0, [key for key in self.values if key.startswith("faq:cache:")]
 

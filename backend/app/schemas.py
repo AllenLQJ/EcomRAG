@@ -8,7 +8,7 @@ Strategy = Literal["direct", "hyde", "subquery", "stepback"]
 
 
 class ChatRequest(BaseModel):
-    session_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=500)
     debug: bool = False
 
