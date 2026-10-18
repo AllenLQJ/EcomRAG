@@ -30,7 +30,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         driver = ModuleType("pymysql")
         driver.connect = Mock(return_value=connection)
         monkeypatch.setitem(sys.modules, "pymysql", driver)
-        upsert = Mock(return_value=30)
+        upsert = Mock(return_value=34)
         monkeypatch.setattr(load_faq, "upsert_faq", upsert)
         assert load_faq.main(["data/faq.csv"], **kwargs) == 0
         driver.connect.assert_called_once_with(
@@ -39,7 +39,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
             charset="utf8mb4", autocommit=False, connect_timeout=10,
         )
         assert upsert.call_args.args[0] is connection
-        assert len(upsert.call_args.args[1]) == 30
+        assert len(upsert.call_args.args[1]) == 34
         connection.close.assert_called_once_with()
     else:
         encoder = Mock()

@@ -3,13 +3,16 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.contracts import AppError
 from app.logging_config import configure_logging, log_exception, request_id
 from app.main import create_app
-from chat_fakes import FakeServices
+from app.pipeline import REFUSAL
+from app.llm.generator import GeneratedAnswer
+from chat_fakes import FakeServices, document
 
 QUESTION = "PRIVATE_QUESTION_ONLY_IN_DB_27"
 ANSWER = "PRIVATE_ANSWER_ONLY_IN_DB_83"
@@ -189,16 +192,39 @@ def test_safe_exception_helper_drops_message_and_source_code(caplog):
     assert "RuntimeError" in caplog.text and "test_app_observability.py" in caplog.text
 
 
-def test_rag_sources_saved_in_background_record(tmp_path):
+@pytest.mark.parametrize("answer,expected", [("说明[1]", [1]), ("说明[3]", [3]), ("无引用", [1])])
+def test_rag_sources_saved_in_background_record(tmp_path, answer, expected):
     fake = FakeServices().knowledge()
-    app, writer = make_app(tmp_path, services=fake)
+    fake.retrieve.return_value = [document(score=0.995), document(2, 0.036), document(3, 0.02)]
+    fake.generate_answer.return_value = GeneratedAnswer(answer, set())
+    app, writer = make_app(tmp_path, services=fake, rag_context_min_score=0)
     with TestClient(app) as client:
         response = ask(client)
     assert response.status_code == 200
     row = writer.write.call_args.args[0]
     assert row.route == "rag" and row.strategy == "direct"
     assert row.sources == response.json()["sources"]
-    assert row.sources[0]["doc_id"] == "d1"
+    assert [source["doc_id"] for source in row.sources] == [f"d{i}" for i in expected]
+    assert [source["index"] for source in row.sources] == expected
+
+
+@pytest.mark.parametrize("answer,route", [("说明[1]", "rag"), ("【no_answer】", "fallback")])
+def test_context_filter_and_generator_refusal_are_reflected_in_chat_log(tmp_path, answer, route):
+    fake = FakeServices().knowledge()
+    docs = [document(score=0.995), document(2, 0.036), document(3, 0.02)]
+    fake.retrieve.return_value = docs
+    fake.generate_answer.return_value = GeneratedAnswer(answer, set())
+    app, writer = make_app(tmp_path, services=fake)
+    with TestClient(app) as client:
+        response = ask(client)
+    assert response.status_code == 200 and response.json()["route"] == route
+    fake.generate_answer.assert_awaited_once_with(QUESTION, [docs[0]], [])
+    row = writer.write.call_args.args[0]
+    assert row.sources == response.json()["sources"] and row.route == route
+    if route == "fallback":
+        assert row.sources == [] and row.answer == REFUSAL
+    else:
+        assert [source["doc_id"] for source in row.sources] == ["d1"]
 
 
 def test_disabled_also_skips_error_rows(tmp_path):

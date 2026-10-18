@@ -33,8 +33,8 @@ class Settings(BaseSettings):
         default=None, validation_alias="QWEN_BASE_URL", exclude=True, repr=False)
     router_model: str = "qwen-turbo"
     generate_model: str = "qwen-plus"
-    router_max_tokens: int = Field(default=64, gt=0)
-    generate_max_tokens: int = Field(default=600, gt=0)
+    router_max_tokens: int = Field(default=2048, gt=0)
+    generate_max_tokens: int = Field(default=4096, gt=0)
     # 禁止环境源提前 JSON 解码，统一在 validator 中报清晰错误，避免重复解码。
     llm_extra_body: Annotated[dict[str, object], NoDecode] = Field(default_factory=dict, repr=False)
     mysql_host: str = "127.0.0.1"
@@ -63,17 +63,23 @@ class Settings(BaseSettings):
     rerank_fp16: bool = False
     rerank_top_k: int = Field(default=5, gt=0)
     speculative_retrieval: bool = True
-    refuse_threshold: float = Field(default=0.5, ge=0, le=1)
-    llm_timeout_s: float = Field(default=20, gt=0)
-    llm_max_concurrency: int = Field(default=4, gt=0)
+    refuse_threshold: float = Field(default=0.2, ge=0, le=1)
+    rag_context_min_score: float = Field(default=0.1, ge=0, le=1)
+    llm_timeout_s: float = Field(default=12, gt=0)
+    llm_max_concurrency: int = Field(default=2, gt=0)
     llm_max_retries: int = Field(default=1, ge=0)
+    llm_rate_limit_retries: int = Field(default=3, ge=0)
+    llm_timeout_retries: int = Field(default=1, ge=0)
     llm_retry_backoff_s: float = Field(default=0.5, ge=0)
     warmup_on_start: bool = True
     allow_trace: bool = False
     trust_proxy_headers: bool = False
     request_timeout_s: float = Field(default=40, gt=0)
     model_io_workers: int = Field(default=1, gt=0)
-    model_io_max_in_flight: int = 1
+    model_io_queue_size: int = Field(default=8, ge=0)
+    model_io_queue_timeout_s: float = Field(default=20, gt=0)
+    # 仅兼容旧部署配置；不再参与容量计算，避免旧值 1 关闭新队列。
+    model_io_max_in_flight: int = Field(default=1, gt=0, exclude=True, repr=False)
     rate_limit_io_workers: int = Field(default=2, gt=0)
     rate_limit_io_max_in_flight: int = Field(default=16, gt=0)
     rate_limit_per_min: int = Field(default=10, gt=0)
@@ -88,9 +94,10 @@ class Settings(BaseSettings):
     debug: bool = False
 
     @model_validator(mode="after")
-    def validate_model_io_capacity(self):
-        if not 1 <= self.model_io_max_in_flight <= self.model_io_workers:
-            raise ValueError("MODEL_IO_MAX_IN_FLIGHT 必须至少为 1，且不得大于 MODEL_IO_WORKERS")
+    def warn_legacy_model_io_capacity(self):
+        if "model_io_max_in_flight" in self.model_fields_set:
+            logger.warning("MODEL_IO_MAX_IN_FLIGHT 已弃用且不再限制容量；"
+                           "请使用 MODEL_IO_WORKERS 与 MODEL_IO_QUEUE_SIZE")
         return self
 
     @model_validator(mode="after")

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings
 from app.contracts import AppError, FaqHit
 from app.llm.client import LLMClient, _semaphore
-from app.llm.generator import GeneratedAnswer
+from app.llm.generator import GeneratedAnswer, Generator
 from app.pipeline import REFUSAL, run_chat
 from app.schemas import ChatRequest
 from chat_fakes import FakeServices, document
@@ -59,12 +59,14 @@ def test_configured_top_k_reaches_sequential_and_speculative_retrieval(speculati
         services.retrieve.assert_called_once_with(["改写后的检索问题"], rerank_query="原问题", top_k=3)
 
 
-@pytest.mark.parametrize("cited,indices", [({2}, [2]), (set(), [1, 2])])
-def test_rag_sources_preserve_original_indices(cited, indices):
+@pytest.mark.parametrize("answer,cited,indices", [("回答[2]", {2}, [2]), ("回答", set(), [1]),
+                                                 ("重复[2][2]与[1]", {1, 2}, [1, 2]),
+                                                 ("回答[2]", {1}, [2])])
+def test_rag_sources_preserve_original_indices(answer, cited, indices):
     services = FakeServices().knowledge()
     docs = [document(), document(2)]
     services.retrieve.return_value = docs
-    services.generate_answer.return_value = GeneratedAnswer("回答", cited)
+    services.generate_answer.return_value = GeneratedAnswer(answer, cited)
     result = run(services, allow_trace=True)
     assert result.route == "rag" and result.strategy == "direct" and not result.is_mock
     assert [source.index for source in result.sources] == indices
@@ -76,8 +78,24 @@ def test_rag_sources_preserve_original_indices(cited, indices):
     assert result.trace[3].candidates == 2 and result.trace[4].kept == 2
 
 
-@pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.4999, "fallback"),
-                                           (0.5, "rag"), (0.5001, "rag")])
+@pytest.mark.parametrize("answer,expected", [("事实[1]", [1]), ("事实[3]", [3]),
+                                           ("没有引用", [2]), ("无效[0][4][999]", [2]),
+                                           ("代码里的 `[1]` 不算引用", [2])])
+def test_sources_use_actual_citations_or_highest_score_only(answer, expected):
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(score=0.036), document(2, score=0.995), document(3, score=0.02)]
+    services.generate_answer.return_value = GeneratedAnswer(answer, set())
+    result = run(services, rag_context_min_score=0)  # 单独验证引用过滤；上下文筛分另测默认值。
+    assert result.route == "rag"
+    assert [source.index for source in result.sources] == expected
+    assert [source.doc_id for source in result.sources] == [f"d{i}" for i in expected]
+    if answer.startswith("无效"):
+        assert result.answer == "无效"
+
+
+@pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.088, "fallback"), (0.1396, "fallback"),
+                                           (0.1999, "fallback"), (0.2, "rag"), (0.2001, "rag"),
+                                           (0.44, "rag"), (0.4999, "rag"), (0.5, "rag"), (0.5001, "rag")])
 def test_refusal_boundary_and_skips_generation(score, expected):
     services = FakeServices().knowledge()
     services.retrieve.return_value = [] if score is None else [document(score=score)]
@@ -99,6 +117,83 @@ def test_disabled_rerank_never_compares_rrf_to_refusal_threshold(docs, expected)
         services.generate_answer.assert_awaited_once()
     else:
         services.generate_answer.assert_not_awaited()
+
+
+def test_default_context_filter_excludes_unrelated_low_scores_before_generation():
+    services = FakeServices().knowledge()
+    docs = [document(score=0.995), document(2, 0.036), document(3, 0.02)]
+    services.retrieve.return_value = docs
+    result = run(services)
+    services.generate_answer.assert_awaited_once_with("原问题", [docs[0]], [])
+    assert result.route == "rag"
+    assert [(source.index, source.doc_id) for source in result.sources] == [(1, "d1")]
+
+
+@pytest.mark.parametrize("enabled,expected_ids", [(True, ["d1", "d3", "d4"]),
+                                                (False, ["d1", "d2", "d3", "d4", "d5"])])
+def test_context_score_boundary_and_disabled_rerank(enabled, expected_ids):
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(score=0.995), document(2, 0.036), document(3, 0.2),
+                                      document(4, 0.1), document(5, 0.0999)]
+    result = run(services, rerank_enabled=enabled)
+    sent = services.generate_answer.call_args.args[1]
+    assert [doc.doc_id for doc in sent] == expected_ids
+    assert result.route == "rag"
+
+
+def test_context_always_keeps_highest_even_below_context_minimum_and_not_first():
+    services = FakeServices().knowledge()
+    docs = [document(score=0.1), document(2, 0.6), document(3, 0.2)]
+    services.retrieve.return_value = docs
+    result = run(services, rag_context_min_score=0.9)
+    services.generate_answer.assert_awaited_once_with("原问题", [docs[1]], [])
+    assert [(source.index, source.doc_id) for source in result.sources] == [(1, "d2")]
+
+
+def test_generator_and_response_share_renumbered_filtered_sources():
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(score=0.995), document(2, 0.036), document(3, 0.2)]
+    llm = AsyncMock()
+    llm.complete.return_value = "已知事实[2]"
+    services.generate_answer = Generator(llm, "fake-model").generate_answer
+    result = run(services)
+    materials = llm.complete.call_args.kwargs["messages"][1]["content"]
+    assert "[1] 资料1" in materials and "[2] 资料3" in materials
+    assert "资料2" not in materials and "[3]" not in materials
+    assert result.answer == "已知事实[2]"
+    assert [(source.index, source.doc_id) for source in result.sources] == [(2, "d3")]
+
+
+@pytest.mark.parametrize("marker", ["NO_ANSWER", " \nno_answer\t ", "【No_Answer】。", "!!!NO_ANSWER???",
+                                   "n o _ a n s w e r", "`NO_ANSWER`", "NO_ANSWER[1]",
+                                   "NO_ANSWER。 nO_aNsWeR"])
+def test_generator_no_answer_returns_fixed_fallback_and_safe_reason(marker, caplog):
+    caplog.set_level("INFO", logger="app.pipeline")
+    services = FakeServices().knowledge()
+    services.generate_answer.return_value = GeneratedAnswer(marker, set())
+    result = run(services, llm_api_key="PRIVATE_KEY_NO_LOG")
+    assert result.route == "fallback" and result.answer == REFUSAL and result.sources == []
+    assert "NO_ANSWER" not in result.answer.upper()
+    assert sum("reason=generator_no_answer" in record.getMessage() for record in caplog.records) == 1
+    assert "原问题" not in caplog.text and "PRIVATE_KEY_NO_LOG" not in caplog.text
+
+
+@pytest.mark.parametrize("answer", ["已知部分[1]，NO_ANSWER，其余资料未提及。",
+                                   "nO_aNsWeR 已知部分[1]。", "已知部分[1]。NO_ANSWER",
+                                   "已知部分[1]，其余资料里没有。"])
+def test_partial_answers_remain_rag_and_never_leak_internal_marker(answer):
+    services = FakeServices().knowledge()
+    services.generate_answer.return_value = GeneratedAnswer(answer, {1})
+    result = run(services)
+    assert result.route == "rag" and result.sources[0].index == 1
+    assert "已知部分[1]" in result.answer and "NO_ANSWER" not in result.answer.upper()
+
+
+def test_general_generator_marker_is_also_hidden():
+    services = FakeServices()
+    services.chat_general.return_value = "【no_answer】"
+    result = run(services)
+    assert result.route == "fallback" and result.answer == REFUSAL and result.sources == []
 
 
 @pytest.mark.parametrize("debug", [False, True])

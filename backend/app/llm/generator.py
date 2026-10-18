@@ -15,6 +15,16 @@ CODE = re.compile(
     r"|(?P<ticks>`+)(?!`).*?(?P=ticks)(?!`)", re.MULTILINE | re.DOTALL)
 CITATION = re.compile(r"\[([0-9０-９]+)\]|【([0-9０-９]+)】|［([0-9０-９]+)］")
 DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+NO_ANSWER = re.compile(r"N\s*O\s*_\s*A\s*N\s*S\s*W\s*E\s*R", re.IGNORECASE)
+
+
+def clean_generated_answer(answer):
+    """移除任何位置的内部标记；仅剩标点、空白、引用或格式符号时视作拒答。"""
+    cleaned, count = NO_ANSWER.subn("", answer)
+    if not count:
+        return answer, False
+    meaningful = CITATION.sub("", cleaned)
+    return cleaned.strip(), not any(char.isalnum() for char in meaningful)
 
 
 def validate_citations(answer, count):
@@ -40,7 +50,7 @@ def validate_citations(answer, count):
 
 
 class Generator:
-    def __init__(self, client, model, *, max_tokens=600):
+    def __init__(self, client, model, *, max_tokens=4096):
         self.client, self.model, self.max_tokens = client, model, max_tokens
 
     async def generate_answer(self, question, docs, history):

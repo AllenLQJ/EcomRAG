@@ -7,6 +7,7 @@ from pathlib import Path
 from time import perf_counter
 
 from ingest.loaders import resolve_data_path
+from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 
 
 def evaluate(rows, retriever, *, refuse_threshold: float) -> dict:
@@ -21,6 +22,12 @@ def evaluate(rows, retriever, *, refuse_threshold: float) -> dict:
             candidates = retriever.retrieve_candidates([question])
             started = perf_counter()
             docs = retriever.rerank_candidates(question, candidates, top_k=5)[:5]
+            # 可在 --eval-file 的行里附 rewritten_query；共用在线判断，少量增字也补充重排。
+            # 仅标点/空格/大小写变化视为相同，其他排除条件仍由共用函数处理；不调用 LLM。
+            rewritten = row.get("rewritten_query", question)
+            if needs_rewrite_rerank(question, rewritten, docs, enabled=True, threshold=refuse_threshold):
+                revised = retriever.rerank_candidates(rewritten, candidates, top_k=5)
+                docs = merge_reranked(docs, revised, 5)
             rerank_ms = (perf_counter() - started) * 1000
         else:
             # 兼容已有仅实现 retrieve 的替身；不把检索总耗时冒充为重排耗时。
@@ -75,7 +82,7 @@ def print_report(report: dict) -> None:
         print(f'[FALLBACK] {item["question"]} top_score={score} '
               f'REFUSE_THRESHOLD={threshold:g} ({comparison}) '
               f'是否会被拒答={"是" if item["refused"] else "否"} rerank_ms={ms}')
-    print("REFUSE_THRESHOLD 默认 0.5；历史 parent 模式实测 RAG 最低 0.894、拒答类最高 0.261。"
+    print("REFUSE_THRESHOLD 默认 0.2；历史 parent 模式实测 RAG 最低 0.894、拒答类最高 0.261。"
           "重排输入或精度改变会改变分数分布，请分别用本工具重新校准阈值。")
 
 

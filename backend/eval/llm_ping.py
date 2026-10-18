@@ -15,18 +15,28 @@ async def ping(settings, *, transport=None):
     client = LLMClient(settings, transport=transport)
     results = []
     try:
-        for role, model in (("router", settings.router_model), ("generate", settings.generate_model)):
+        for role, model, max_tokens in (
+            ("router", settings.router_model, settings.router_max_tokens),
+            ("generate", settings.generate_model, settings.generate_max_tokens),
+        ):
             started = perf_counter()
             try:
-                answer = await client.complete(model=model, messages=[{"role": "user", "content": "回复ok"}],
-                                               temperature=0, max_tokens=64)
+                completion = await client.complete_with_metadata(
+                    model=model, messages=[{"role": "user", "content": "回复ok"}],
+                    temperature=0, max_tokens=max_tokens)
                 result = {"role": role, "model": safe[f"{role}_model"], "success": True,
                           "ms": round((perf_counter() - started) * 1000, 3),
-                          "reply_length": len(answer)}
+                          "reply_length": len(completion.text),
+                          "finish_reason": completion.finish_reason,
+                          "reasoning_tokens": completion.reasoning_tokens}
             except AppError as exc:
+                structure = exc.diagnostic.get("response_structure", {})
                 result = {"role": role, "model": safe[f"{role}_model"], "success": False,
                           "ms": round((perf_counter() - started) * 1000, 3), "error_code": exc.code,
+                          "finish_reason": structure.get("finish_reason"),
+                          "reasoning_tokens": structure.get("usage", {}).get("reasoning_tokens"),
                           "diagnostic": exc.diagnostic}
+            result["max_tokens"] = max_tokens
             results.append(result)
             print(json.dumps(result, ensure_ascii=False))
     finally:

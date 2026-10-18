@@ -7,6 +7,7 @@ import pytest
 
 from app.config import Settings
 from app.contracts import AppError, FaqHit
+from app.llm.generator import GeneratedAnswer
 from eval import chat_demo, run_eval
 from chat_fakes import FakeServices, document
 
@@ -63,6 +64,22 @@ def test_eval_empty_input_and_internal_trace_with_api_trace_disabled():
 def test_expected_doc_matches_ingest_stable_id():
     filename = "after_sales_returns.md"
     assert run_eval.expected_doc_id(filename) == hashlib.sha256(filename.encode()).hexdigest()[:24]
+
+
+@pytest.mark.parametrize("answer,hit,ids", [("说明[1]", False, ["d1"]),
+                                          ("说明[2]", True, ["d2"]),
+                                          ("没有有效引用[99]", False, ["d1"])])
+def test_rag_source_hit_counts_filtered_sources_not_uncited_candidates(answer, hit, ids):
+    rows = [{"question": "引用测试", "expected_route": "rag", "expected_doc": "doc2.md"}]
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(score=0.995), document(2, 0.036), document(3, 0.02)]
+    services.generate_answer.return_value = GeneratedAnswer(answer, set())
+    report = asyncio.run(run_eval.evaluate(rows, settings=Settings(_env_file=None, rag_context_min_score=0), services=services,
+                                           doc_ids={"doc2.md": "d2"}))
+    assert report["rag_source_hits"] == int(hit)
+    assert report["rag_source_hit_rate"] == float(hit)
+    assert report["results"][0]["source_hit"] is hit
+    assert [source["doc_id"] for source in report["results"][0]["sources"]] == ids
 
 
 @pytest.mark.parametrize("module,args", [(chat_demo, ["你好"]), (run_eval, [])])
@@ -138,7 +155,7 @@ def test_eval_exports_answer_sources_and_internal_times_independent_of_api_trace
                                            services=services, doc_ids={"doc1.md": "d1"}))
     row = report["results"][0]
     assert row["answer"] == "说明[1]"
-    assert row["sources"] == [{"doc_id": "d1", "title": "资料1", "score": 0.8}]
+    assert row["sources"] == [{"index": 1, "doc_id": "d1", "title": "资料1", "score": 0.8}]
     assert row["total_ms"] >= 0
     assert set(row["stage_ms"]) == {"cache", "faq", "router", "retrieve", "rerank", "generate", "total"}
     assert row["stage_ms"] == report["stage_mean_ms"]

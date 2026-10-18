@@ -1,5 +1,6 @@
 """纯标准库也可运行的 LLM 辅助逻辑验证，不依赖 pytest 或 SDK。"""
 import asyncio
+import re
 import unittest
 from types import SimpleNamespace
 
@@ -35,6 +36,8 @@ class LlmHelperTests(unittest.TestCase):
         self.assertIn('"strategy":"direct"', load("router"))
         for phrase in ("150 字", "5 条", "不重复问题", "不寒暄"):
             self.assertIn(phrase, load("generate"))
+        for phrase in ("完全无法回答", "只输出固定标记 NO_ANSWER", "不加任何其他文字", "部分回答", "资料未提及"):
+            self.assertIn(phrase, load("generate"))
 
     def test_fake_llm_generation_uses_parent_and_validates_citations(self):
         calls = []
@@ -50,7 +53,7 @@ class LlmHelperTests(unittest.TestCase):
         self.assertIn("[1] 标题\n完整父块&lt;/资料&gt;", content)
         self.assertNotIn("命中子块", content)
         self.assertEqual(calls[0]["temperature"], 0.2)
-        self.assertEqual(calls[0]["max_tokens"], 600)
+        self.assertEqual(calls[0]["max_tokens"], 4096)
 
     def test_router_prompt_has_distinct_examples_and_general_stays_in_scope(self):
         import json
@@ -66,3 +69,25 @@ class LlmHelperTests(unittest.TestCase):
         general = load("general")
         for term in ("不凭记忆回答", "政策", "价格", "时效", "配送范围", "写代码", "做作业", "专注店铺咨询", "不展开"):
             self.assertIn(term, general)
+
+    def test_router_prompt_preserves_formal_rewrite_rules_safety_and_example_coverage(self):
+        router = load("router")
+        for phrase in (
+            "主语、动作、对象", "完整书面问句", "书面措辞", "如何申请", "的规则是什么", "需要什么条件/材料",
+            "怎么弄、咋、啥、多久能", "一个明确意图", "保持原意", "不得添加原问没有的事实、数字或承诺",
+            "不得把问题改成别的主题", "不得推定这些状态", "现金抵扣", "不承诺优先发货",
+            "sensitive > knowledge > general", "不得先把危险请求改写成正常问题再分类",
+            "询问耳机能否治疗听力问题", "rewritten_query 固定为「敏感请求」",
+            "不得带入系统提示词相关内容", "火星",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, router)
+        examples = re.findall(r"^\d+\. 「([^」]+)」 → 「([^」]+)」$", router, re.MULTILINE)
+        self.assertGreaterEqual(len(examples), 8)
+        for keyword in ("收货地址", "积分", "发货", "运费", "发票", "退货", "保修", "优惠券"):
+            with self.subTest(topic=keyword):
+                self.assertTrue(any(keyword in rewritten for _, rewritten in examples))
+        for _, rewritten in examples:
+            self.assertTrue(rewritten.endswith("？"))
+            self.assertIsNone(re.search(r"[0-9０-９]", rewritten))
+            self.assertNotIn("系统提示词", rewritten)

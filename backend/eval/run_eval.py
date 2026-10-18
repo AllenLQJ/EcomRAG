@@ -13,6 +13,21 @@ from app.services import Services
 from ingest.loaders import resolve_data_path
 from eval.metrics import percentile
 
+ANSWER_ROUTES = {"faq", "cache", "rag"}
+
+
+def expected_routes(value):
+    """旧的 cache 首次可命中 faq；answer 和列表只扩展可接受的路由集合。"""
+    values = value if isinstance(value, list) else [value]
+    if not values:
+        raise ValueError("评测期望路由列表不能为空")
+    routes = set()
+    for route in values:
+        if not isinstance(route, str) or route not in {*ANSWER_ROUTES, "general", "fallback", "answer"}:
+            raise ValueError("无效的评测期望路由")
+        routes.update(ANSWER_ROUTES if route == "answer" else {"cache", "faq"} if route == "cache" else {route})
+    return routes
+
 
 def expected_doc_id(filename):
     # 与入库 loader 相同的稳定路径摘要；Source.doc_id 不等于源文件名。
@@ -24,8 +39,12 @@ async def evaluate(rows, *, settings, services, doc_ids=None):
     results, refused, errors, route_errors = [], [], [], []
     timings = defaultdict(list)
     totals = []
+    false_refusals, false_answers = [], []
+    accepted = [expected_routes(row["expected_route"]) for row in rows]
     doc_ids = {} if doc_ids is None else doc_ids
     for i, row in enumerate(rows):
+        allowed = accepted[i]
+        has_reference = "rag" in allowed and bool(row.get("expected_doc"))
         trace = []
         error_result = None
         started = perf_counter()
@@ -38,7 +57,7 @@ async def evaluate(rows, *, settings, services, doc_ids=None):
                                  "route": "error", "error_code": exc.code})
             error_result = {"question": row["question"], "expected_route": row["expected_route"],
                             "route": "error", "route_correct": False, "expected_doc": row.get("expected_doc"),
-                            "source_hit": False if row["expected_route"] == "rag" else None,
+                            "source_hit": False if has_reference else None,
                             "error_code": exc.code, "is_error": True,
                             "answer": "", "sources": []}
             results.append(error_result)
@@ -55,27 +74,33 @@ async def evaluate(rows, *, settings, services, doc_ids=None):
             if error_result is not None:
                 error_result.update(total_ms=total_ms, stage_ms=stage_ms)
         expected = row["expected_route"]
-        correct = result.route == expected or expected == "cache" and result.route == "faq"
+        correct = result.route in allowed
         if not correct:
             route_errors.append({"question": row["question"], "expected_route": expected, "route": result.route})
         match = None
-        if expected == "rag":
+        if has_reference:
             filename = row["expected_doc"]
             if filename not in doc_ids:
                 doc_ids[filename] = expected_doc_id(filename)
-            match = any(source.doc_id in {filename, doc_ids[filename]}
+            # 仅使用在线链路过滤后的实际响应来源，不计入未引用候选。
+            match = result.route == "rag" and any(source.doc_id in {filename, doc_ids[filename]}
                         or Path(source.doc_id).name == filename for source in result.sources)
         results.append({"question": row["question"], "expected_route": expected, "route": result.route,
                         "route_correct": correct, "expected_doc": row.get("expected_doc"),
                         "source_hit": match, "error_code": None, "is_error": False,
                         "answer": result.answer,
-                        "sources": [{"doc_id": source.doc_id, "title": source.title, "score": source.score}
+                        "sources": [{"index": source.index, "doc_id": source.doc_id,
+                                     "title": source.title, "score": source.score}
                                     for source in result.sources],
                         "total_ms": total_ms, "stage_ms": stage_ms})
         if result.route == "fallback":
             refused.append(row["question"])
+            if allowed & ANSWER_ROUTES and "fallback" not in allowed:
+                false_refusals.append(row["question"])
+        elif allowed == {"fallback"}:
+            false_answers.append(row["question"])
     rag = [row for row in results if row["source_hit"] is not None]
-    rag_total = sum(row["expected_route"] == "rag" for row in rows)
+    rag_total = len(rag)
     rag_hits = sum(row["source_hit"] for row in rag)
     return {"total": len(rows), "completed": len(results) - len(errors), "errors": errors,
             "error_distribution": dict(Counter(str(item["code"]) for item in errors)),
@@ -88,10 +113,14 @@ async def evaluate(rows, *, settings, services, doc_ids=None):
             "stage_p90_ms": {stage: percentile(values, 90) for stage, values in timings.items()},
             "total_p50_ms": percentile(totals, 50), "total_p90_ms": percentile(totals, 90),
             "refused_questions": refused, "results": results,
+            "false_refusals": false_refusals, "false_answers": false_answers,
             "trace_enabled": True, "api_trace_allowed": settings.allow_trace,
             "note": "expected_route=cache 接受 cache 或首次运行的 faq；耗时使用内部 trace，独立于 ALLOW_TRACE，"
+                    "expected_route=answer 接受 faq/cache/rag，列表接受列出的任一路由；"
+                    "缺少 expected_doc 的行跳过引用命中统计，带文档参考的失败行仍计入分母。"
                     "阶段均值与 p50/p90 仅统计实际执行阶段（包含出错前已完成的阶段），"
                     "总耗时包含失败请求；分位数使用排序后线性插值，并行阶段耗时不能相加。"
+                    "RAG 引用命中仅基于响应中过滤后的 sources；无有效引用时包含最高分的一条兜底来源。"
                     "FAQ_THRESHOLD 默认 0.9：实测 FAQ 误命中最高 0.885，阶段 4 用测试集校准。"}
 
 
@@ -115,6 +144,12 @@ def print_report(report):
         print(f'- {row["question"]} | 期望={row["expected_route"]} | 实际={row["route"]}')
     if not report["route_errors"]:
         print("无")
+    for title, key in (("误拒答（应答却 fallback）", "false_refusals"), ("误答（应拒却回答）", "false_answers")):
+        print(f'{title}：{len(report[key])} 题')
+        for question in report[key]:
+            print(f'- {question}')
+        if not report[key]:
+            print("无")
 
 
 def main(argv=None, *, settings=None):
@@ -127,6 +162,8 @@ def main(argv=None, *, settings=None):
         settings = get_settings()
     rows = [json.loads(line) for line in resolve_data_path(args.eval_file).read_text(encoding="utf-8").splitlines()
             if line.strip()]
+    for row in rows:
+        expected_routes(row["expected_route"])
 
     async def run():
         services = Services(settings)

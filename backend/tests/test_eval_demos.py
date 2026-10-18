@@ -20,7 +20,7 @@ class EvalDemoTests(unittest.TestCase):
         )
 
     def test_check_retrieval_loads_config_and_forces_normalized_rerank(self):
-        self.assertEqual(config.Settings.model_fields["refuse_threshold"].default, 0.5)
+        self.assertEqual(config.Settings.model_fields["refuse_threshold"].default, 0.2)
         self.assertEqual(config.Settings.model_fields["milvus_timeout_s"].default, 10)
         settings = self.settings().model_copy(update={"refuse_threshold": 0.6, "rerank_enabled": False})
         from app.retrieval import embedder, reranker, retriever

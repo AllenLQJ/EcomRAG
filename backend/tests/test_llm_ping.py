@@ -18,7 +18,8 @@ QUESTION = "PRIVATE_USER_QUESTION_72"
 
 def settings(**overrides):
     values = dict(llm_api_key=KEY, llm_base_url=f"https://vendor.example/v1/{KEY}",
-                  router_model="router-test", generate_model="generate-test", llm_max_retries=0)
+                  router_model="router-test", generate_model="generate-test", llm_max_retries=0,
+                  llm_rate_limit_retries=0)
     values.update(overrides)
     return Settings(_env_file=None, **values)
 
@@ -35,7 +36,7 @@ def test_ping_outputs_safe_diagnostics_for_both_models(mode, status, category, c
         body = json.loads(request.content)
         calls.append(body)
         assert body["messages"] == [{"role": "user", "content": "回复ok"}]
-        assert body["max_tokens"] == 64
+        assert body["max_tokens"] == (2048 if body["model"] == "router-test" else 4096)
         if mode == "timeout":
             raise httpx.ReadTimeout(KEY, request=request)
         if mode == "network":
@@ -57,6 +58,8 @@ def test_ping_outputs_safe_diagnostics_for_both_models(mode, status, category, c
     assert code == (0 if mode == "200" else 1)
     for result in results:
         assert result["ms"] >= 0
+        assert result["max_tokens"] == (2048 if result["role"] == "router" else 4096)
+        assert result["finish_reason"] is None and result["reasoning_tokens"] is None
         if mode == "200":
             assert result["success"] is True and result["reply_length"] == len("ok" + KEY + "文" * 40)
             assert "reply" not in result and "文" * 20 not in output
@@ -68,8 +71,12 @@ def test_ping_outputs_safe_diagnostics_for_both_models(mode, status, category, c
             assert info["host"] == "vendor.example" and info["model"] == result["model"]
             assert info["error_message"] is None or len(info["error_message"]) <= 200
             if category == "http_status":
-                assert info["error_code"] == "InvalidApiKey" and "***" in info["error_message"]
-            assert result["error_code"] == (42901 if mode == "429" else 50401 if mode == "timeout" else 50201)
+                assert info["error_code"] == "InvalidApiKey"
+                if mode == "429":
+                    assert info["error_message"] is None
+                else:
+                    assert "***" in info["error_message"]
+            assert result["error_code"] == (50302 if mode == "429" else 50401 if mode == "timeout" else 50201)
 
 
 def test_warning_redacts_provider_echoes_of_question_prompt_and_key(caplog):
@@ -123,3 +130,58 @@ def test_direct_ping_total_timeout_and_no_reply_body(capsys):
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()[1:]]
     assert len(rows) == 2 and all(row["error_code"] == 50401 for row in rows)
     assert all("reply" not in row and row["diagnostic"]["category"] == "timeout" for row in rows)
+
+
+@pytest.mark.parametrize("finish,usage,expected_finish,expected_tokens", [
+    ("stop", {"completion_tokens_details": {"reasoning_tokens": 900}}, "stop", 900),
+    ("length", {"reasoning_tokens": 1200}, "length", 1200),
+    (QUESTION, {"reasoning_tokens": KEY}, "unknown", None),
+])
+def test_ping_uses_runtime_quotas_extra_body_and_safe_success_metadata(
+        monkeypatch, capsys, caplog, finish, usage, expected_finish, expected_tokens):
+    # 两种角色可使用同一模型，但必须分别读取各自的输出配额。
+    configured = settings(router_model="glm-5.3-flash", generate_model="glm-5.3-flash",
+                          router_max_tokens=1536, generate_max_tokens=3072,
+                          llm_extra_body={"thinking": {"type": "enabled", "effort": "low"},
+                                          "vendor_option": "PRIVATE_EXTRA_VALUE"})
+    ticks = iter([1.0, 1.125, 2.0, 2.25])
+    monkeypatch.setattr(llm_ping, "perf_counter", lambda: next(ticks))
+    caplog.set_level(logging.INFO, logger="app.llm.client")
+    calls = []
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        assert body["max_tokens"] == (1536 if len(calls) == 1 else 3072)
+        assert body["thinking"] == {"type": "enabled", "effort": "low"}
+        assert body["vendor_option"] == "PRIVATE_EXTRA_VALUE"
+        assert body["stream"] is False
+        return httpx.Response(200, json={"choices": [{"finish_reason": finish, "message": {
+            "content": QUESTION + KEY, "reasoning_content": "PRIVATE_REASONING"}}], "usage": usage})
+    assert llm_ping.main([], settings=configured, transport=httpx.MockTransport(handler)) == 0
+    output = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.splitlines()[1:]]
+    assert len(calls) == 2 and [row["role"] for row in rows] == ["router", "generate"]
+    assert [row["max_tokens"] for row in rows] == [1536, 3072]
+    assert [row["ms"] for row in rows] == [125, 250]
+    for row in rows:
+        assert row["success"] is True and row["reply_length"] == len(QUESTION + KEY)
+        assert row["finish_reason"] == expected_finish and row["reasoning_tokens"] == expected_tokens
+    for private in (KEY, QUESTION, "PRIVATE_REASONING", "PRIVATE_EXTRA_VALUE"):
+        assert private not in output + caplog.text
+
+
+def test_ping_reports_thinking_configuration_hint_without_provider_echo(capsys, caplog):
+    def handler(request):
+        return httpx.Response(400, json={"error": {"code": "1210", "message": KEY + " 回复ok"}})
+    assert llm_ping.main([], settings=settings(llm_extra_body={"thinking": {"type": "disabled"}}),
+                         transport=httpx.MockTransport(handler)) == 1
+    output = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.splitlines()[1:]]
+    for row in rows:
+        assert row["success"] is False and row["error_code"] == 50201
+        assert row["diagnostic"]["error_code"] == "1210"
+        assert row["diagnostic"]["reason"] == (
+            '该模型不支持关闭思考，请把 LLM_EXTRA_BODY 改为 {"thinking":{"type":"enabled","effort":"low"}}'
+        )
+        assert row["finish_reason"] is None and row["reasoning_tokens"] is None
+    assert KEY not in output + caplog.text and "回复ok" not in output + caplog.text

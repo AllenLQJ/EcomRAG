@@ -26,7 +26,7 @@ def first_json_object(raw):
 
 
 class Router:
-    def __init__(self, client, model, *, max_tokens=64):
+    def __init__(self, client, model, *, max_tokens=2048):
         self.client, self.model, self.max_tokens = client, model, max_tokens
 
     async def route(self, question, history):

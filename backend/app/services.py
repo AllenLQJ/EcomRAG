@@ -65,8 +65,9 @@ class Services:
         self.llm = LLMClient(settings, transport=transport)
         self.router = Router(self.llm, settings.router_model, max_tokens=settings.router_max_tokens)
         self.generator = Generator(self.llm, settings.generate_model, max_tokens=settings.generate_max_tokens)
-        self.model_executor = BoundedExecutor(settings.model_io_workers, settings.model_io_max_in_flight,
-                                              name="model-io")
+        self.model_executor = BoundedExecutor(settings.model_io_workers, name="model-io",
+                                              queue_size=settings.model_io_queue_size,
+                                              queue_timeout_s=settings.model_io_queue_timeout_s)
 
     def _initialize(self):
         if self.faq is None:

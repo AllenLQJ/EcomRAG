@@ -7,6 +7,8 @@ from uuid import uuid4
 from app.contracts import AppError, TIMEOUT
 from app.executor import BoundedExecutor
 from app.llm.strategies import build_queries
+from app.llm.generator import clean_generated_answer, validate_citations
+from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 from app.schemas import ChatRequest, ChatResponse, Source
 from app.services import dependency_error, unavailable
 from app.tracing import items, record
@@ -66,7 +68,7 @@ async def retrieve(services, queries, question, trace, *, executor, top_k, split
             record("retrieve", started, candidates=len(docs))
         if not any(item.stage == "rerank" for item in trace):
             record("rerank", started if split else perf_counter(), kept=len(docs))
-        return docs
+        return (docs, candidates) if split else docs
     except Exception as exc:
         if dependency_error(exc):
             raise unavailable() from None
@@ -81,6 +83,39 @@ async def speculate(services, question, trace, *, executor, top_k):
         items.reset(token)
 
 
+async def rescue_rerank(services, question, rewritten, docs, candidates, trace, settings, executor):
+    # 原问低分时，只要改写规范化后不同且非空就补救，不以文本相似度排除少量增字。
+    # 已过阈值、规范化相同、敏感输入、关闭重排或无结果仍直接跳过。
+    if not needs_rewrite_rerank(question, rewritten, docs, enabled=settings.rerank_enabled,
+                                threshold=settings.refuse_threshold):
+        return docs
+    started, trace_start = perf_counter(), len(trace)
+    try:
+        revised = await call(services.rerank_candidates, rewritten, candidates,
+                             top_k=settings.rerank_top_k, executor=executor)
+    except Exception as exc:
+        if dependency_error(exc):
+            raise unavailable() from None
+        raise
+    # 仅合并两次真正的重排分，绝不把原始候选的 RRF 分当成相关度。
+    result = merge_reranked(docs, revised, settings.rerank_top_k)
+    if not any(item.stage == "rerank" for item in trace[trace_start:]):
+        record("rerank", started, kept=len(result))
+    for item in trace[trace_start:]:
+        if item.stage == "rerank":
+            item.detail = "改写问题补充重排"
+            item.top_score = max(doc.score for doc in result)
+    return result
+
+
+def select_context(docs, settings):
+    if not docs or not settings.rerank_enabled:
+        return docs
+    highest = max(range(len(docs)), key=lambda i: docs[i].score)
+    return [doc for i, doc in enumerate(docs)
+            if i == highest or doc.score >= settings.rag_context_min_score]
+
+
 async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings, services,
                    trace_sink=None, history=None, before_chat=None) -> ChatResponse:
     trace = [] if trace_sink is None else trace_sink
@@ -90,7 +125,9 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
     owns_executor = executor is None
     if owns_executor:
         # 注入的同步服务也使用独立线程池；真实服务的池由 Services 持有并跨请求共享。
-        executor = BoundedExecutor(settings.model_io_workers, settings.model_io_max_in_flight, name="model-io")
+        executor = BoundedExecutor(settings.model_io_workers, name="model-io",
+                                   queue_size=settings.model_io_queue_size,
+                                   queue_timeout_s=settings.model_io_queue_timeout_s)
     try:
         async with request_budget(settings.request_timeout_s):
             if before_chat is not None:
@@ -148,10 +185,14 @@ async def _run(chat, request_id, settings, services, trace, history, executor):
             started = perf_counter()
             answer = await services.chat_general(chat.message, history)
             record("generate", started)
+            answer, no_answer = clean_generated_answer(answer)
+            if no_answer:
+                logger.info("chat_fallback reason=generator_no_answer")
+                return response(REFUSAL, "fallback")
             return response(answer, "general")
         if speculative is not None:
             try:
-                docs = await speculative
+                docs, candidates = await speculative
             except BaseException:
                 discard(speculative)
                 speculative = None
@@ -162,17 +203,30 @@ async def _run(chat, request_id, settings, services, trace, history, executor):
         else:
             docs = await retrieve(services, build_queries(decision, chat.message), chat.message, trace,
                                   executor=executor, top_k=settings.rerank_top_k)
+            # 顺序路径已完成改写检索；复用已返回的 TopK，避免重复检索。
+            candidates = docs
+        docs = await rescue_rerank(services, chat.message, decision.rewritten_query, docs, candidates,
+                                   trace, settings, executor)
     finally:
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:
             discard(speculative)
     if not docs or (settings.rerank_enabled and max(doc.score for doc in docs) < settings.refuse_threshold):
         return response(REFUSAL, "fallback", strategy="direct")
+    # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
+    docs = select_context(docs, settings)
     started = perf_counter()
     generated = await services.generate_answer(chat.message, docs, history)
     record("generate", started)
+    # 以文本中的有效引用为准；也防止替身/其他生成器的元数据与文本不一致。
+    answer, no_answer = clean_generated_answer(generated.answer)
+    if no_answer:
+        logger.info("chat_fallback reason=generator_no_answer")
+        return response(REFUSAL, "fallback", strategy="direct")
+    generated = validate_citations(answer, len(docs))
+    indices = generated.cited_indices or {max(range(len(docs)), key=lambda i: docs[i].score) + 1}
     sources = [Source(index=i, doc_id=doc.doc_id, title=doc.title,
                       snippet=doc.snippet[:60], score=doc.score)
                for i, doc in enumerate(docs, 1)
-               if not generated.cited_indices or i in generated.cited_indices]
+               if i in indices]
     return response(generated.answer, "rag", sources, "direct")

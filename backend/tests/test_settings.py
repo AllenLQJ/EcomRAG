@@ -135,13 +135,18 @@ def test_all_test_settings_constructors_explicitly_disable_env_files():
 def test_performance_config_defaults_and_zero_char_limit():
     settings = Settings(_env_file=None, rerank_max_chars=0)
     assert settings.speculative_retrieval is True
-    assert settings.rerank_candidates == 10 and settings.router_max_tokens == 64
+    assert settings.rerank_candidates == 10 and settings.router_max_tokens == 2048
     assert settings.rerank_max_length == 512 and settings.rerank_batch_size == 16
     assert settings.rerank_max_chars == 0
     assert settings.rerank_text_mode == "child" and settings.rerank_fp16 is False
-    assert settings.generate_max_tokens == 600
+    assert settings.generate_max_tokens == 4096
     assert settings.llm_max_retries == 1 and settings.llm_retry_backoff_s == 0.5
+    assert settings.llm_max_concurrency == 2 and settings.llm_rate_limit_retries == 3
+    assert settings.llm_timeout_s == 12 and settings.llm_timeout_retries == 1
+    assert settings.request_timeout_s == 40 and settings.refuse_threshold == 0.2
     assert settings.model_io_workers == 1 and settings.model_io_max_in_flight == 1
+    assert settings.model_io_queue_size == 8 and settings.model_io_queue_timeout_s == 20
+    assert settings.rag_context_min_score == 0.1
     assert settings.rate_limit_io_workers == 2 and settings.rate_limit_io_max_in_flight == 16
     assert settings.child_chunk_size == 300 and settings.child_chunk_overlap == 50
 
@@ -149,8 +154,13 @@ def test_performance_config_defaults_and_zero_char_limit():
 @pytest.mark.parametrize("field,value", [("rerank_candidates", 0), ("rerank_max_length", 0),
                                         ("rerank_batch_size", 0), ("rerank_max_chars", -1),
                                         ("rerank_text_mode", "invalid"), ("llm_max_retries", -1),
+                                        ("llm_timeout_retries", -1), ("llm_timeout_s", 0),
+                                        ("llm_max_concurrency", 0), ("llm_rate_limit_retries", -1),
                                         ("llm_retry_backoff_s", -0.1), ("rerank_top_k", 0), ("rerank_top_k", -1),
                                         ("model_io_workers", 0), ("model_io_max_in_flight", 0),
+                                        ("model_io_queue_size", -1), ("model_io_queue_timeout_s", 0),
+                                        ("model_io_queue_timeout_s", -1), ("rag_context_min_score", -0.1),
+                                        ("rag_context_min_score", 1.1),
                                         ("rate_limit_io_workers", 0), ("rate_limit_io_max_in_flight", 0)])
 def test_performance_config_rejects_invalid_limits(field, value):
     from pydantic import ValidationError
@@ -158,17 +168,26 @@ def test_performance_config_rejects_invalid_limits(field, value):
         Settings(_env_file=None, **{field: value})
 
 
-@pytest.mark.parametrize("workers,capacity", [(1, 0), (1, -1), (1, 2), (2, 3)])
-def test_model_capacity_must_be_positive_and_not_exceed_workers(workers, capacity):
+@pytest.mark.parametrize("capacity", [0, -1])
+def test_legacy_model_capacity_still_rejects_nonpositive_values(capacity):
     from pydantic import ValidationError
-    with pytest.raises(ValidationError, match="MODEL_IO_MAX_IN_FLIGHT.*MODEL_IO_WORKERS"):
-        Settings(_env_file=None, model_io_workers=workers, model_io_max_in_flight=capacity)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, model_io_max_in_flight=capacity)
 
 
-@pytest.mark.parametrize("workers,capacity", [(1, 1), (2, 1), (2, 2)])
-def test_model_capacity_valid_boundaries(workers, capacity):
+@pytest.mark.parametrize("workers,capacity", [(1, 1), (2, 1), (2, 2), (1, 2), (2, 3)])
+def test_legacy_model_capacity_is_accepted_but_deprecated_and_does_not_disable_queue(workers, capacity, caplog):
     settings = Settings(_env_file=None, model_io_workers=workers, model_io_max_in_flight=capacity)
     assert settings.model_io_workers == workers and settings.model_io_max_in_flight == capacity
+    assert settings.model_io_queue_size == 8
+    assert "MODEL_IO_MAX_IN_FLIGHT 已弃用" in caplog.text
+    assert "model_io_max_in_flight" not in settings.model_dump()
+
+
+def test_zero_queue_and_context_score_boundaries_are_valid():
+    for score in (0, 1):
+        settings = Settings(_env_file=None, model_io_queue_size=0, rag_context_min_score=score)
+        assert settings.model_io_queue_size == 0 and settings.rag_context_min_score == score
 
 
 @pytest.mark.parametrize("size,overlap", [(50, 50), (49, 50), (50, 49), (300, 299), (1, 0)])

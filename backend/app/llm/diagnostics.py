@@ -93,4 +93,9 @@ def diagnostic_info(category, *, base_url, model, key, messages, response=None, 
             "extra_body_keys": extra_body_keys(extra_body, key, messages)}
     if category in {"bad_response", "truncated"}:
         info["response_structure"] = response_structure(data)
+    if category == "http_status" and str(provider.get("code")) == "1210":
+        # 固定配置建议，不回显请求中的扩展参数值或供应商正文。
+        info["reason"] = (
+            '该模型不支持关闭思考，请把 LLM_EXTRA_BODY 改为 {"thinking":{"type":"enabled","effort":"low"}}'
+        )
     return info

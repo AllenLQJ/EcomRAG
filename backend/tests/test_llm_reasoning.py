@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.contracts import AppError
-from app.llm.client import LLMClient, TRUNCATED_REASON
+from app.llm.client import LLMClient, REASONING_TRUNCATED_REASON, TRUNCATED_REASON
 from app.llm.generator import Generator
 from app.llm.router import Router
 from eval.llm_ping import main as ping
@@ -62,7 +62,10 @@ def test_empty_length_is_truncated_with_safe_structure(content, caplog):
     assert (error.code, error.http_status) == (50201, 502)
     assert error.message == "模型服务返回异常"  # C 端保持通用文案，具体原因进入诊断。
     info = error.diagnostic
-    assert info["category"] == "truncated" and info["reason"] == TRUNCATED_REASON
+    assert info["category"] == "truncated" and info["reason"] == REASONING_TRUNCATED_REASON
+    assert info["reason"] == (
+        "思考消耗了全部输出配额，请调大 ROUTER_MAX_TOKENS/GENERATE_MAX_TOKENS，或在模型支持时降低思考强度"
+    )
     structure = info["response_structure"]
     assert structure == {"choices_count": 1, "finish_reason": "length",
                          "content_type": type(content).__name__ if content is not None else "None",
@@ -167,8 +170,8 @@ def test_configured_token_limits_reach_router_and_both_generation_paths():
     assert fake.complete.call_args.kwargs["max_tokens"] == 2048
     asyncio.run(generator.chat_general("问题", []))
     assert fake.complete.call_args.kwargs["max_tokens"] == 2048
-    assert Settings.model_fields["router_max_tokens"].default == 64
-    assert Settings.model_fields["generate_max_tokens"].default == 600
+    assert Settings.model_fields["router_max_tokens"].default == 2048
+    assert Settings.model_fields["generate_max_tokens"].default == 4096
 
 
 def test_ping_prints_truncation_structure_without_any_response_text(capsys, caplog):
@@ -179,6 +182,69 @@ def test_ping_prints_truncation_structure_without_any_response_text(capsys, capl
     for result in [json.loads(line) for line in output.splitlines()[1:]]:
         assert result["diagnostic"]["category"] == "truncated"
         assert result["diagnostic"]["response_structure"]["usage"]["reasoning_tokens"] == 64
-        assert result["diagnostic"]["reason"] == TRUNCATED_REASON
+        assert result["diagnostic"]["reason"] == REASONING_TRUNCATED_REASON
+        assert result["finish_reason"] == "length" and result["reasoning_tokens"] == 64
+        assert result["ms"] >= 0
     for secret in (KEY, REASONING, ANSWER, EXTRA_VALUE):
         assert secret not in output + caplog.text
+
+
+def test_length_without_reasoning_uses_generic_quota_hint():
+    with pytest.raises(AppError) as caught:
+        asyncio.run(complete(response(None, finish="length")))
+    assert caught.value.diagnostic["reason"] == TRUNCATED_REASON
+    assert "思考消耗" not in caught.value.diagnostic["reason"]
+
+
+@pytest.mark.parametrize("code", [1210, "1210"])
+def test_always_thinking_model_configuration_error_has_safe_actionable_hint(code, caplog):
+    caplog.set_level(logging.INFO, logger="app.llm.client")
+    configured = settings(llm_extra_body={"thinking": {"type": "disabled"}})
+    calls = []
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"code": code,
+            "message": f"不支持关闭思考 disabled {QUESTION} {KEY}"}})
+    with pytest.raises(AppError) as caught:
+        asyncio.run(complete(None, configured=configured, handler=handler))
+    error = caught.value
+    assert (error.code, error.http_status, error.message) == (50201, 502, "模型服务暂时不可用")
+    assert len(calls) == 1  # 配置错误不重试，也不擅自修改扩展参数。
+    assert calls[0]["thinking"] == {"type": "disabled"}
+    assert error.diagnostic["category"] == "http_status"
+    assert error.diagnostic["http_status"] == 400 and error.diagnostic["error_code"] == "1210"
+    assert error.diagnostic["reason"] == (
+        '该模型不支持关闭思考，请把 LLM_EXTRA_BODY 改为 {"thinking":{"type":"enabled","effort":"low"}}'
+    )
+    for secret in (KEY, QUESTION, "disabled"):
+        assert secret not in caplog.text + json.dumps(error.diagnostic)
+
+
+def test_completion_metadata_is_per_call_and_excludes_response_text_from_repr(caplog):
+    async def run():
+        both_started = asyncio.Event()
+        seen = []
+        async def handler(request):
+            model = json.loads(request.content)["model"]
+            seen.append(model)
+            if len(seen) == 2:
+                both_started.set()
+            await both_started.wait()
+            data = response(ANSWER, finish="length" if model == "first" else "stop",
+                            reasoning_content=REASONING)
+            data["usage"]["completion_tokens_details"]["reasoning_tokens"] = 40 if model == "first" else 80
+            return httpx.Response(200, json=data)
+        client = LLMClient(settings(), transport=httpx.MockTransport(handler))
+        try:
+            results = await asyncio.gather(*(
+                client.complete_with_metadata(model=model, messages=[{"role": "user", "content": QUESTION}],
+                                              temperature=0, max_tokens=1024)
+                for model in ("first", "second")
+            ))
+            assert [item.text for item in results] == [ANSWER, ANSWER]
+            assert [(item.finish_reason, item.reasoning_tokens) for item in results] == [("length", 40), ("stop", 80)]
+            for secret in (ANSWER, REASONING, QUESTION, KEY):
+                assert secret not in repr(results) + caplog.text
+        finally:
+            await client.aclose()
+    asyncio.run(run())

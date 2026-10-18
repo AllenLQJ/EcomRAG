@@ -31,12 +31,31 @@ class SampleDataTests(unittest.TestCase):
             reader = csv.DictReader(handle)
             self.assertEqual(reader.fieldnames, ["question", "answer", "category"])
             rows = list(reader)
-        self.assertEqual(len(rows), 30)
-        self.assertEqual(len({row["question"] for row in rows}), 30)
+        self.assertEqual(len(rows), 34)
+        self.assertEqual(len({row["question"] for row in rows}), 34)
         self.assertIn("怎么申请退货？", {row["question"] for row in rows})
         self.assertEqual(sum(row["question"] == "怎么申请退货？" for row in rows), 1)
         self.assertEqual({row["category"] for row in rows}, CATEGORIES)
         self.assertTrue(all("虚构样例" in row["answer"] for row in rows))
+
+    def test_shipping_and_invoice_short_faq_answers_are_document_excerpts(self):
+        with (ROOT / "data/faq.csv").open(encoding="utf-8", newline="") as handle:
+            faq = {row["question"]: row for row in csv.DictReader(handle)}
+        compact = lambda text: re.sub(r"\s+", "", text)
+        for question, category, filename in (
+            ("运费怎么算？", "logistics", "logistics_shipping.md"),
+            ("运费多少钱？", "logistics", "logistics_shipping.md"),
+            ("发票怎么开？", "payment", "payment_invoices.md"),
+            ("怎么开发票？", "payment", "payment_invoices.md"),
+        ):
+            with self.subTest(question=question):
+                row = faq[question]
+                self.assertEqual(row["category"], category)
+                self.assertTrue(row["answer"].startswith("虚构样例："))
+                document = compact((ROOT / "data/docs" / filename).read_text(encoding="utf-8"))
+                for sentence in compact(row["answer"].removeprefix("虚构样例：")).split("。"):
+                    if sentence:
+                        self.assertIn(sentence, document)
 
     def test_eval_exact_coverage_and_document_references(self):
         rows = [json.loads(line) for line in (ROOT / "data/eval.jsonl").read_text(encoding="utf-8").splitlines()]

@@ -13,6 +13,8 @@ from app.rate_limit import RateLimiter
 from app.schemas import ChatRequest
 from app.services import Services, _models
 from deadline_helpers import ControlledDeadlines
+from chat_fakes import FakeServices
+from app.executor import BoundedExecutor
 
 
 def test_assembly_is_lazy_singleton_and_warmup_initializes_once():
@@ -80,7 +82,7 @@ def test_retrieval_and_split_rerank_use_configured_top_k_unless_overridden(top_k
 def test_timed_out_model_work_is_bounded_and_does_not_block_rate_limit_or_default_pool(monkeypatch, caplog):
     async def run():
         settings = Settings(_env_file=None, speculative_retrieval=False, request_timeout_s=60,
-                            model_io_workers=1, model_io_max_in_flight=1)
+                            model_io_workers=1, model_io_queue_size=0)
         deadlines = ControlledDeadlines(monkeypatch, asyncio.Semaphore(1))
         loop = asyncio.get_running_loop()
         loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
@@ -132,7 +134,7 @@ def test_timed_out_model_work_is_bounded_and_does_not_block_rate_limit_or_defaul
 
 def test_admitted_task_waits_for_model_lock_held_by_timed_out_work(monkeypatch, caplog):
     async def run():
-        settings = Settings(_env_file=None, model_io_workers=2, model_io_max_in_flight=2)
+        settings = Settings(_env_file=None, model_io_workers=2, model_io_queue_size=0)
         loop = asyncio.get_running_loop()
         entered, waiting = asyncio.Event(), asyncio.Event()
         release, lock = threading.Event(), threading.Lock()
@@ -185,5 +187,93 @@ def test_admitted_task_waits_for_model_lock_held_by_timed_out_work(monkeypatch, 
             await asyncio.wait_for(services.aclose(), 1)
         assert services.retriever.retrieve.call_count == 2
         assert not lock.locked()
+    asyncio.run(run())
+    assert "PRIVATE_" not in caplog.text
+
+
+def test_default_model_queue_accepts_next_chat_even_with_legacy_capacity_one(caplog):
+    async def run():
+        settings = Settings(_env_file=None, speculative_retrieval=False, model_io_max_in_flight=1)
+        loop = asyncio.get_running_loop()
+        entered, queued, release = asyncio.Event(), asyncio.Event(), threading.Event()
+        with patch("app.services._models", return_value=(Mock(), Mock(), threading.Lock())):
+            services = Services(settings)
+        services.faq = Mock()
+        services.route = AsyncMock(return_value=RouteDecision(intent="general", rewritten_query="问候"))
+        services.chat_general = AsyncMock(return_value="你好")
+        def lookup(question):
+            if question == "PRIVATE_FIRST":
+                loop.call_soon_threadsafe(entered.set)
+                assert release.wait(5)
+            return None
+        services.faq.faq_lookup.side_effect = lookup
+        async def chat(question):
+            if question == "PRIVATE_SECOND":
+                queued.set()
+            return await run_chat(ChatRequest(session_id=question, message=question),
+                                  settings=settings, services=services)
+        first = asyncio.create_task(chat("PRIVATE_FIRST"))
+        second = None
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            second = asyncio.create_task(chat("PRIVATE_SECOND"))
+            await queued.wait()
+            assert not second.done()
+            services.faq.faq_lookup.assert_called_once_with("PRIVATE_FIRST")
+            release.set()
+            result = await asyncio.wait_for(second, 2)
+            assert result.route == "general" and result.answer == "你好"
+            assert services.faq.faq_lookup.call_count == 2
+        finally:
+            release.set()
+            await asyncio.gather(*[task for task in (first, second) if task is not None], return_exceptions=True)
+            await services.aclose()
+    asyncio.run(run())
+    assert "PRIVATE_" not in caplog.text
+
+
+@pytest.mark.parametrize("intent", ["general", "sensitive"])
+def test_next_request_queues_behind_discarded_speculative_worker(intent, caplog):
+    async def run():
+        settings = Settings(_env_file=None)
+        loop = asyncio.get_running_loop()
+        entered, next_queued, release = asyncio.Event(), asyncio.Event(), threading.Event()
+        services = FakeServices()
+        services.model_executor = BoundedExecutor(1, name="speculative-test", queue_size=8)
+        def candidates(queries):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(5)
+            raise ValueError("PRIVATE_QUESTION PRIVATE_ANSWER PRIVATE_KEY")
+        async def route(*args):
+            await entered.wait()
+            return RouteDecision(intent=intent, rewritten_query="普通问题")
+        services.retrieve_candidates = candidates
+        services.route = route
+        next_services = FakeServices()
+        next_services.model_executor = services.model_executor
+        async def next_chat():
+            next_queued.set()
+            return await run_chat(ChatRequest(session_id="next", message="下一题"),
+                                  settings=Settings(_env_file=None, speculative_retrieval=False), services=next_services)
+        next_task = None
+        try:
+            response = await asyncio.wait_for(run_chat(ChatRequest(session_id="first", message="问题"),
+                                                       settings=settings, services=services), 2)
+            assert response.route == ("general" if intent == "general" else "fallback")
+            next_task = asyncio.create_task(next_chat())
+            await next_queued.wait()
+            assert not next_task.done()
+            next_services.faq_lookup.assert_not_called()
+            release.set()
+            assert (await asyncio.wait_for(next_task, 2)).route == "general"
+            next_services.faq_lookup.assert_called_once()
+        finally:
+            release.set()
+            if next_task is not None:
+                await asyncio.gather(next_task, return_exceptions=True)
+            await services.model_executor.aclose()
     asyncio.run(run())
     assert "PRIVATE_" not in caplog.text

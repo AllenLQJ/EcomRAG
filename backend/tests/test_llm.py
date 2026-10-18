@@ -21,6 +21,7 @@ QUESTION = "TEST_PRIVATE_CUSTOMER_INPUT"
 
 def settings(**values):
     values.setdefault("llm_max_retries", 0)  # 此组单独验证一次尝试的错误映射。
+    values.setdefault("llm_rate_limit_retries", 0)
     return Settings(_env_file=None, llm_api_key=KEY, **values)
 
 
@@ -53,7 +54,7 @@ def test_client_request_shape_and_configured_key():
 
 
 @pytest.mark.parametrize("mode,code,status", [
-    ("429", 42901, 429), ("500", 50201, 502), ("400", 50201, 502),
+    ("429", 50302, 503), ("500", 50201, 502), ("400", 50201, 502),
     ("302", 50201, 502), ("timeout", 50401, 504), ("network", 50201, 502), ("socket", 50201, 502),
     ("bad_json", 50201, 502), ("bad_structure", 50201, 502),
     ("empty", 50201, 502), ("null", 50201, 502), ("bad_content", 50201, 502),
@@ -170,7 +171,7 @@ def test_router_json_and_safe_fallback(raw, expected, caplog):
     invalid = expected == "knowledge" and '"intent":"knowledge"' not in raw
     assert client.complete.await_count == (2 if invalid else 1)
     assert client.complete.call_args.kwargs["temperature"] == 0
-    assert client.complete.call_args.kwargs["max_tokens"] == 64
+    assert client.complete.call_args.kwargs["max_tokens"] == 2048
     assert client.complete.call_args.kwargs["json_mode"] is True
     if expected == "knowledge" and '"intent":"knowledge"' not in raw:
         assert result.rewritten_query == QUESTION
@@ -178,7 +179,7 @@ def test_router_json_and_safe_fallback(raw, expected, caplog):
         assert QUESTION not in caplog.text
 
 
-@pytest.mark.parametrize("code,status", [(50401, 504), (42901, 429), (50201, 502)])
+@pytest.mark.parametrize("code,status", [(50401, 504), (50302, 503), (50201, 502)])
 def test_router_propagates_infrastructure_errors(code, status):
     client = AsyncMock()
     client.complete.side_effect = AppError(code, status, "模型错误")

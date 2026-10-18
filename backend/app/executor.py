@@ -2,19 +2,39 @@
 import asyncio
 import logging
 import threading
+from collections import deque
 from concurrent.futures import CancelledError, ThreadPoolExecutor, TimeoutError as FutureTimeout
 from contextvars import copy_context
+from dataclasses import dataclass
 from time import monotonic
 
-from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, SERVICE_BUSY
+from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, SERVICE_BUSY, TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(eq=False)
+class _Waiter:
+    loop: asyncio.AbstractEventLoop
+    ready: asyncio.Future
+    state: str = "waiting"
+
+
 class BoundedExecutor:
-    def __init__(self, workers, max_in_flight, *, name):
+    def __init__(self, workers, max_in_flight=None, *, name, queue_size=None, queue_timeout_s=20):
+        # rate-limit 保留旧的总在飞容量；模型使用显式异步队列，不向无界线程队列堆任务。
+        if workers <= 0 or (queue_size is None and (max_in_flight is None or max_in_flight <= 0)):
+            raise ValueError("线程数和在飞容量必须大于零")
+        if queue_size is not None and (queue_size < 0 or queue_timeout_s <= 0 or max_in_flight is not None):
+            raise ValueError("异步排队需非负队列容量、正超时，且不能同时指定 max_in_flight")
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=name)
-        self._slots = threading.BoundedSemaphore(max_in_flight)
+        self._queued_mode = queue_size is not None
+        self._slots = None if self._queued_mode else threading.BoundedSemaphore(max_in_flight)
+        self._workers = workers
+        self._capacity = workers + queue_size if self._queued_mode else max_in_flight
+        self._queue_timeout_s = queue_timeout_s
+        self._waiting = deque()
+        self._active = self._admitted = 0
         self._lock = threading.RLock()
         self._futures = set()
         self._closed = False
@@ -24,6 +44,11 @@ class BoundedExecutor:
         self._close_warned = False
 
     async def run(self, function, *args, **kwargs):
+        if self._queued_mode:
+            return await self._run_queued(function, *args, **kwargs)
+        return await self._run_immediate(function, *args, **kwargs)
+
+    async def _run_immediate(self, function, *args, **kwargs):
         abandoned = threading.Event()
         def invoke():
             if not abandoned.is_set():
@@ -51,20 +76,102 @@ class BoundedExecutor:
             abandoned.set()
             raise
 
+    def _notify(self, waiter):
+        def wake():
+            if not waiter.ready.done():
+                waiter.ready.set_result(None)
+        try:
+            waiter.loop.call_soon_threadsafe(wake)
+        except RuntimeError:
+            # 所属循环已经关闭；没有协程会再消费这个预留名额。
+            self._abandon(waiter)
+
+    def _dispatch(self):
+        # 调用方持有 _lock；线程完成回调也能安全唤醒其他事件循环的等待者。
+        while not self._closed and self._waiting and self._active < self._workers:
+            waiter = self._waiting.popleft()
+            waiter.state = "reserved"
+            self._active += 1
+            self._notify(waiter)
+
+    def _abandon(self, waiter):
+        with self._lock:
+            if waiter.state == "waiting":
+                self._waiting.remove(waiter)
+            elif waiter.state == "reserved":
+                self._active -= 1
+            else:
+                return
+            waiter.state = "released"
+            self._admitted -= 1
+            self._dispatch()
+
+    def _reject_waiters(self):
+        while self._waiting:
+            waiter = self._waiting.popleft()
+            waiter.state = "released"
+            self._admitted -= 1
+            self._notify(waiter)
+
+    async def _run_queued(self, function, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        waiter = _Waiter(loop, loop.create_future())
+        abandoned = threading.Event()
+        def invoke():
+            if not abandoned.is_set():
+                return function(*args, **kwargs)
+        with self._lock:
+            if self._closed:
+                raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试")
+            if self._admitted >= self._capacity:
+                raise AppError(SERVICE_BUSY, 503, "服务有点忙，请稍后再试")
+            self._admitted += 1
+            self._waiting.append(waiter)
+            self._dispatch()
+        try:
+            try:
+                async with asyncio.timeout(self._queue_timeout_s):
+                    await asyncio.shield(waiter.ready)
+            except TimeoutError:
+                raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
+            with self._lock:
+                if self._closed:
+                    raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试")
+                # 成功提交后由底层 Future 释放执行名额；取消 await 不会提前释放它。
+                future = self._executor.submit(copy_context().run, invoke)
+                waiter.state = "submitted"
+                self._futures.add(future)
+                future.add_done_callback(self._done)
+            wrapped = asyncio.wrap_future(future)
+            wrapped.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            return await asyncio.shield(wrapped)
+        except asyncio.CancelledError:
+            abandoned.set()
+            raise
+        finally:
+            self._abandon(waiter)
+
     def _done(self, future):
         with self._lock:
             self._futures.discard(future)
-            self._slots.release()
+            if self._queued_mode:
+                self._active -= 1
+                self._admitted -= 1
+                self._dispatch()
+            else:
+                self._slots.release()
 
     def shutdown(self):
         with self._lock:
             self._closed = True
+            self._reject_waiters()
             self._executor.shutdown(wait=False, cancel_futures=True)
 
     async def aclose(self, cleanup=None, *, timeout=5):
         with self._lock:
             if self._close_future is None:
                 self._closed = True
+                self._reject_waiters()
                 self._close_deadline = monotonic() + max(0, timeout)
                 pending = tuple(self._futures)
                 def close():
