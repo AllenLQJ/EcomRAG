@@ -62,16 +62,18 @@ FastAPI · pipeline.py        校验、限流、request_id、编排
 | 前端 | React + TS + Vite + Tailwind | 已确认 | 独立界面；视觉按 UI 设计稿的 token 实现 |
 | 向量库 | Milvus Standalone 2.4+（docker compose） | 已确认 | 稀疏向量与混合检索在 Standalone 上更稳；M1 用 arm64 镜像 |
 | Embedding | BAAI/bge-m3，稠密 1024 维 + 稀疏 | 已确认 | 本机用 MPS，VPS 用 CPU；开工前下载约 2.3 GB |
-| Reranker | BAAI/bge-reranker-v2-m3 | 已确认 | `RERANK_ENABLED=true`；候选 20 → 保留 5；VPS 无 GPU 时候选可降到 10 |
+| Reranker | BAAI/bge-reranker-v2-m3 | 已确认 | `RERANK_ENABLED=true`；候选 10 → 保留 5 |
 | LLM | 通义千问（阿里云国际站 Model Studio），OpenAI 兼容接口 | 已确认 | 路由用 qwen-flash 或 qwen-turbo，生成用 qwen-plus；模型名与免费额度以控制台为准 |
 | 结构化存储 | MySQL 8（docker，`faq_pairs`、`chat_logs`） | 已确认 | `faq/repo.py` 封装访问 |
-| 缓存 / 限流 | Redis 7，FAQ 答案 TTL 24h | 建议 | 连不上时跳过缓存，限流退化为进程内计数 |
+| 缓存 / 限流 | Redis 7，FAQ 答案 TTL 24h | 建议 | 连不上时跳过缓存，限流退化为进程内计数；已知限制：本地 LRU 淘汰会丢失对应计数 |
 | BM25 | rank_bm25 + jieba | 建议 | 启动时从 MySQL 加载到内存 |
 | FAQ 命中阈值 | bge-m3 余弦 ≥ 0.8 | 已确认 | 误命中风险高于 0.85，联调后用测试集复核 |
 | 父块 / 子块 | 父块按标题切、上限 1200 字；子块 300 字、重叠 50 | 建议 | 子块前拼文档标题提升召回 |
 | 混合检索 | 稠密 Top20 + 稀疏 Top20，RRF k=60 | 建议 | 去重后交给 Reranker |
 | 拒答阈值 | rerank 最高分 < 0.3 走 fallback | 建议 | 联调后用测试集校准 |
 | 超时 | 单次 LLM 20s，整个请求 40s | 建议 | 超时返回 504 |
+
+同步 IO 使用独立线程池：模型侧 `MODEL_IO_WORKERS=1`、`MODEL_IO_MAX_IN_FLIGHT=1`，启动时要求 `1 <= MODEL_IO_MAX_IN_FLIGHT <= MODEL_IO_WORKERS`；限流侧 `RATE_LIMIT_IO_WORKERS=2`、`RATE_LIMIT_IO_MAX_IN_FLIGHT=16`。在飞上限包含运行和排队任务，满载立即返回 HTTP 503 / 业务码 50302（服务有点忙，请稍后再试）；请求超时或取消后，名额保留到底层任务退出，尚未开始的任务跳过执行。模型调用仍受全局锁串行保护，调高线程数与在飞上限后，已准入任务仍可能等待模型锁直至超时。线程池收尾默认最多等待 5 秒，超时后放弃等待、取消排队任务并记录固定警告；运行中的线程无法强制停止，未开始的连接清理也会跳过。
 
 ## 3. MVP 功能与接口
 
@@ -97,7 +99,7 @@ P0 的判定标准只有一条：能用 curl 跑通「提问 → 缓存 / FAQ / 
 - 响应体：`request_id`、`session_id`、`answer`、`route`、`strategy`、`sources`、`is_mock`、`trace`
 - `route` 枚举：cache | faq | rag | general | fallback；P0 的 `strategy` 只会是 `direct` 或 `null`，枚举保留 direct | hyde | subquery | stepback 四个值以便扩展
 - `sources`：rag 时非空，`answer` 中的 [n] 对应 `index`；faq / cache 时给出命中的 FAQ 条目；general / fallback 为空数组
-- 错误结构：HTTP 状态码 + `{"code", "message", "request_id"}`；错误码 40001 参数非法、42901 限流、50001 内部错误、50201 LLM 调用失败、50301 Milvus / MySQL 不可用、50401 超时
+- 错误结构：HTTP 状态码 + `{"code", "message", "request_id"}`；错误码 40001 参数非法、42901 限流、50001 内部错误、50201 LLM 调用失败、50301 Milvus / MySQL 不可用、50302 同步 IO 线程池满载（HTTP 503，服务有点忙，请稍后再试）、50401 超时
 - 可选字段 `user_id`（仅 chat_logs，可为空，请求体不加）：P0 不使用，为第 5 节的身份对接预留
 
 **模块边界**：`contracts.py` 定义模块间的函数签名（`retrieve` / `route` / `generate_answer` / `chat_general` / `faq_lookup` / `run_chat`），只有 `pipeline.py` 组装它们。签名的作用是给 AI 编码助手划清改动范围，并便于以后新增策略时不动 `pipeline.py`。模块内部异常一律包成 `AppError(code, message)`，由全局处理器转成统一错误结构。
@@ -256,7 +258,7 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 | 本机内存压力（Milvus + MySQL + Redis + bge-m3 + Reranker） | 卡顿或容器被杀 | 机器为 16 GB，正常可运行；模型使用全局单例，给容器设内存上限，卡顿时先关 Reranker |
 | Milvus（etcd + minio）compose 起不来 | 检索全断 | 准备阶段先实测；实在不行改用 Milvus Lite 只跑稠密检索，`retrieve()` 接口不变 |
 | 模型权重共约 4.5 GB，下载慢 | 开工即卡住 | 提前下载到本机，VPS 上单独下载一次；配 HF 镜像 |
-| VPS 无 GPU，Reranker 慢 | 公网版单次 +1–2s | 候选从 20 降到 10；模型全局单例预热 |
+| VPS 无 GPU，Reranker 慢 | 公网版单次 +1–2s | 候选默认已是 10，可再下调；模型全局单例预热 |
 | 串行 LLM 调用延迟 6s+ | 演示体验差 | 路由用快速小模型；前端显示阶段进度 |
 | FAQ 阈值 0.8 误命中 | 答非所问 | 联调后用 20 条测试题复核；如有误命中再上调 |
 | LLM 编造政策（面向 C 端会变成客诉） | 可信度与纠纷 | 仅据上下文作答并标 [n]；低分走 fallback；提示词禁止承诺政策外的赔付 |
@@ -320,4 +322,4 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 - 压测：在阶段 4 用 20–30 个并发请求跑一遍，记录延迟与报错，再定并发上限；写一个简单的压测脚本。
 - 额度：在控制台确认 Qwen 免费额度、有效期与 QPS；准备第二家厂商的 key，只改 `.env` 切换。
 - 本机备用：演示期间接电源，运行 `caffeinate -dims` 防止休眠；不要合盖。
-- 降级：VPS 慢时先关 Reranker 或把候选从 20 降到 10；仍不够时让前端提示稍后再试。
+- 降级：VPS 慢时先关 Reranker 或下调候选数（默认已是 10）；仍不够时让前端提示稍后再试。
