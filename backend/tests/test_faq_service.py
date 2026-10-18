@@ -21,7 +21,7 @@ class ControlledFakeEmbedder(FakeEmbedder):
 
 
 class FaqServiceTests(unittest.TestCase):
-    def build(self, query_vector, *, threshold=0.8):
+    def build(self, query_vector, *, threshold=0.9):
         repo = FakeRepo([FaqRecord(1, "退货申请", "答案", "after_sales")])
         redis = FakeRedis()
         cache = FaqCache(redis)
@@ -75,7 +75,7 @@ class FaqServiceTests(unittest.TestCase):
         self.assertEqual(len(redis.writes), 1)
 
     def test_threshold_below_equal_and_above_and_cache_write(self):
-        for vector, expected in (([0.79, 0.613106842], False), ([0.8, 0.6], True), ([4.0, 0.0], True)):
+        for vector, expected in (([0.885, 0.46559], False), ([0.9, (1 - 0.9**2)**0.5], True), ([4.0, 0.0], True)):
             with self.subTest(vector=vector):
                 service, embedder, redis = self.build(vector)
                 index, _ = service._snapshot
@@ -112,3 +112,46 @@ class FaqServiceTests(unittest.TestCase):
         service, _, _ = self.build([0, 0])
         self.assertIsNone(service.faq_lookup("退货问题"))
         self.assertEqual(service.top_score, 0.0)
+
+    def test_default_threshold_and_cached_scores_follow_current_policy(self):
+        from app.config import Settings
+        self.assertEqual(Settings.model_fields["faq_threshold"].default, 0.9)
+        for score in (0.852, 0.806, 0.885):
+            service, embedder, redis = self.build([0, 1])
+            service.cache.set("退货问题", FaqHit(faq_id=8, question="旧问句", answer="错误答案", score=score))
+            self.assertIsNone(service.faq_lookup("退货问题"))
+            self.assertNotIn(cache_key("退货问题"), redis.values)
+            self.assertEqual(embedder.calls[-1], ["退货问题"])
+        service, _, _ = self.build([0, 1])
+        service.cache.set("退货问题", FaqHit(faq_id=8, question="边界问句", answer="答案", score=0.9))
+        self.assertEqual(service.faq_lookup("退货问题").source, "cache")
+
+    def test_cache_without_score_is_miss_and_deleted(self):
+        redis = FakeRedis()
+        redis.values[cache_key("q")] = '{"faq_id":1,"question":"q","answer":"legacy"}'
+        with self.assertLogs("app.faq.cache", "WARNING"):
+            self.assertIsNone(FaqCache(redis).get("q"))
+        self.assertNotIn(cache_key("q"), redis.values)
+
+    def test_reload_clears_only_faq_keys(self):
+        service, _, redis = self.build([0, 1])
+        service.cache.set("旧问题", FaqHit(faq_id=1, question="旧问题", answer="旧答案", score=1))
+        redis.values["chat:rate:ip:keep"] = "1"
+        service.reload()
+        self.assertEqual(redis.values, {"chat:rate:ip:keep": "1"})
+
+    def test_low_score_delete_failure_does_not_return_bad_cache(self):
+        redis = FakeRedis()
+        cache = FaqCache(redis)
+        cache.set("q", FaqHit(faq_id=1, question="q", answer="bad", score=0.885))
+        redis.delete = Mock(side_effect=ConnectionError("SECRET"))
+        with self.assertLogs("app.faq.cache", "WARNING"):
+            self.assertIsNone(cache.get("q", threshold=0.9))
+
+    def test_reload_redis_down_does_not_block_new_snapshot(self):
+        service, _, redis = self.build([0, 1])
+        redis.scan = Mock(side_effect=ConnectionError("down"))
+        service.repo.records = []
+        with self.assertLogs("app.faq.cache", "WARNING"):
+            service.reload()
+        self.assertIsNone(service.faq_lookup("新问题"))

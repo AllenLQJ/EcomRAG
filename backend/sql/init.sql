@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS chat_logs (
     route VARCHAR(16) NOT NULL,
     strategy VARCHAR(16) NULL,
     latency_ms INT UNSIGNED NOT NULL,
+    sources_json JSON NULL,
+    error_code INT NULL,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     INDEX idx_chat_logs_request_id (request_id),
     INDEX idx_chat_logs_session_created (session_id, created_at)

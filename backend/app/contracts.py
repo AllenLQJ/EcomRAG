@@ -1,8 +1,8 @@
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from app.schemas import Route, Strategy
+from app.schemas import Intent, Strategy
 
 # 统一业务错误码。
 HTTP_ERROR = 40000
@@ -35,9 +35,11 @@ class RetrievedDoc(BaseModel):
 
 
 class RouteDecision(BaseModel):
-    route: Route
-    strategy: Strategy | None = None
-    reason: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Intent
+    strategy: Strategy = "direct"
+    rewritten_query: str = Field(min_length=1)
 
 
 class FaqHit(BaseModel):
@@ -65,26 +67,6 @@ def retrieve(queries: list[str], rerank_query: str, top_k: int = 5) -> list[Retr
 
 async def embed(texts: list[str]) -> list[list[float]]:
     """将文本编码为向量，暂不加载模型。"""
-    raise NotImplementedError
-
-
-async def route(message: str) -> RouteDecision:
-    """判断问题的路由与查询策略，暂不调用路由模型。"""
-    raise NotImplementedError
-
-
-async def build_queries(message: str, strategy: Strategy) -> list[str]:
-    """按指定策略构建检索查询，暂不改写问题。"""
-    raise NotImplementedError
-
-
-async def generate_answer(message: str, docs: list[RetrievedDoc]) -> str:
-    """根据文档生成回答，暂不调用大模型。"""
-    raise NotImplementedError
-
-
-async def chat_general(message: str) -> str:
-    """生成通用对话回答，暂不调用大模型。"""
     raise NotImplementedError
 
 

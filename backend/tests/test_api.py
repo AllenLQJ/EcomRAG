@@ -16,7 +16,7 @@ def test_health_structure_when_dependencies_are_down(client):
 
 
 @pytest.mark.parametrize("debug", [False, True])
-def test_chat_mock_response(client, debug):
+def test_chat_injected_response(client, debug):
     response = client.post("/api/v1/chat", json={
         "session_id": "test-session", "message": "如何退货？", "debug": debug,
     })
@@ -33,13 +33,8 @@ def test_chat_mock_response(client, debug):
     assert body["route"] == "general"
     assert body["strategy"] is None
     assert body["sources"] == []
-    assert body["is_mock"] is True
-    if debug:
-        assert body["trace"]
-        assert body["trace"][0]["stage"] == "mock"
-        assert body["trace"][0]["ms"] >= 0
-    else:
-        assert body["trace"] is None
+    assert body["is_mock"] is False
+    assert body["trace"] is None  # ALLOW_TRACE 默认 false
 
 
 @pytest.mark.parametrize("message", ["", " \t\n", "问" * 501])
@@ -137,7 +132,7 @@ def test_http_400_is_not_a_validation_error(app, client):
 
 
 def test_llm_configured_without_network(app_factory):
-    app = app_factory(qwen_api_key="PLACEHOLDER_NOT_A_REAL_KEY")
+    app = app_factory(llm_api_key="PLACEHOLDER_NOT_A_REAL_KEY")
     with TestClient(app) as client:
         response = client.get("/health")
     assert response.status_code == 200

@@ -1,8 +1,13 @@
+import json
+import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -11,12 +16,27 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
+        populate_by_name=True,
     )
 
-    qwen_api_key: SecretStr = SecretStr("")
-    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_api_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias="LLM_API_KEY")
+    llm_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        validation_alias="LLM_BASE_URL")
+    # 单独读取过渡别名，保留来源信息；避免 AliasChoices 在配置源中规范化后丢失旧名。
+    # 兼容字段不出现在 repr / model_dump 中，也不会被业务代码使用。
+    legacy_llm_api_key: SecretStr | None = Field(
+        default=None, validation_alias="QWEN_API_KEY", exclude=True, repr=False)
+    legacy_llm_base_url: str | None = Field(
+        default=None, validation_alias="QWEN_BASE_URL", exclude=True, repr=False)
     router_model: str = "qwen-turbo"
     generate_model: str = "qwen-plus"
+    router_max_tokens: int = Field(default=64, gt=0)
+    generate_max_tokens: int = Field(default=600, gt=0)
+    # 禁止环境源提前 JSON 解码，统一在 validator 中报清晰错误，避免重复解码。
+    llm_extra_body: Annotated[dict[str, object], NoDecode] = Field(default_factory=dict, repr=False)
     mysql_host: str = "127.0.0.1"
     mysql_port: int = Field(default=3306, ge=1, le=65535)
     mysql_database: str = "ecomrag"
@@ -32,19 +52,71 @@ class Settings(BaseSettings):
     child_chunk_size: int = Field(default=300, gt=0)
     child_chunk_overlap: int = Field(default=50, ge=0)
     parent_max_chars: int = Field(default=1200, gt=0)
-    faq_threshold: float = Field(default=0.8, ge=0, le=1)
+    faq_threshold: float = Field(default=0.9, ge=0, le=1)
     faq_cache_ttl_s: int = Field(default=86400, gt=0)
     rerank_enabled: bool = True
-    rerank_candidates: int = Field(default=20, gt=0)
+    rerank_candidates: int = Field(default=10, gt=0)
+    rerank_max_length: int = Field(default=512, gt=0)
+    rerank_batch_size: int = Field(default=16, gt=0)
+    rerank_max_chars: int = Field(default=600, ge=0)
+    rerank_text_mode: Literal["child", "parent"] = "child"
+    rerank_fp16: bool = False
     rerank_top_k: int = Field(default=5, gt=0)
+    speculative_retrieval: bool = True
     refuse_threshold: float = Field(default=0.5, ge=0, le=1)
     llm_timeout_s: float = Field(default=20, gt=0)
+    llm_max_concurrency: int = Field(default=4, gt=0)
+    llm_max_retries: int = Field(default=1, ge=0)
+    llm_retry_backoff_s: float = Field(default=0.5, ge=0)
+    warmup_on_start: bool = True
+    allow_trace: bool = False
+    trust_proxy_headers: bool = False
     request_timeout_s: float = Field(default=40, gt=0)
     rate_limit_per_min: int = Field(default=10, gt=0)
     rate_limit_per_day: int = Field(default=200, gt=0)
     health_timeout_s: float = Field(default=1, gt=0)
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_dir: str = "logs"
+    log_backup_days: int = Field(default=14, ge=0)
+    log_to_console: bool = True
+    chat_log_enabled: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     debug: bool = False
+
+    @model_validator(mode="after")
+    def apply_legacy_llm_names(self):
+        legacy_used = False
+        for current, legacy in (
+            ("llm_api_key", "legacy_llm_api_key"),
+            ("llm_base_url", "legacy_llm_base_url"),
+        ):
+            # 显式设置的新名（包括空 key）优先；未设置新名时才采用旧名。
+            if current not in self.model_fields_set and getattr(self, legacy) is not None:
+                setattr(self, current, getattr(self, legacy))
+                legacy_used = True
+        if legacy_used:
+            logger.warning("QWEN_* 配置名已弃用，请改用 LLM_*")
+        return self
+
+    @field_validator("llm_extra_body", mode="before")
+    @classmethod
+    def parse_llm_extra_body(cls, value):
+        if isinstance(value, str):
+            if not value.strip():
+                return {}
+            try:
+                def invalid_constant(value):
+                    raise ValueError
+                value = json.loads(value, parse_constant=invalid_constant)
+            except ValueError:
+                raise ValueError("LLM_EXTRA_BODY 必须为合法 JSON 对象；空字符串表示不添加参数") from None
+        if not isinstance(value, dict):
+            raise ValueError("LLM_EXTRA_BODY 必须为 JSON 对象，不能是数组、字符串或 null")
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError):
+            raise ValueError("LLM_EXTRA_BODY 必须为可序列化的合法 JSON 对象") from None
+        return value
 
 
 @lru_cache

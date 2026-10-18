@@ -37,5 +37,14 @@ class FakeRedis:
         self.values[key] = value
         self.writes.append((key, value, ex))
 
+    def delete(self, *keys):
+        count = sum(key in self.values for key in keys)
+        for key in keys:
+            self.values.pop(key, None)
+        return count
+
+    def scan(self, cursor=0, match=None, count=200):
+        return 0, [key for key in self.values if key.startswith("faq:cache:")]
+
     def close(self):
         pass

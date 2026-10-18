@@ -36,6 +36,15 @@ class FaqRepo:
         )
 
     def load_enabled(self) -> list[FaqRecord]:
+        try:
+            return self._load_enabled()
+        except OSError:
+            # 此边界只包含数据库 I/O，不把模型文件错误误报为数据库故障。
+            from app.contracts import AppError, DEPENDENCY_UNAVAILABLE
+
+            raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试") from None
+
+    def _load_enabled(self) -> list[FaqRecord]:
         connection = self.connection if self.connection is not None else self._connect()
         try:
             with connection.cursor() as cursor:

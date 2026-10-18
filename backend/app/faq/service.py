@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from contextvars import ContextVar
+from time import perf_counter
 
 from app.contracts import FaqHit
 from app.faq.bm25 import Bm25Index
+from app.tracing import record
 
 
 def cosine(left: list[float], right: list[float]) -> float:
@@ -17,7 +19,7 @@ def cosine(left: list[float], right: list[float]) -> float:
 class FaqService:
     """同步服务，构造/reload 时预计算全部 FAQ 问句；后续每次仅编码查询。"""
 
-    def __init__(self, repo, cache, embedder, *, threshold=0.8, tokenizer=None, index_factory=None):
+    def __init__(self, repo, cache, embedder, *, threshold=0.9, tokenizer=None, index_factory=None):
         if not 0 <= threshold <= 1:
             raise ValueError("FAQ 阈值必须在 0 到 1 之间")
         self.repo, self.cache, self.embedder = repo, cache, embedder
@@ -39,13 +41,22 @@ class FaqService:
             raise ValueError("FAQ 问句与向量数量不一致")
         # 完整构建后一次替换，失败时保留上一个快照。
         self._snapshot = (index, {row.id: vector for row, vector in zip(records, dense)})
+        self.cache.clear()
 
     def faq_lookup(self, question: str) -> FaqHit | None:
         self._top_score.set(None)
-        cached = self.cache.get(question)
+        started = perf_counter()
+        cached = self.cache.get(question, threshold=self.threshold)
+        record("cache", started, hit=cached is not None)
         if cached is not None:
             self._top_score.set(cached.score)
             return cached.model_copy(update={"source": "cache"})
+        started = perf_counter()
+        hit = self._lookup_faq(question)
+        record("faq", started, hit=hit is not None, top_score=self.top_score)
+        return hit
+
+    def _lookup_faq(self, question):
         index, vectors = self._snapshot
         candidates = index.top_k(question, k=5)
         if not candidates:

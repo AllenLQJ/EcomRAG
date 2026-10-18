@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 Route = Literal["cache", "faq", "rag", "general", "fallback"]
+Intent = Literal["general", "knowledge", "sensitive"]
 Strategy = Literal["direct", "hyde", "subquery", "stepback"]
 
 
@@ -33,6 +34,12 @@ class TraceItem(BaseModel):
     route: Route | None = None
     strategy: Strategy | None = None
     detail: str | None = None
+    hit: bool | None = None
+    top_score: float | None = None
+    intent: Intent | None = None
+    candidates: int | None = None
+    kept: int | None = None
+    speculative: bool | None = None
 
 
 class ChatResponse(BaseModel):
@@ -42,5 +49,5 @@ class ChatResponse(BaseModel):
     route: Route
     strategy: Strategy | None = None
     sources: list[Source] = Field(default_factory=list)
-    is_mock: bool
+    is_mock: bool = False
     trace: list[TraceItem] | None = None

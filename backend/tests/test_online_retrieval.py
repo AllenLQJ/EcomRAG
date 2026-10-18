@@ -26,12 +26,13 @@ class FakeMilvus:
 
 
 class RetrievalTests(unittest.TestCase):
-    def build(self, results, *, enabled=False, limit=20):
+    def build(self, results, *, enabled=False, limit=20, mode="parent"):
         client = FakeMilvus(results)
         encoder = FakeEmbedder()
         reranker = FakeReranker({"父块-a": 0.2, "父块-b": 0.9, "父块-c": 0.5})
         retriever = Retriever(client, encoder, reranker, rerank_enabled=enabled,
                               rerank_candidates=limit,
+                              rerank_text_mode=mode,
                               request_factory=lambda **kw: SimpleNamespace(**kw),
                               rrf_factory=lambda **kw: SimpleNamespace(**kw))
         return retriever, client, reranker
@@ -91,6 +92,39 @@ class RetrievalTests(unittest.TestCase):
     def test_disabled_rerank_does_not_limit_candidates(self):
         retriever, _, _ = self.build([[hit("a", 0.03), hit("b", 0.02), hit("c", 0.01)]], limit=1)
         self.assertEqual(len(retriever.retrieve(["问题"], "原始问题", top_k=5)), 3)
+
+    def test_split_retrieval_preserves_dedup_and_only_truncates_rerank_inputs(self):
+        retriever, client, reranker = self.build([[hit("a", 0.03), hit("b", 0.02), hit("a", 0.01)]], enabled=True)
+        retriever.rerank_max_chars = 3
+        reranker.scores = None
+        candidates = retriever.retrieve_candidates(["问题"])
+        self.assertEqual([doc.parent_id for doc in candidates], ["a", "b"])
+        self.assertEqual(reranker.calls, [])
+        docs = retriever.rerank_candidates("原问题", candidates, 2)
+        self.assertEqual(reranker.calls, [("原问题", ["父块-", "父块-"])])
+        self.assertEqual(docs[0].content, "父块-a")
+        self.assertEqual(candidates[0].score, 0.03)
+        retriever.rerank_max_chars = 0
+        retriever.rerank_candidates("q", candidates, 2)
+        self.assertEqual(reranker.calls[-1][1], ["父块-a", "父块-b"])
+        self.assertEqual(len(client.calls), 1)
+
+    def test_child_mode_uses_best_child_with_title_without_parent_truncation(self):
+        retriever, _, reranker = self.build([
+            [hit("a", 0.01, "标题-a\n低分子块"), hit("b", 0.02, "标题-b\n另一子块")],
+            [hit("a", 0.05, "标题-a\n最高分子块")],
+        ], enabled=True, mode="child")
+        retriever.rerank_max_chars = 1  # child 不受 parent 字符截断配置影响。
+        reranker.scores = {"标题-a\n最高分子块": 0.9, "标题-b\n另一子块": 0.7}
+        docs = retriever.retrieve(["查询一", "查询二"], "原问题")
+        self.assertEqual(reranker.calls, [("原问题", ["标题-a\n最高分子块", "标题-b\n另一子块"])])
+        self.assertEqual(docs[0].content, "父块-a")
+        self.assertEqual(docs[0].snippet, "标题-a\n最高分子块")
+        self.assertEqual([doc.score for doc in docs], [0.9, 0.7])
+
+    def test_default_text_mode_is_child(self):
+        retriever = Retriever(None, FakeEmbedder(), rerank_enabled=False)
+        self.assertEqual(retriever.rerank_text_mode, "child")
 
     def test_empty_queries_results_and_zero_top_k_skip_rerank(self):
         retriever, client, reranker = self.build([[]], enabled=True)

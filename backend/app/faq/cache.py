@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import logging
+import math
 import string
 import unicodedata
 
@@ -56,7 +57,7 @@ class FaqCache:
             )
         return self.client
 
-    def get(self, question: str):
+    def get(self, question: str, *, threshold=0.9):
         key = cache_key(question)
         try:
             client = self._client()
@@ -76,8 +77,28 @@ class FaqCache:
             hit = FaqHit.model_validate_json(raw)
         except ValidationError:
             logger.warning("FAQ 缓存内容无效，按未命中处理")
+            self.delete(question)
+            return None
+        if not math.isfinite(hit.score) or hit.score < threshold:
+            self.delete(question)
             return None
         return hit.model_copy(update={"source": "cache"})
+
+    def delete(self, question):
+        try:
+            client = self._client()
+            if client is not None:
+                client.delete(cache_key(question))
+        except self._redis_errors:
+            logger.warning("FAQ 缓存删除失败，跳过删除")
+
+    def clear(self):
+        try:
+            client = self._client()
+            return clear_cache(client) if client is not None else 0
+        except self._redis_errors:
+            logger.warning("FAQ 缓存清理失败，跳过清理")
+            return 0
 
     def set(self, question: str, hit) -> None:
         # 序列化和 key 构建在降级边界外，不能把程序错误当作 Redis 故障。
@@ -89,3 +110,16 @@ class FaqCache:
                 client.set(key, value, ex=self.ttl_s)
         except self._redis_errors:
             logger.warning("FAQ Redis 缓存写入失败，跳过缓存")
+
+
+def clear_cache(client, *, batch_size=200):
+    """SCAN 的 COUNT 只是提示，DELETE 参数仍严格按 batch_size 分批。"""
+    if batch_size <= 0:
+        raise ValueError("批大小必须大于零")
+    cursor, deleted = 0, 0
+    while True:
+        cursor, keys = client.scan(cursor=cursor, match="faq:cache:*", count=batch_size)
+        for offset in range(0, len(keys), batch_size):
+            deleted += client.delete(*keys[offset:offset + batch_size])
+        if int(cursor) == 0:
+            return deleted

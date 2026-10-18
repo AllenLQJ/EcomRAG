@@ -1,0 +1,223 @@
+import asyncio
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import Settings
+from app.contracts import AppError, FaqHit
+from app.llm.client import LLMClient
+from app.llm.generator import GeneratedAnswer
+from app.pipeline import REFUSAL, run_chat
+from app.schemas import ChatRequest
+from chat_fakes import FakeServices, document
+
+
+def run(services, *, debug=True, **overrides):
+    # 此组保留顺序路径的契约；默认启用的投机路径另用 Event 验证。
+    overrides.setdefault("speculative_retrieval", False)
+    return asyncio.run(run_chat(ChatRequest(session_id="test", message="原问题", debug=debug),
+                                settings=Settings(_env_file=None, **overrides), services=services))
+
+
+@pytest.mark.parametrize("source", ["cache", "faq"])
+def test_faq_and_cache_routes_skip_llm(source):
+    services = FakeServices()
+    services.faq_lookup.return_value = FaqHit(faq_id=3, question="FAQ 问句", answer="答" * 80,
+                                             score=0.93, source=source)
+    result = run(services, allow_trace=True)
+    assert result.route == source and result.answer == "答" * 80
+    assert result.is_mock is False and result.strategy is None
+    assert result.sources[0].model_dump() == {
+        "index": 1, "doc_id": "faq:3", "title": "FAQ 问句", "snippet": "答" * 60, "score": 0.93,
+    }
+    services.route.assert_not_awaited()
+    services.generate_answer.assert_not_awaited()
+    assert result.trace[0].stage == "cache"
+    assert result.trace[0].hit == (source == "cache")
+
+
+def test_general_route():
+    services = FakeServices()
+    result = run(services)
+    assert result.route == "general" and not result.sources and result.strategy is None
+    services.route.assert_awaited_once_with("原问题", [])
+    services.chat_general.assert_awaited_once_with("原问题", [])
+    services.retrieve.assert_not_called()
+
+
+@pytest.mark.parametrize("cited,indices", [({2}, [2]), (set(), [1, 2])])
+def test_rag_sources_preserve_original_indices(cited, indices):
+    services = FakeServices().knowledge()
+    docs = [document(), document(2)]
+    services.retrieve.return_value = docs
+    services.generate_answer.return_value = GeneratedAnswer("回答", cited)
+    result = run(services, allow_trace=True)
+    assert result.route == "rag" and result.strategy == "direct" and not result.is_mock
+    assert [source.index for source in result.sources] == indices
+    assert [source.doc_id for source in result.sources] == [f"d{i}" for i in indices]
+    services.retrieve.assert_called_once_with(["改写后的检索问题"], rerank_query="原问题", top_k=5)
+    services.generate_answer.assert_awaited_once_with("原问题", docs, [])
+    assert [item.stage for item in result.trace] == ["cache", "faq", "router", "retrieve", "rerank", "generate", "total"]
+    assert result.trace[2].intent == "knowledge"
+    assert result.trace[3].candidates == 2 and result.trace[4].kept == 2
+
+
+@pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.4999, "fallback"),
+                                           (0.5, "rag"), (0.5001, "rag")])
+def test_refusal_boundary_and_skips_generation(score, expected):
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [] if score is None else [document(score=score)]
+    result = run(services)
+    assert result.route == expected
+    if expected == "fallback":
+        assert result.answer == REFUSAL and result.sources == []
+        services.generate_answer.assert_not_awaited()
+    else:
+        services.generate_answer.assert_awaited_once()
+
+
+@pytest.mark.parametrize("debug", [False, True])
+@pytest.mark.parametrize("allow", [False, True])
+def test_trace_requires_both_flags(debug, allow):
+    result = run(FakeServices(), debug=debug, allow_trace=allow)
+    assert (result.trace is not None) == (debug and allow)
+
+
+def test_request_timeout_and_cancelled_generation():
+    services = FakeServices()
+
+    async def blocked(*args):
+        await asyncio.Event().wait()
+    services.route = blocked
+    with pytest.raises(AppError) as caught:
+        run(services, request_timeout_s=0.01)
+    assert (caught.value.code, caught.value.http_status) == (50401, 504)
+
+
+@pytest.mark.parametrize("stage", ["faq_lookup", "retrieve"])
+@pytest.mark.parametrize("error_type", [ConnectionError,
+    type("OperationalError", (Exception,), {"__module__": "pymysql.err"}),
+    type("MilvusException", (Exception,), {"__module__": "pymilvus.exceptions"}),
+])
+def test_database_unavailable_maps_to_503(stage, error_type):
+    services = FakeServices().knowledge()
+    getattr(services, stage).side_effect = error_type("私密连接信息")
+    with pytest.raises(AppError) as caught:
+        run(services)
+    assert (caught.value.code, caught.value.http_status, caught.value.message) == (
+        50301, 503, "服务暂时不可用，请稍后再试")
+
+
+@pytest.mark.parametrize("error", [TypeError("bug"), ValueError("bug"), FileNotFoundError("本地模型缺失")])
+@pytest.mark.parametrize("stage", ["faq_lookup", "retrieve"])
+def test_programming_and_model_errors_are_not_swallowed(stage, error):
+    services = FakeServices().knowledge()
+    getattr(services, stage).side_effect = error
+    with pytest.raises(type(error)) as caught:
+        run(services)
+    assert caught.value is error
+
+
+def test_queue_wait_counts_toward_request_timeout():
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def handler(request):
+            entered.set()
+            await release.wait()
+            return httpx.Response(200, json={"choices": [{"message": {"content": "你好"}}]})
+        settings = Settings(_env_file=None, llm_api_key="TEST", llm_max_concurrency=1, request_timeout_s=0.02)
+        client = LLMClient(settings, transport=httpx.MockTransport(handler))
+        services = FakeServices()
+
+        async def general(*args):
+            return await client.complete(model="test", messages=[], temperature=0, max_tokens=10)
+        services.chat_general = general
+        task = asyncio.create_task(general())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            with pytest.raises(AppError) as caught:
+                await run_chat(ChatRequest(session_id="queue", message="你好"), settings=settings, services=services)
+            assert caught.value.code == 50401
+            assert not task.done()
+        finally:
+            release.set()
+            await task
+            await client.aclose()
+    asyncio.run(scenario())
+
+
+def test_api_injection_does_not_construct_real_services(monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "Services", lambda *a: pytest.fail("不得创建真实服务"))
+    fake = FakeServices().knowledge()
+    app = main.create_app(Settings(_env_file=None, allow_trace=True), services=fake)
+    app.state.rate_limiter.cache._client = lambda: None
+    with TestClient(app) as client:
+        response = client.post("/api/v1/chat", json={"session_id": "test", "message": "问题", "debug": True})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["route"] == "rag" and body["is_mock"] is False
+    assert body["sources"][0]["index"] == 1
+    assert body["trace"] and body["request_id"] == response.headers["X-Request-ID"]
+    fake.warmup.assert_awaited_once()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_lifespan_warmup_switch(enabled):
+    from app.main import create_app
+    fake = FakeServices()
+    with TestClient(create_app(Settings(_env_file=None, warmup_on_start=enabled), services=fake)):
+        pass
+    assert fake.warmup.await_count == int(enabled)
+
+
+def test_real_service_trace_metrics_keep_worker_context():
+    from app.faq.cache import FaqCache
+    from app.faq.repo import FaqRecord
+    from app.faq.service import FaqService
+    from app.retrieval.embedder import FakeEmbedder
+    from faq_fakes import FakeRepo, FakeRedis, FakeBM25
+
+    faq = FaqService(FakeRepo([FaqRecord(1, "原问题", "答案")]), FaqCache(FakeRedis()),
+                     FakeEmbedder(), tokenizer=list, index_factory=FakeBM25)
+    services = FakeServices()
+    services.faq_lookup = faq.faq_lookup
+    result = run(services, allow_trace=True)
+    assert result.route == "faq"
+    assert [item.stage for item in result.trace] == ["cache", "faq", "total"]
+    assert result.trace[1].top_score == pytest.approx(1)
+
+
+def test_database_os_errors_mapped_at_io_boundary():
+    from app.faq.repo import FaqRepo
+    from app.retrieval.embedder import FakeEmbedder
+    from app.retrieval.retriever import Retriever
+    from unittest.mock import Mock
+
+    services = FakeServices().knowledge()
+    services.faq_lookup = lambda question: FaqRepo(connection_factory=Mock(side_effect=OSError("connection"))).load_enabled()
+    with pytest.raises(AppError) as caught:
+        run(services)
+    assert caught.value.code == 50301
+    services = FakeServices().knowledge()
+    milvus = Mock()
+    milvus.hybrid_search.side_effect = OSError("connection")
+    retriever = Retriever(milvus, FakeEmbedder(), rerank_enabled=False,
+                          request_factory=lambda **kwargs: kwargs, rrf_factory=lambda **kwargs: kwargs)
+    services.retrieve = retriever.retrieve
+    with pytest.raises(AppError) as caught:
+        run(services)
+    assert caught.value.code == 50301
+
+
+def test_api_trace_switch_and_timeout_cover_entry(app_factory):
+    app = app_factory(allow_trace=True, request_timeout_s=0.01)
+    async def slow_limit(*args):
+        await asyncio.Event().wait()
+    app.state.rate_limiter.check_async = slow_limit
+    with TestClient(app) as client:
+        response = client.post("/api/v1/chat", json={"session_id": "s", "message": "问题"})
+    assert response.status_code == 504
+    assert response.json()["code"] == 50401
+    app.state.services.route.assert_not_awaited()
