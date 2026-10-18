@@ -7,5 +7,6 @@ interface ImportMetaEnv {
   readonly VITE_SHOW_SAMPLE_BADGE?: string;
   readonly VITE_STORE_NAME?: string;
   readonly VITE_MOCK?: string;
+  readonly VITE_STREAM?: string;
   readonly VITE_SHOW_TRACE_TOGGLE?: string;
 }

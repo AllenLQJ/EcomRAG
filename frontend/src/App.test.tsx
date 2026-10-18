@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import type { ChatResponse, TraceItem } from './api/types';
 import { fixtureFor } from './mocks/fixtures';
@@ -23,9 +23,11 @@ async function ask(question: string) {
 }
 
 describe('chat flow', () => {
+  // Preserve the compatibility endpoint regression suite; streaming has its own tests.
+  beforeEach(() => { vi.stubEnv('VITE_STREAM', '0'); });
   it('shows the welcome, quick questions and disclosure', () => {
     render(<App />);
-    expect(screen.getByRole('heading', { name: '你好，我是栖木的智能客服' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '你好，我是灵码的智能客服' })).toBeInTheDocument();
     expect(within(screen.getByLabelText('快捷问题')).getAllByRole('button')).toHaveLength(4);
     expect(screen.getByText('对话内容会被记录，用于改进服务')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '联系人工客服' })).not.toBeInTheDocument();
@@ -132,7 +134,8 @@ describe('chat flow', () => {
     const user = await ask('划痕');
     expect(screen.getByRole('textbox')).toBeDisabled();
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
-    expect(screen.getByRole('status')).toHaveTextContent('正在查阅店铺资料…');
+    expect(screen.getByText('正在查找常见问题…')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '新对话' }));
     expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
     await act(async () => { resolve(json(result())); });
@@ -282,7 +285,7 @@ describe('chat flow', () => {
     render(<App />);
     await ask('火星');
     await screen.findByText('未找到答案');
-    const headings = screen.getAllByRole('heading', { name: '你好，我是栖木的智能客服' });
+    const headings = screen.getAllByRole('heading', { name: '你好，我是灵码的智能客服' });
     expect(headings).toHaveLength(1);
     expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
     expect(screen.getByRole('log')).not.toContainElement(headings[0]);

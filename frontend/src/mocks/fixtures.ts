@@ -1,5 +1,5 @@
 import { ChatError } from '../api/errors';
-import type { ChatRequest, ChatResponse, Source } from '../api/types';
+import type { ChatRequest, ChatResponse, ChatStreamEvent, Source } from '../api/types';
 import { createId } from '../lib/storage';
 
 export const ragSources: Source[] = [
@@ -64,4 +64,46 @@ export async function mockChat(request: ChatRequest, signal?: AbortSignal): Prom
     signal?.addEventListener('abort', abort, { once: true });
   });
   return fixtureFor(request);
+}
+
+function streamPause(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
+    const abort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      reject(new DOMException('Cancelled', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, 30 + Math.floor(Math.random() * 31));
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+export async function mockChatStream(
+  request: ChatRequest, emit: (event: ChatStreamEvent) => void, signal?: AbortSignal,
+): Promise<ChatResponse> {
+  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+  const requestId = `mock-${createId()}`;
+  emit({ event: 'meta', data: { request_id: requestId, session_id: request.session_id } });
+  emit({ event: 'status', data: { stage: 'faq' } });
+  await streamPause(signal);
+  let response: ChatResponse;
+  try { response = { ...fixtureFor(request), request_id: requestId }; }
+  catch (error) {
+    const failure = error instanceof ChatError ? error : new ChatError(50001, requestId);
+    emit({ event: 'error', data: { code: failure.code, message: failure.message, request_id: requestId } });
+    throw failure;
+  }
+  if (!['cache', 'faq'].includes(response.route)) emit({ event: 'status', data: { stage: 'routing' } });
+  if (response.route === 'rag') emit({ event: 'status', data: { stage: 'retrieving' } });
+  if (response.route === 'rag' || response.route === 'general') emit({ event: 'status', data: { stage: 'generating' } });
+  for (const text of Array.from(response.answer)) {
+    await streamPause(signal);
+    emit({ event: 'delta', data: { text } });
+  }
+  emit({ event: 'done', data: response });
+  return response;
 }

@@ -56,16 +56,22 @@ function isMessage(value: unknown): value is ChatMessage {
     && typeof value.elapsedMs === 'number' && Number.isFinite(value.elapsedMs) && value.elapsedMs >= 0;
 }
 
+function completedMessages(messages: ChatMessage[]): ChatMessage[] {
+  let end = messages.length;
+  while (end > 0 && messages[end - 1].kind === 'user') end -= 1;
+  return messages.slice(0, end);
+}
+
 export function loadMessages(sessionId: string): ChatMessage[] {
   try {
     const raw: unknown = JSON.parse(sessionStorage.getItem(MESSAGES_KEY) || 'null');
     if (!isRecord(raw) || raw.session_id !== sessionId || !Array.isArray(raw.messages)) return [];
-    return raw.messages.every(isMessage) ? raw.messages : [];
+    return raw.messages.every(isMessage) ? completedMessages(raw.messages) : [];
   } catch { return []; }
 }
 
 export function saveMessages(sessionId: string, messages: ChatMessage[]): void {
-  try { sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: sessionId, messages })); }
+  try { sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: sessionId, messages: completedMessages(messages) })); }
   catch { /* Quota, blocked storage: the current conversation still works. */ }
 }
 

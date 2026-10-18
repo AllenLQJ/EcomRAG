@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ChatMessage as Message } from '../api/types';
+import type { ChatMessage as Message, StreamStage } from '../api/types';
 import { errorMessage } from '../api/errors';
 import { formatSeconds } from '../lib/format';
 import { AnswerMarkdown } from './AnswerMarkdown';
@@ -48,12 +48,23 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
   </div>;
 }
 
-export function LoadingMessage() {
+const stageText: Record<StreamStage, string> = {
+  faq: '正在查找常见问题…', routing: '正在理解问题…',
+  retrieving: '正在查阅店铺资料…', generating: '正在生成回答…',
+};
+
+export function StreamingMessage({ text }: { text: string }) {
+  return <div className="flex gap-3 sm:gap-4"><AssistantAvatar />
+    <div className="min-w-0 flex-1"><AnswerMarkdown answer={text} sources={[]} onCitation={() => undefined} /></div>
+  </div>;
+}
+
+export function LoadingMessage({ stage = 'retrieving' }: { stage?: StreamStage }) {
   return <div className="flex items-start gap-3 sm:gap-4"><AssistantAvatar />
-    <div role="status" className="flex min-h-8 flex-wrap items-center gap-3 text-sm text-muted">
+    <div aria-live="off" className="flex min-h-8 flex-wrap items-center gap-3 text-sm text-muted">
       <span aria-hidden="true" className="inline-flex gap-1">
         {[0, 1, 2].map(index => <span key={index} className="h-1.5 w-1.5 animate-thinking rounded-full bg-ink motion-reduce:animate-none" style={{ animationDelay: `${index * 0.2}s` }} />)}
-      </span>正在查阅店铺资料…
+      </span>{stageText[stage]}
     </div>
   </div>;
 }

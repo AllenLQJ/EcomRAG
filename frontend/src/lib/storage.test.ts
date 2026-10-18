@@ -11,7 +11,8 @@ describe('storage', () => {
   });
 
   it('persists messages for the matching session and clears them', () => {
-    const messages = [{ id: 'm1', kind: 'user' as const, text: '你好' }];
+    const messages = [{ id: 'm1', kind: 'user' as const, text: '你好' },
+      { id: 'm2', kind: 'error' as const, code: 50401, question: '你好' }];
     saveMessages('s1', messages);
     expect(loadMessages('s1')).toEqual(messages);
     expect(loadMessages('s2')).toEqual([]);
@@ -82,4 +83,23 @@ describe('storage', () => {
     expect(traceToggleVisible()).toBe(true);
   });
 
+});
+
+
+describe('completed-turn snapshots', () => {
+  it('never saves a trailing unfinished user message', () => {
+    saveMessages('s', [{ id: 'u', kind: 'user', text: '等待中的提问' }]);
+    expect(JSON.parse(sessionStorage.getItem(MESSAGES_KEY)!).messages).toEqual([]);
+    expect(loadMessages('s')).toEqual([]);
+  });
+
+  it('drops orphan user tails from legacy storage but keeps completed error turns', () => {
+    const complete = [{ id: 'u1', kind: 'user' as const, text: '已结束的提问' },
+      { id: 'e1', kind: 'error' as const, code: 50401, question: '已结束的提问' }];
+    const messages = [...complete, { id: 'u2', kind: 'user' as const, text: '孤立提问' }];
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 's', messages }));
+    expect(loadMessages('s')).toEqual(complete);
+    saveMessages('s', messages);
+    expect(JSON.parse(sessionStorage.getItem(MESSAGES_KEY)!).messages).toEqual(complete);
+  });
 });

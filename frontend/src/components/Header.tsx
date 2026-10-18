@@ -3,7 +3,7 @@ interface Props { name: string; supportUrl?: string; sample: boolean; onReset: (
 export function Header({ name, supportUrl, sample, onReset, traceVisible, traceEnabled, onToggleTrace }: Props) {
   return <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-card px-4 sm:h-16 sm:px-10">
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-      <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink font-serif text-base text-card">栖</span>
+      <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink font-serif text-base text-card">灵</span>
       <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
         <span className="truncate font-serif text-base font-semibold sm:text-lg">{name}<span className="sm:hidden">客服</span></span>
         <span className="hidden text-sm text-muted sm:inline">客服中心</span>

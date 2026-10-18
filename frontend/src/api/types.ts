@@ -52,3 +52,12 @@ export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
   | { id: string; kind: 'assistant'; response: ChatResponse; elapsedMs: number; question: string }
   | { id: string; kind: 'error'; code: number; requestId?: string; question: string };
+
+export type StreamStage = 'faq' | 'routing' | 'retrieving' | 'generating';
+export type ChatStreamEvent =
+  | { event: 'meta'; data: { request_id: string; session_id: string } }
+  | { event: 'status'; data: { stage: StreamStage } }
+  | { event: 'delta'; data: { text: string } }
+  | { event: 'done'; data: ChatResponse }
+  | { event: 'error'; data: ErrorResponse };
+export interface StreamProgress { text: string; stage: StreamStage }

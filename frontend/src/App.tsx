@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChatMessage, LoadingMessage } from './components/ChatMessage';
+import { ChatMessage, LoadingMessage, StreamingMessage } from './components/ChatMessage';
 import { Composer } from './components/Composer';
 import { Header } from './components/Header';
 import { useAutoScroll } from './hooks/useAutoScroll';
@@ -13,12 +13,12 @@ export default function App() {
   const traceVisible = traceToggleVisible();
   const [traceEnabled, setTraceEnabled] = useState(() => traceVisible && loadTraceEnabled());
   const showTrace = traceVisible && traceEnabled;
-  const { messages, pending, send, reset } = useChat(showTrace);
+  const { messages, pending, progress, send, reset } = useChat(showTrace);
   useEffect(() => { saveTraceEnabled(showTrace); }, [showTrace]);
   const [draft, setDraft] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
   const wasPending = useRef(false);
-  const scroll = useAutoScroll(`${messages.length}-${pending}`);
+  const scroll = useAutoScroll(`${messages.length}-${pending}-${progress?.text.length || 0}-${progress?.stage || ""}`);
   const name = storeName();
   const supportUrl = humanSupportUrl();
   const sample = import.meta.env.VITE_SHOW_SAMPLE_BADGE !== 'false';
@@ -57,14 +57,14 @@ export default function App() {
       traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} />
     <main className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
       {mobile && welcome}
-      <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-relevant="additions text" tabIndex={0}
+      <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-busy={pending} aria-relevant="additions" tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-10">
         <div className="mx-auto w-full max-w-chat space-y-8 pb-6 pt-6 sm:pt-10">
           {!mobile && messages.length === 0 && welcome}
           {messages.map(message => <ChatMessage key={message.id} message={message} pending={pending} showTrace={showTrace} supportUrl={supportUrl}
             onRetry={(question, id) => { void send(question, id); }}
             onRephrase={question => { setDraft(question); input.current?.focus(); }} />)}
-          {pending && <LoadingMessage />}
+          {pending && (progress?.text ? <StreamingMessage text={progress.text} /> : <LoadingMessage stage={progress?.stage} />)}
         </div>
       </div>
       <Composer ref={input} value={draft} onChange={setDraft} onSend={submit} pending={pending} sample={sample} />

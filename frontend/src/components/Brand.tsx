@@ -1,5 +1,5 @@
 export function AssistantAvatar() {
-  return <div aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-avatar border border-line bg-card font-serif text-base">栖</div>;
+  return <div aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-avatar border border-line bg-card font-serif text-base">灵</div>;
 }
 
 export function SendIcon() {

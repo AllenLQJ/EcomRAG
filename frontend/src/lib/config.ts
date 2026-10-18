@@ -8,5 +8,5 @@ export function humanSupportUrl(): string | undefined {
 }
 
 export function storeName(): string {
-  return import.meta.env.VITE_STORE_NAME?.trim() || '栖木';
+  return import.meta.env.VITE_STORE_NAME?.trim() || '灵码';
 }
