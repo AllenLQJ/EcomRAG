@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>栖木客服 · 设计规范</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&amp;family=Noto+Serif+SC:wght@500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+@keyframes dcpulse{0%,80%,100%{opacity:.25}40%{opacity:1}}
+</style>
+</helmet>
+<div style="width: 960px; height: 1100px; box-sizing: border-box; padding: 56px; background: #FFFFFF; color: #16171A; font-family: 'Noto Sans SC', system-ui, sans-serif; display: flex; flex-direction: column; gap: 44px">
+
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <h1 style="margin: 0; font-family: 'Noto Serif SC', serif; font-size: 32px; font-weight: 600">设计规范 · 墨与瓷</h1>
+    <p style="margin: 0; font-size: 14px; color: #5C6068; line-height: 1.7">暖白底、墨黑字、一条细线分层；颜色只用来区分回答来源。</p>
+  </div>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: #5C6068">颜色</h2>
+    <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px">
+      <sc-for list="{{colors}}" as="c" hint-placeholder-count="6">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="height: 64px; border-radius: 12px; border: 1px solid #E4E4E0; background: {{c.hex}}"></div>
+          <div style="font-size: 13px; font-weight: 500">{{c.name}}</div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C6068">{{c.hex}}</div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: #5C6068">字体</h2>
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="display: grid; grid-template-columns: 200px 1fr; align-items: baseline"><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C6068">标题 · Noto Serif SC 22/600</span><span style="font-family: 'Noto Serif SC', serif; font-size: 22px; font-weight: 600">你好，我是栖木的智能客服</span></div>
+      <div style="display: grid; grid-template-columns: 200px 1fr; align-items: baseline"><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C6068">正文 · Noto Sans SC 15/1.8</span><span style="font-size: 15px; line-height: 1.8">签收后 7 天内，商品存在质量问题可申请退货。</span></div>
+      <div style="display: grid; grid-template-columns: 200px 1fr; align-items: baseline"><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C6068">辅助 · Noto Sans SC 13</span><span style="font-size: 13px; color: #5C6068">引用来源 2 · 回答由 AI 根据店铺资料生成</span></div>
+      <div style="display: grid; grid-template-columns: 200px 1fr; align-items: baseline"><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C6068">数据 · JetBrains Mono 12</span><span style="font-family: 'JetBrains Mono', monospace; font-size: 12px">retrieve  420 ms  [1]</span></div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: #5C6068">回答来源标签</h2>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px">
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #E9F4F0; color: #0B5A4A"><span style="width: 6px; height: 6px; border-radius: 50%; background: #0E7C66"></span>秒回 · cache</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #EEF0FB; color: #23339A"><span style="width: 6px; height: 6px; border-radius: 50%; background: #3346C8"></span>常见问题 · faq</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #FFFFFF; border: 1px solid #E4E4E0; color: #16171A"><span style="width: 6px; height: 6px; border-radius: 50%; background: #16171A"></span>知识库回答 · rag</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #F2F2EF; color: #45484E"><span style="width: 6px; height: 6px; border-radius: 50%; background: #8A8E95"></span>闲聊 · general</span>
+      <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #FBF1EA; color: #8A3D12"><span style="width: 6px; height: 6px; border-radius: 50%; background: #B4541A"></span>未找到答案 · fallback</span>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: #5C6068">状态</h2>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+      <div style="border: 1px solid #E4E4E0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 12px; color: #5C6068">加载中</div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 14px">
+          <span style="display: inline-flex; gap: 4px"><span style="width: 6px; height: 6px; border-radius: 50%; background: #16171A; animation: dcpulse 1.2s infinite"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: #16171A; animation: dcpulse 1.2s .2s infinite"></span><span style="width: 6px; height: 6px; border-radius: 50%; background: #16171A; animation: dcpulse 1.2s .4s infinite"></span></span>
+          正在查阅店铺资料…
+        </div>
+      </div>
+      <div style="border: 1px solid #E4E4E0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 12px; color: #5C6068">出错</div>
+        <div style="font-size: 14px; line-height: 1.6; color: #8A3D12">服务有点忙，请稍后再试。</div>
+        <button style="align-self: flex-start; font: inherit; font-size: 13px; height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid #D6D6D1; background: #FFFFFF; color: #16171A">重试</button>
+      </div>
+      <div style="border: 1px solid #E4E4E0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+        <div style="font-size: 12px; color: #5C6068">提问太频繁（429）</div>
+        <div style="font-size: 14px; line-height: 1.6">提问有点快，休息一分钟再问吧。</div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 16px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em; color: #5C6068">圆角与间距</h2>
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; font-size: 13px">
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 48px; border: 1px solid #D6D6D1; border-radius: 12px"></div>卡片 12</div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 48px; border: 1px solid #D6D6D1; border-radius: 20px"></div>输入框 20</div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 48px; border: 1px solid #D6D6D1; border-radius: 18px 18px 4px 18px"></div>用户气泡 18 / 4</div>
+      <div style="display: flex; flex-direction: column; gap: 8px"><div style="height: 48px; border: 1px solid #D6D6D1; border-radius: 999px"></div>标签与快捷问题 全圆</div>
+    </div>
+    <p style="margin: 0; font-size: 13px; color: #5C6068; line-height: 1.7">间距按 4 的倍数：组件内 8 / 12 / 16，消息之间 32，页面边距桌面 40、手机 16；内容列宽 760。</p>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":960,"height":1100}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      colors: [
+        { name: '底色', hex: '#F6F6F4' },
+        { name: '卡片', hex: '#FFFFFF' },
+        { name: '墨（主文字）', hex: '#16171A' },
+        { name: '次要文字', hex: '#5C6068' },
+        { name: '细线', hex: '#E4E4E0' },
+        { name: '链接 / 引用', hex: '#3346C8' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

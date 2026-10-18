@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 568" width="760" height="568" font-family="'Noto Sans SC','PingFang SC',system-ui,sans-serif"><rect width="760" height="568" fill="#FFFFFF"/><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8A8E95"/></marker></defs><text x="24" y="32" font-size="15" font-weight="600" fill="#16171A" text-anchor="start">能在缓存或 FAQ 答的问题不进 RAG，离线入库不在请求链路上</text>
+<rect x="548" y="164" width="192" height="324" rx="8" fill="#EDEDEA" stroke="#8A8E95" stroke-dasharray="4 4"/>
+<text x="564" y="186" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">离线知识库 · 脚本入库</text>
+<path d="M174 112V128" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M174 184V200" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M174 256V272" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M174 328V344" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M174 400V416" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M174 472V488" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M324 228H372" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M324 300H372" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M324 372H372" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M324 516H372" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M324 444H564" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M644 256V272" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M644 328V344" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<path d="M644 400V416" fill="none" stroke="#8A8E95" stroke-width="1.25" marker-end="url(#a)"/>
+<rect x="24" y="56.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="80" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">前端 · React 单页</text>
+<text x="40" y="100" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">聊天、路由标签、引用来源、trace</text>
+<rect x="24" y="128.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="152" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">FastAPI · pipeline.py</text>
+<text x="40" y="172" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">校验、限流、request_id、编排</text>
+<rect x="24" y="200.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="224" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">① Redis 精确缓存</text>
+<text x="40" y="244" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">问题归一化后按 md5 查 key</text>
+<rect x="24" y="272.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="296" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">② FAQ 匹配</text>
+<text x="40" y="316" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">MySQL → BM25 Top5 → 余弦 ≥ 0.8</text>
+<rect x="24" y="344.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="368" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">③ LLM 路由（一次调用）</text>
+<text x="40" y="388" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">输出意图与改写后的检索句</text>
+<rect x="24" y="416.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="440" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">混合检索 + 父块去重</text>
+<text x="40" y="460" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">稠密 + 稀疏各 Top20，RRF → Reranker Top5</text>
+<rect x="24" y="488.0" width="300" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="512" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">带引用生成</text>
+<text x="40" y="532" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">只依据上下文作答，标注 [n]</text>
+<rect x="372" y="200.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="452" y="224" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">直接返回</text>
+<text x="452" y="244" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">route = cache</text>
+<rect x="372" y="272.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="452" y="296" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">写缓存并返回</text>
+<text x="452" y="316" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">route = faq</text>
+<rect x="372" y="344.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="452" y="368" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">通用对话</text>
+<text x="452" y="388" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">route = general</text>
+<rect x="372" y="488.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="452" y="512" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">拒答，建议转人工</text>
+<text x="452" y="532" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">route = fallback</text>
+<rect x="564" y="200.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="580" y="224" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">知识文档</text>
+<text x="580" y="244" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">MD / TXT / PDF / DOCX</text>
+<rect x="564" y="272.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="580" y="296" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">父子切块</text>
+<text x="580" y="316" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">父 ≤1200 字，子 300 字</text>
+<rect x="564" y="344.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="580" y="368" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">bge-m3 编码</text>
+<text x="580" y="388" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">稠密 + 稀疏向量</text>
+<rect x="564" y="416.0" width="160" height="56" rx="8" fill="#FFFFFF" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="580" y="440" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">Milvus · kb_chunks</text>
+<text x="580" y="460" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">子块向量 + 父块正文</text>
+<text x="348" y="220" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">命中</text>
+<text x="348" y="292" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">命中</text>
+<text x="348" y="364" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">通用</text>
+<text x="348" y="508" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">低分</text>
+<text x="452" y="436" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">混合检索查询</text>
+</svg>

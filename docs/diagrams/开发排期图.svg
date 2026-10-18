@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 340" width="760" height="340" font-family="'Noto Sans SC','PingFang SC',system-ui,sans-serif"><rect width="760" height="340" fill="#FFFFFF"/><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#8A8E95"/></marker></defs><text x="24" y="32" font-size="15" font-weight="600" fill="#16171A" text-anchor="start">真实 RAG 链路跑通是唯一硬门槛</text>
+<text x="24" y="48" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">阶段宽度不按比例，总工期约 1.5 天</text>
+<line x1="24" x2="736" y1="188" y2="188" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="453" x2="453" y1="64" y2="188" stroke="#3346C8" stroke-width="1.25" stroke-dasharray="4 4"/>
+<rect x="24" y="64" width="128" height="96" rx="8" fill="none" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="88.0" x2="88.0" y1="160" y2="188" stroke="#D6D6D1"/>
+<text x="36" y="88" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">准备</text>
+<text x="36" y="106" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">开工前</text>
+<text x="36" y="128" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">compose 起通</text>
+<text x="36" y="146" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">模型、key、数据</text>
+<rect x="170" y="64" width="128" height="96" rx="8" fill="none" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="234.0" x2="234.0" y1="160" y2="188" stroke="#D6D6D1"/>
+<text x="182" y="88" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">阶段 1</text>
+<text x="182" y="106" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">约 3.5 小时</text>
+<text x="182" y="128" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">脚手架、LLM 调通</text>
+<text x="182" y="146" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">入库脚本</text>
+<rect x="316" y="64" width="128" height="96" rx="8" fill="none" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="380.0" x2="380.0" y1="160" y2="188" stroke="#D6D6D1"/>
+<text x="328" y="88" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">阶段 2</text>
+<text x="328" y="106" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">约 4.5 小时</text>
+<text x="328" y="128" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">检索、路由、生成</text>
+<text x="328" y="146" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">FAQ、缓存、串联</text>
+<rect x="462" y="64" width="128" height="96" rx="8" fill="none" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="526.0" x2="526.0" y1="160" y2="188" stroke="#D6D6D1"/>
+<text x="474" y="88" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">阶段 3</text>
+<text x="474" y="106" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">约 3 小时</text>
+<text x="474" y="128" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">前端单页</text>
+<text x="474" y="146" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">联调、限流</text>
+<rect x="608" y="64" width="128" height="96" rx="8" fill="none" stroke="#8A8E95" stroke-width="1.25"/>
+<line x1="672.0" x2="672.0" y1="160" y2="188" stroke="#D6D6D1"/>
+<text x="620" y="88" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">阶段 4</text>
+<text x="620" y="106" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="start">约 3 小时</text>
+<text x="620" y="128" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">校准、评测、部署</text>
+<text x="620" y="146" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="start">冻结与彩排</text>
+<path d="M161 180l8 8l-8 8l-8 -8z" fill="#EDEDEA" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="161" y="220" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">G0 环境就绪</text>
+<text x="161" y="238" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">compose 全绿</text>
+<text x="161" y="254" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">模型与 key 到位</text>
+<path d="M307 180l8 8l-8 8l-8 -8z" fill="#EDEDEA" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="307" y="220" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">M1 数据入库</text>
+<text x="307" y="238" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">样例文档已入库</text>
+<text x="307" y="254" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">LLM 可调通</text>
+<path d="M453 180l8 8l-8 8l-8 -8z" fill="#3346C8" stroke="#3346C8" stroke-width="1.25"/>
+<text x="453" y="220" font-size="13" font-weight="600" fill="#16171A" text-anchor="middle">M2 链路跑通</text>
+<text x="453" y="238" font-size="11.5" font-weight="400" fill="#16171A" text-anchor="middle">curl 跑通演示 1–5</text>
+<text x="453" y="254" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="middle">唯一硬门槛</text>
+<path d="M728 180l8 8l-8 8l-8 -8z" fill="#EDEDEA" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="736" y="220" font-size="13" font-weight="600" fill="#16171A" text-anchor="end">M3 验收</text>
+<text x="736" y="238" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="end">验收清单全勾</text>
+<text x="736" y="254" font-size="11.5" font-weight="400" fill="#5C6068" text-anchor="end">可演示</text>
+<rect x="24" y="276" width="712" height="40" rx="8" fill="#EDEDEA" stroke="#8A8E95" stroke-width="1.25"/>
+<text x="40" y="301" font-size="13" font-weight="600" fill="#16171A" text-anchor="start">关键路径</text>
+<text x="112" y="301" font-size="12" font-weight="400" fill="#16171A" text-anchor="start">环境 → 入库 → retrieve() → 带引用生成 → pipeline 串联 → M2；前端在 M2 之后</text>
+</svg>
