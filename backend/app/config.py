@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     mysql_root_password: SecretStr = SecretStr("")
     redis_url: str = "redis://127.0.0.1:6379/0"
     milvus_uri: str = "http://127.0.0.1:19530"
+    milvus_timeout_s: float = Field(default=10, gt=0)
     bge_m3_path: str = "models/bge-m3"
     reranker_path: str = "models/bge-reranker-v2-m3"
     embed_batch_size: int = Field(default=16, gt=0)
@@ -32,10 +33,11 @@ class Settings(BaseSettings):
     child_chunk_overlap: int = Field(default=50, ge=0)
     parent_max_chars: int = Field(default=1200, gt=0)
     faq_threshold: float = Field(default=0.8, ge=0, le=1)
+    faq_cache_ttl_s: int = Field(default=86400, gt=0)
     rerank_enabled: bool = True
     rerank_candidates: int = Field(default=20, gt=0)
     rerank_top_k: int = Field(default=5, gt=0)
-    refuse_threshold: float = Field(default=0.3, ge=0, le=1)
+    refuse_threshold: float = Field(default=0.5, ge=0, le=1)
     llm_timeout_s: float = Field(default=20, gt=0)
     request_timeout_s: float = Field(default=40, gt=0)
     rate_limit_per_min: int = Field(default=10, gt=0)

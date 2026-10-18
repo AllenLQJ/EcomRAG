@@ -31,9 +31,10 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(result, 0)
         stats = json.loads(output.getvalue())
         self.assertEqual(stats["documents"], 18)
-        # 18 份样例按 ## 整节、父块 1200、子块 300/重叠 50 实测为 36/75；改数据需同步。
-        self.assertEqual(stats["parent_chunks"], 36)
-        self.assertEqual(stats["child_chunks"], 75)
+        # 新增屏幕划痕小节后，ingest_directory(data/docs, dry_run=True) 实测 37/76；
+        # 默认参数：父块 1200、子块 300、重叠 50，按 ## 整节切分。
+        self.assertEqual(stats["parent_chunks"], 37)
+        self.assertEqual(stats["child_chunks"], 76)
         self.assertGreaterEqual(stats["elapsed_s"], 0)
         self.assertTrue(stats["dry_run"])
 
@@ -63,7 +64,7 @@ finally:
         self.assertEqual(result.returncode, 0, result.stderr)
         stats = json.loads(result.stdout)
         # 同上：真实样例与默认切块参数的基准统计。
-        self.assertEqual((stats["documents"], stats["parent_chunks"], stats["child_chunks"]), (18, 36, 75))
+        self.assertEqual((stats["documents"], stats["parent_chunks"], stats["child_chunks"]), (18, 37, 76))
 
     def test_missing_directory_returns_failure(self):
         output = io.StringIO()

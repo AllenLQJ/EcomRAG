@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import AliasChoices, BaseModel, Field
 
 from app.schemas import Route, Strategy
 
@@ -23,9 +25,12 @@ class AppError(Exception):
 
 
 class RetrievedDoc(BaseModel):
+    parent_id: str
     doc_id: str
     title: str
+    source: str
     content: str
+    snippet: str
     score: float
 
 
@@ -36,15 +41,25 @@ class RouteDecision(BaseModel):
 
 
 class FaqHit(BaseModel):
-    id: int
+    faq_id: int = Field(validation_alias=AliasChoices("faq_id", "id"))
     question: str
     answer: str
     score: float
     category: str | None = None
+    source: Literal["cache", "faq"] = "faq"
+
+    @property
+    def id(self) -> int:
+        """兼容原有 FAQ 标识的读取方式；序列化统一使用 faq_id。"""
+        return self.faq_id
+
+    @property
+    def top_score(self) -> float:
+        return self.score
 
 
-async def retrieve(query: str, top_k: int = 5) -> list[RetrievedDoc]:
-    """检索相关文档，暂不连接向量库。"""
+def retrieve(queries: list[str], rerank_query: str, top_k: int = 5) -> list[RetrievedDoc]:
+    """同步检索契约；实际使用注入依赖的 Retriever.retrieve。"""
     raise NotImplementedError
 
 
@@ -73,6 +88,6 @@ async def chat_general(message: str) -> str:
     raise NotImplementedError
 
 
-async def faq_lookup(message: str, threshold: float = 0.8) -> FaqHit | None:
-    """查询达到阈值的 FAQ，暂不访问数据库。"""
+def faq_lookup(question: str) -> FaqHit | None:
+    """同步 FAQ 契约；阈值在 FaqService 构造时注入。"""
     raise NotImplementedError

@@ -46,7 +46,8 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         client = Mock()
         monkeypatch.setattr(embedder, "BgeM3Embedder", encoder)
         monkeypatch.setattr(store, "MilvusStore", client)
-        ingest = Mock(return_value={"documents": 18, "parent_chunks": 36, "child_chunks": 75})
+        # 这里只验证参数传递，统计值为替身；真实默认切块基准见 test_ingest_run.py。
+        ingest = Mock(return_value={"documents": 18, "parent_chunks": 37, "child_chunks": 76})
         monkeypatch.setattr(run, "ingest_directory", ingest)
         args = ["--dir", "data/docs"] + (["--dry-run"] if mode == "dry_run" else [])
         assert run.main(args, **kwargs) == 0
