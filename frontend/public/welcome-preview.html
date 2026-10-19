@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#16171A">
+<title>灵码 · 欢迎动画预览</title>
+<link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+<style>
+  :root { --canvas:#F6F6F4; --card:#FFFFFF; --ink:#16171A; --muted:#5C6068; --line:#E4E4E0; --spark:#E07A3F; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #ECECE8; color: var(--ink);
+    font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  .bar { height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar h1 { margin: 0; font: 600 15px/1 "Noto Serif SC", "Songti SC", serif; letter-spacing: 1px; }
+  .bar p { margin: 0; color: var(--muted); font-size: 12px; }
+  .tools { display: flex; gap: 8px; }
+  .tools button { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid #D6D6D1;
+    background: var(--card); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+  .tools button:hover { border-color: var(--ink); }
+  .tools button[aria-pressed="true"] { background: var(--ink); color: var(--card); border-color: var(--ink); }
+  .tools button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .wrap { height: calc(100% - 56px); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .device { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 14px;
+    border: 1px solid var(--line); background: var(--canvas); box-shadow: 0 10px 40px rgb(22 23 26 / 0.08);
+    transition: width .35s ease, height .35s ease; isolation: isolate; }
+  .device.mobile { width: 390px; height: min(844px, 100%); border-radius: 28px; }
+  .device iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--canvas); }
+
+  /* ===== 欢迎动画（STYLE A · 极简浮现，墨与瓷版） ===== */
+  .welcome { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+    text-align: center; cursor: pointer;
+    background: radial-gradient(ellipse 420px 360px at 50% 46%, #FFFFFF 0%, var(--canvas) 78%); }
+  .welcome[hidden] { display: none; }
+  .welcome .center { padding: 24px; }
+  .w-label { font-size: 11px; letter-spacing: 6px; color: var(--muted); margin: 0 0 28px; padding-left: 6px; }
+  .w-logo { position: relative; width: 88px; height: 88px; margin: 0 auto 30px; }
+  .w-logo svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 16px 28px rgb(22 23 26 / 0.18)); }
+  .w-logo .ripple { position: absolute; left: calc(50% + 14.3px); top: calc(50% + 6.6px); width: 10px; height: 10px;
+    margin: -5px 0 0 -5px; border-radius: 50%; border: 1.5px solid var(--spark); opacity: 0; pointer-events: none; }
+  .w-title { margin: 0; font: 600 clamp(26px, 4vw, 38px)/1.3 "Noto Serif SC", "Songti SC", serif; letter-spacing: 2px; }
+  .w-line { width: 0; height: 1px; margin: 22px auto 18px; background: linear-gradient(90deg, transparent, var(--ink), transparent); opacity: .35; }
+  .w-sub { margin: 0; color: var(--muted); font-size: 14px; letter-spacing: 4px; padding-left: 4px; }
+  .w-skip { position: absolute; right: 20px; bottom: 18px; color: #8A8E95; font-size: 12px; letter-spacing: 1px; opacity: 0; }
+
+  .welcome.play .w-label { animation: wRise .7s .15s both; }
+  .welcome.play .w-logo { animation: wPop 1.5s cubic-bezier(.17,.72,.27,1) both; }
+  .welcome.play .w-dot { transform-box: fill-box; transform-origin: center; animation: wDot .5s 1.05s cubic-bezier(.34,1.56,.64,1) both; }
+  .welcome.play .ripple { animation: wRipple .9s 1.25s ease-out both; }
+  .welcome.play .w-title { animation: wRise 1.1s .3s both; }
+  .welcome.play .w-line { animation: wLine .9s .75s ease-out forwards; }
+  .welcome.play .w-sub { animation: wRise 1s .6s both; }
+  .welcome.play .w-skip { animation: wFade .4s 1s forwards; }
+  .welcome.exit { animation: wExit .56s ease-in forwards; }
+
+  @keyframes wPop { 0% { transform: translateY(30px) scale(.65); opacity: 0; filter: blur(12px); }
+    70% { opacity: 1; filter: blur(0); } 100% { transform: none; opacity: 1; } }
+  @keyframes wRise { from { transform: translateY(16px); opacity: 0; filter: blur(9px); } to { transform: none; opacity: 1; filter: none; } }
+  @keyframes wDot { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes wRipple { 0% { transform: scale(.6); opacity: .9; } 100% { transform: scale(4.2); opacity: 0; } }
+  @keyframes wLine { to { width: 160px; } }
+  @keyframes wFade { to { opacity: 1; } }
+  @keyframes wExit { to { opacity: 0; visibility: hidden; filter: blur(14px); transform: scale(1.02); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .welcome.play *, .welcome.exit { animation-duration: .01ms !important; animation-delay: 0s !important; }
+  }
+  @media (max-width: 640px) { .bar p { display: none; } .w-sub { font-size: 13px; letter-spacing: 3px; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div><h1>灵码 · 欢迎动画预览</h1><p>STYLE A 极简浮现 · 叠在真实客服页面上播放，约 2.3 秒后淡出</p></div>
+  <div class="tools">
+    <button type="button" id="desktop" aria-pressed="true">桌面</button>
+    <button type="button" id="mobile" aria-pressed="false">手机</button>
+    <button type="button" id="replay">重新播放</button>
+  </div>
+</header>
+<div class="wrap">
+  <div class="device" id="device">
+    <iframe src="/" title="灵码客服页面"></iframe>
+    <div class="welcome" id="welcome" role="dialog" aria-label="欢迎来到灵码" tabindex="-1" hidden>
+      <div class="center">
+        <p class="w-label">灵码 · 智能客服</p>
+        <div class="w-logo" aria-hidden="true">
+          <svg viewBox="0 0 120 120">
+            <rect x="6" y="6" width="108" height="108" rx="26" fill="#16171A"/>
+            <g transform="translate(12 10) scale(0.8)">
+              <path d="M34 24H82M42 39H82M30 54H82M82 24V54M38 68L45 80M60 60C60 80 52 94 32 104M62 80C70 92 78 99 90 104"
+                fill="none" stroke="#F6F6F4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle class="w-dot" cx="79" cy="72" r="6" fill="#E07A3F"/>
+            </g>
+          </svg>
+          <span class="ripple"></span>
+        </div>
+        <h2 class="w-title">欢迎来到灵码</h2>
+        <div class="w-line"></div>
+        <p class="w-sub">让每一次提问，都有答案</p>
+      </div>
+      <span class="w-skip">点击任意处跳过</span>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const welcome = document.getElementById('welcome');
+  const device = document.getElementById('device');
+  const DURATION = 2300;
+  let timer = 0;
+
+  function hide() {
+    clearTimeout(timer);
+    welcome.classList.remove('play', 'exit');
+    welcome.hidden = true;
+  }
+  function leave() {
+    if (welcome.hidden || welcome.classList.contains('exit')) return;
+    clearTimeout(timer);
+    welcome.classList.add('exit');
+    welcome.addEventListener('animationend', function done(event) {
+      if (event.target !== welcome) return;
+      welcome.removeEventListener('animationend', done);
+      hide();
+    });
+  }
+  function play() {
+    hide();
+    welcome.hidden = false;
+    void welcome.offsetWidth;
+    welcome.classList.add('play');
+    welcome.focus({ preventScroll: true });
+    timer = setTimeout(leave, DURATION);
+  }
+
+  welcome.addEventListener('click', leave);
+  welcome.addEventListener('keydown', (event) => {
+    if (['Escape', 'Enter', ' '].includes(event.key)) { event.preventDefault(); leave(); }
+  });
+  document.getElementById('replay').addEventListener('click', play);
+  for (const [id, mobile] of [['desktop', false], ['mobile', true]]) {
+    document.getElementById(id).addEventListener('click', () => {
+      device.classList.toggle('mobile', mobile);
+      document.getElementById('desktop').setAttribute('aria-pressed', String(!mobile));
+      document.getElementById('mobile').setAttribute('aria-pressed', String(mobile));
+      play();
+    });
+  }
+  play();
+})();
+</script>
+</body>
+</html>

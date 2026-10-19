@@ -10,6 +10,8 @@ describe('Mock fixtures', () => {
     const response = fixtureFor({ session_id: 's', message, debug: false });
     expect(response.route).toBe(route);
     expect(response.is_mock).toBe(true);
+    expect([response.answer, ...response.sources.flatMap(source => [source.title, source.snippet])].join('\n'))
+      .not.toMatch(/虚构|样例|Mock ·/);
   });
 
   it('returns three RAG citations and a trace only with debug', () => {

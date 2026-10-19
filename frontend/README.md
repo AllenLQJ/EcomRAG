@@ -18,7 +18,7 @@ npm run dev
 uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers --reload
 ```
 
-默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定样例用 `VITE_MOCK=1 npm run dev`，不需要后端。
+默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定响应用 `VITE_MOCK=1 npm run dev`，不需要后端。
 
 ```bash
 npm test             # Vitest 单次运行
@@ -42,8 +42,8 @@ VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 | VITE_API_BASE | 空字符串 | API origin；自动追加 `/api/v1/chat` 或 `/api/v1/chat/stream`，不要重复写 `/api/v1`；空值同源 |
 | VITE_PROXY_TARGET | `http://127.0.0.1:8010` | 仅 Vite 开发服务器 `/api` 代理目标 |
 | VITE_HUMAN_SUPPORT_URL | 空字符串 | 完整 http(s) 人工客服链接；空值/无效值隐藏入口 |
-| VITE_SHOW_SAMPLE_BADGE | `true` | 仅字符串 false 隐藏样例标识 |
 | VITE_STORE_NAME | `灵码` | 店铺名、欢迎语与标题；空白回退灵码，字标保持「灵」 |
+| VITE_WELCOME_ANIMATION | 开启（test 模式默认关闭） | `0` / `false` / `off` 关闭欢迎动画；标签页会话内仅播一次，可点击或按 Esc / Enter / 空格跳过，减少动态效果时直接跳过 |
 | VITE_MOCK | `0` | 严格为 1 时使用本地 fixtures，不请求后端 |
 | VITE_STREAM | `1` | 默认 SSE；严格为 0 才只走 JSON |
 | VITE_SHOW_TRACE_TOGGLE | `0` | 严格为 1 时向所有访客显示「查看链路」入口，仅演示使用 |
@@ -78,19 +78,19 @@ done 前引用 `[n]` 为普通文字，done 后以最终 answer 覆盖增量，�
 - 当前 UUID 存 `localStorage['ecomrag.session_id']`，列表存 `localStorage['lingma.conversations.v1']`，每项含 id/title/createdAt/updatedAt/messages，时间为 Unix 毫秒。标题取首问前 20 码点；最多 30 个会话，每个最近 100 条已完成消息（50 轮），按 updatedAt 保留最新会话。
 - 首轮失败只保留页面上的错误与重试入口，首次完整成功回答（含拒答）后才列入历史；已有成功会话可保留完整错误回合，但不将它发给模型。刷新时不恢复在途请求，未完成 user 不保存。
 - 旧 `sessionStorage['ecomrag.messages']` 自动迁移完整回合并删除旧键。解析失败、禁用存储或配额满时退回内存；刷新可能丢失。localStorage 同源标签页共享，但不监听其他标签页变化、不合并并发编辑、不跨设备同步。
-- 桌面 ≥1024px 使用 260px 侧栏，较窄屏从顶栏打开历史抽屉，按今天/昨天/近 7 天/更早分组。删除与清空需行内二次确认；切换、新对话、删除当前会话、清空均隔离旧请求。抽屉支持 Esc、遮罩关闭、焦点圈定与恢复、滚动锁。
+- 桌面 ≥1024px 使用默认 260px 侧栏，可拖动分隔线调整至 200–420px，左右方向键每次调整 16px，Home 到最小值，End 或双击恢复默认；宽度保存到 `localStorage['lingma.sidebarWidth.v1']`，损坏或存储不可用时回退默认，写入失败不影响使用。较窄屏从顶栏打开历史抽屉，不应用桌面侧栏宽度，按今天/昨天/近 7 天/更早分组。删除与清空需行内二次确认；切换、新对话、删除当前会话、清空均隔离旧请求。抽屉支持 Esc、遮罩关闭、焦点圈定与恢复、滚动锁，底部保留「历史仅保存在本浏览器」。
 
 ## 引用、链路与 Mock
 
-Markdown 支持加粗、列表、换行，不启用 raw HTML；只转换正文文本节点中的有效 `[n]`，代码、已有链接中的编号保持原样，模型图片只显示替代文字。来源默认展开，点击引用会展开来源、滚动、聚焦并临时高亮卡片；卡片只显示编号、标题、摘要，不显示 doc_id。
+Markdown 支持加粗、列表、换行，不启用 raw HTML；只转换正文文本节点中的有效 `[n]`，代码、已有链接中的编号保持原样，模型图片只显示替代文字。来源默认展开，点击引用会展开来源、滚动、聚焦并临时高亮卡片；卡片只显示编号、标题、摘要，不显示 doc_id。摘要在展示前去掉行首 Markdown 标记和重复标题，合并空白与省略号；空摘要使用独立兜底说明，不改接口与历史数据。
 
 VITE_SHOW_TRACE_TOGGLE=1、URL `?debug=1` 或 `localStorage['ecomrag.debug']='1'` 任一条件才显示「查看链路」。入口可见不会自动开启，状态存 `sessionStorage['ecomrag.trace']`，默认关闭；开启后才发送 debug=true，关闭立即隐藏已有面板。后端仍需 ALLOW_TRACE=true，前端隐藏不是权限边界，长期公开部署恢复关闭。
 
 真实 trace 包含 cache/faq/router/retrieve/rerank/generate/total；字段含 ms、hit、top_score、intent、candidates、kept、speculative。改写补充重排会填写 detail 和合并后 top_score；不再声称真实 detail 一律为空。链路默认折叠，中文映射，耗时整数毫秒、浮点分数两位，未知字段保留展示；并行阶段不能相加当总耗时。
 
-`VITE_MOCK=1 npm run dev` 使用固定关键词样例：秒回→cache、划痕→带三条引用 RAG、火星→拒答、你好→闲聊、退货→FAQ、限流/超时→42901/50401，其余→样例 RAG。错误关键词优先，划痕优先于退货；Mock 不生成新政策，接收 history 但不据此推理。JSON 模拟等待 600–1500ms；流式先发阶段，再按 Unicode 字符每 30–60ms 增量输出，is_mock=true。Mock trace 标注本地模拟耗时，不代表实际性能。
+`VITE_MOCK=1 npm run dev` 使用固定关键词响应：秒回→cache、划痕→带三条引用 RAG、火星→拒答、你好→闲聊、退货→FAQ、限流/超时→42901/50401，其余→预设 RAG。错误关键词优先，划痕优先于退货；Mock 不生成新政策，接收 history 但不据此推理。JSON 模拟等待 600–1500ms；流式先发阶段，再按 Unicode 字符每 30–60ms 增量输出，is_mock=true。Mock trace 标注本地模拟耗时，不代表实际性能。
 
-上滑阅读时保留位置，接近底部才自动跟随；手机快捷问题默认收起。生成中 aria-busy 抑制逐字播报，终态显示完整答案或错误。浏览器软键盘、真实 IME、读屏和实际代理传输需实测。
+手机宽度 <641px 时欢迎标题与说明仅在当前会话无消息时显示，首条消息发出后隐藏，新建空会话后恢复；桌面行为不变。输入框下方仅保留字数。上滑阅读时保留位置，接近底部才自动跟随；手机快捷问题默认收起。生成中 aria-busy 抑制逐字播报，终态显示完整答案或错误。浏览器软键盘、真实 IME、读屏和实际代理传输需实测。
 
 ## 目录
 

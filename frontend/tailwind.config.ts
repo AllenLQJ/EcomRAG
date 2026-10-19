@@ -10,6 +10,7 @@ export default {
         card: '#FFFFFF',
         ink: '#16171A',
         muted: '#5C6068',
+        spark: '#E07A3F',
         'body-muted': '#45484E',
         line: '#E4E4E0',
         outline: '#D6D6D1',

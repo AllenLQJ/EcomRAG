@@ -33,7 +33,6 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
       </div> : <>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <RouteBadge route={message.response.route} /><span>{formatSeconds(message.elapsedMs)}</span>
-          {message.response.is_mock && <span className="font-mono text-xs">Mock · 样例</span>}
         </div>
         <AnswerMarkdown answer={message.response.answer} sources={message.response.sources}
           onCitation={index => setSelection(previous => ({ index, sequence: (previous?.sequence || 0) + 1 }))} />

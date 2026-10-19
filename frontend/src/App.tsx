@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChatMessage, LoadingMessage, StreamingMessage } from './components/ChatMessage';
 import { Composer } from './components/Composer';
 import { ConversationHistory, HistoryDrawer } from './components/ConversationHistory';
+import { ResizableSidebar } from './components/ResizableSidebar';
+import { WelcomeSplash } from './components/WelcomeSplash';
 import { useDesktop } from './hooks/useDesktop';
 import { Header } from './components/Header';
 import { LogoLockup } from './components/Brand';
@@ -36,7 +38,6 @@ export default function App() {
   const scroll = useAutoScroll(`${sessionId}-${messages.length}-${pending}-${progress?.text.length || 0}-${progress?.stage || ""}`);
   const name = storeName();
   const supportUrl = humanSupportUrl();
-  const sample = import.meta.env.VITE_SHOW_SAMPLE_BADGE !== 'false';
 
   useEffect(() => { document.title = `${name} · 客服中心`; }, [name]);
   useEffect(() => {
@@ -81,12 +82,13 @@ export default function App() {
   </section>;
 
   return <div className="app-shell flex bg-canvas font-sans text-ink">
-    {desktop && <aside className="h-full w-[260px] shrink-0 border-r border-line"><ConversationHistory {...historyProps} /></aside>}
+    <WelcomeSplash />
+    {desktop && <ResizableSidebar><ConversationHistory {...historyProps} /></ResizableSidebar>}
     <div className="flex min-w-0 flex-1 flex-col">
-    <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(true)} historyButton={historyButton} name={name} supportUrl={supportUrl} sample={sample} onReset={newConversation}
+    <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(true)} historyButton={historyButton} name={name} supportUrl={supportUrl} onReset={newConversation}
       traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} />
     <main ref={chatArea} aria-hidden={historyOpen || undefined} className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
-      {mobile && welcome}
+      {mobile && messages.length === 0 && welcome}
       <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-busy={pending} aria-relevant="additions" tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-10">
         <div className="mx-auto w-full max-w-chat space-y-8 pb-6 pt-6 sm:pt-10">
@@ -97,7 +99,7 @@ export default function App() {
           {pending && (progress?.text ? <StreamingMessage text={progress.text} /> : <LoadingMessage stage={progress?.stage} />)}
         </div>
       </div>
-      <Composer ref={input} value={draft} onChange={setDraft} onSend={submit} pending={pending} sample={sample} />
+      <Composer ref={input} value={draft} onChange={setDraft} onSend={submit} pending={pending} />
     </main>
     </div>
     {!desktop && historyOpen && <HistoryDrawer {...historyProps} onClose={closeHistory} trigger={historyButton} />}

@@ -16,6 +16,96 @@
 @layer components {
   .app-shell { height: 100vh; height: 100dvh; min-height: 320px; }
   .composer-footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .welcome-splash {
+    @apply fixed inset-0 flex items-center justify-center bg-canvas font-sans text-ink;
+    z-index: 100;
+    background-image: radial-gradient(ellipse 420px 360px at 50% 46%, theme('colors.card'), theme('colors.canvas'));
+  }
+  .welcome-content { @apply flex flex-col items-center px-6 text-center; }
+  .welcome-label {
+    @apply mb-6 text-muted;
+    font-size: 11px;
+    line-height: 1.6;
+    letter-spacing: 6px;
+    animation: welcome-rise .7s .15s both;
+  }
+  .welcome-logo {
+    @apply relative mb-7 h-[88px] w-[88px];
+    animation: welcome-pop 1.5s cubic-bezier(.17,.72,.27,1) both;
+  }
+  .welcome-logo svg { filter: drop-shadow(0 16px 28px theme('colors.ink / 18%')); }
+  .welcome-title {
+    @apply font-serif font-semibold;
+    font-size: clamp(26px, 4vw, 38px);
+    line-height: 1.4;
+    letter-spacing: 2px;
+    animation: welcome-rise 1.1s .3s both;
+  }
+  .welcome-rule {
+    height: 1px;
+    margin: 20px 0;
+    opacity: .35;
+    background-image: linear-gradient(90deg, transparent, theme('colors.ink'), transparent);
+    animation: welcome-line .9s .75s both;
+  }
+  .welcome-subtitle {
+    @apply text-sm text-muted;
+    letter-spacing: 4px;
+    animation: welcome-rise 1s .6s both;
+  }
+  .welcome-spark {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: welcome-spark-pop .5s 1.05s cubic-bezier(.34,1.56,.64,1) both;
+  }
+  .welcome-ripple {
+    @apply absolute rounded-full border-spark;
+    /* The transformed SVG point is (75.2, 67.6) in its 120px viewBox. */
+    left: 62.6667%;
+    top: 56.3333%;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    border-width: 1.5px;
+    opacity: 0;
+    animation: welcome-ripple .9s 1.25s ease-out forwards;
+  }
+  .welcome-skip {
+    @apply absolute text-xs;
+    right: max(24px, env(safe-area-inset-right));
+    bottom: max(24px, env(safe-area-inset-bottom));
+    color: theme('colors.general.dot');
+    animation: welcome-fade .5s 1s both;
+  }
+  .welcome-splash[data-phase='exiting'] {
+    pointer-events: none;
+    animation: welcome-exit .56s ease-in-out both;
+  }
+  @keyframes welcome-rise {
+    from { transform: translateY(16px); opacity: 0; filter: blur(9px); }
+    to { transform: translateY(0); opacity: 1; filter: blur(0); }
+  }
+  @keyframes welcome-pop {
+    from { transform: translateY(30px) scale(.65); opacity: 0; filter: blur(12px); }
+    70% { opacity: 1; filter: blur(0); }
+    to { transform: translateY(0) scale(1); opacity: 1; filter: blur(0); }
+  }
+  @keyframes welcome-line { from { width: 0; } to { width: 160px; } }
+  @keyframes welcome-spark-pop { from { transform: scale(0); } to { transform: scale(1); } }
+  @keyframes welcome-ripple {
+    from { transform: scale(.6); opacity: .9; }
+    to { transform: scale(4.2); opacity: 0; }
+  }
+  @keyframes welcome-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes welcome-exit {
+    from { transform: scale(1); opacity: 1; filter: blur(0); }
+    to { transform: scale(1.02); opacity: 0; filter: blur(14px); }
+  }
+  .sidebar-resizer { @apply absolute inset-y-0 z-10 w-2 cursor-col-resize touch-none; right: -4px; }
+  .sidebar-resizer::before { @apply absolute inset-y-0 w-px bg-line; content: ''; left: 3px; }
+  .sidebar-resizer:hover::before, .sidebar-resizer:focus-visible::before,
+  .sidebar-resizer[data-dragging]::before { @apply bg-muted; }
+  .sidebar-resizer:focus-visible { outline-offset: -2px; }
   .primary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card bg-accent px-4 text-sm font-medium text-card hover:opacity-80; }
   .secondary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card border border-outline bg-card px-4 text-sm text-ink hover:border-ink; }
   .citation-button {

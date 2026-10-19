@@ -1,9 +1,9 @@
 import type { RefObject } from 'react';
 import { LogoMark } from './Brand';
 
-interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void; historyButton: RefObject<HTMLButtonElement>; name: string; supportUrl?: string; sample: boolean; onReset: () => void; traceVisible: boolean; traceEnabled: boolean; onToggleTrace: () => void }
+interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void; historyButton: RefObject<HTMLButtonElement>; name: string; supportUrl?: string; onReset: () => void; traceVisible: boolean; traceEnabled: boolean; onToggleTrace: () => void }
 
-export function Header({ desktop, historyOpen, onHistory, historyButton, name, supportUrl, sample, onReset, traceVisible, traceEnabled, onToggleTrace }: Props) {
+export function Header({ desktop, historyOpen, onHistory, historyButton, name, supportUrl, onReset, traceVisible, traceEnabled, onToggleTrace }: Props) {
   return <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-card px-4 sm:h-16 sm:px-10">
     <div className="flex min-w-0 items-center gap-2 sm:gap-3">
       {!desktop && <button ref={historyButton} type="button" aria-label="历史" aria-expanded={historyOpen} aria-controls={historyOpen ? 'history-drawer' : undefined}
@@ -17,7 +17,6 @@ export function Header({ desktop, historyOpen, onHistory, historyButton, name, s
       </div>
     </div>
     <div className="flex shrink-0 items-center gap-1 sm:gap-3">
-      {sample && <span className="hidden rounded-full border border-line px-2.5 py-1 text-xs text-muted sm:inline">样例数据</span>}
       {traceVisible && <button type="button" aria-pressed={traceEnabled} onClick={onToggleTrace}
         className="min-h-11 rounded-full px-2 text-xs text-muted hover:text-ink aria-pressed:bg-line aria-pressed:text-ink sm:px-3">查看链路</button>}
       {!desktop && <button type="button" aria-label="新对话" onClick={onReset} className="min-h-11 rounded-full px-2 text-xs text-muted hover:text-ink sm:px-3 sm:text-sm">新对话</button>}

@@ -25,11 +25,15 @@ async function ask(question: string) {
 describe('chat flow', () => {
   // Preserve the compatibility endpoint regression suite; streaming has its own tests.
   beforeEach(() => { vi.stubEnv('VITE_STREAM', '0'); });
-  it('shows the welcome, quick questions and disclosure', () => {
+  it('shows the welcome and quick questions without footer notices', () => {
     render(<App />);
     expect(screen.getByRole('heading', { name: '你好，我是灵码的智能客服' })).toBeInTheDocument();
     expect(within(screen.getByLabelText('快捷问题')).getAllByRole('button')).toHaveLength(4);
-    expect(screen.getByText('对话内容会被记录，用于改进服务')).toBeInTheDocument();
+    expect(screen.queryByText('回答由 AI 根据店铺资料生成，仅供参考')).not.toBeInTheDocument();
+    expect(screen.queryByText('样例数据')).not.toBeInTheDocument();
+    expect(screen.queryByText('对话内容会被记录，用于改进服务')).not.toBeInTheDocument();
+    expect(screen.queryByText('Enter 发送 · Shift + Enter 换行')).not.toBeInTheDocument();
+    expect(screen.getByText('历史仅保存在本浏览器')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '联系人工客服' })).not.toBeInTheDocument();
   });
 
@@ -280,17 +284,56 @@ describe('chat flow', () => {
     expect(screen.queryByText(/链路 ·/)).not.toBeInTheDocument();
   });
 
-  it('keeps a single mobile welcome above the scrollable refusal conversation', async () => {
+  it('hides the mobile welcome on the first send and restores it for a new empty conversation', async () => {
     mockMobile();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(result('火星'))));
+    let resolve!: (value: Response) => void;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>(done => { resolve = done; })));
     render(<App />);
+    const heading = screen.getByRole('heading', { name: '你好，我是灵码的智能客服' });
+    expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
+    expect(screen.getByRole('log')).not.toContainElement(heading);
+    await ask('火星');
+    expect(screen.getByRole('textbox')).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: '你好，我是灵码的智能客服' })).not.toBeInTheDocument();
+    expect(screen.queryByText('售后、配送、发票、商品参数，都可以问我。')).not.toBeInTheDocument();
+    await act(async () => { resolve(json(result('火星'))); });
+    await screen.findByText('未找到答案');
+    expect(screen.queryByRole('heading', { name: '你好，我是灵码的智能客服' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^常见问题$/ })).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: '新对话' }));
+    expect(screen.getByRole('heading', { name: '你好，我是灵码的智能客服' })).toBeInTheDocument();
+    expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
+  });
+
+  it.each([640, 641, 1024])('keeps the welcome limited to empty conversations at %ipx', async width => {
+    vi.stubGlobal('matchMedia', vi.fn((media: string) => ({
+      matches: media === '(min-width: 1024px)' ? width >= 1024 : width < 641,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    })));
+    const response = result('火星');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(response)));
+    const view = render(<App />);
+    expect(screen.getByRole('heading', { name: '你好，我是灵码的智能客服' })).toBeInTheDocument();
+    expect(screen.queryByText('样例数据')).not.toBeInTheDocument();
+    expect(screen.queryByText('回答由 AI 根据店铺资料生成，仅供参考')).not.toBeInTheDocument();
     await ask('火星');
     await screen.findByText('未找到答案');
-    const headings = screen.getAllByRole('heading', { name: '你好，我是灵码的智能客服' });
-    expect(headings).toHaveLength(1);
-    expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
-    expect(screen.getByRole('log')).not.toContainElement(headings[0]);
-    expect(screen.getByRole('button', { name: /^常见问题$/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('heading', { name: '你好，我是灵码的智能客服' })).not.toBeInTheDocument();
+    view.unmount();
+    render(<App />);
+    expect(screen.getByText(response.answer)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '你好，我是灵码的智能客服' })).not.toBeInTheDocument();
+  });
+
+  it('renders offline answers with business wording and no mock label', async () => {
+    const response = fixtureFor({ session_id: 's', message: '划痕', debug: false });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(response)));
+    render(<App />);
+    await ask('划痕');
+    await screen.findByText('知识库回答');
+    expect(screen.getByText('具体售后处理请以店铺核实结果为准。')).toBeInTheDocument();
+    expect(screen.queryByText(/Mock ·|虚构|样例/)).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText('引用来源')).getAllByRole('article')).toHaveLength(3);
   });
 
   it('shows the cache fixture with the 秒回 badge', async () => {

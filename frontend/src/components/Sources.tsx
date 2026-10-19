@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Source } from '../api/types';
 import { Chevron } from './Brand';
+import { cleanSourceSnippet } from '../lib/sourceSnippet';
 
 interface Props {
   sources: Source[];
@@ -41,7 +42,7 @@ export function Sources({ sources, selection }: Props) {
           ref={node => { if (node) cards.current.set(source.index, node); else cards.current.delete(source.index); }}
           className={`min-w-0 scroll-m-4 rounded-card border bg-card px-4 py-3 outline-none ${highlighted === source.index ? 'border-accent ring-2 ring-accent' : 'border-line'} focus-visible:ring-2 focus-visible:ring-accent`}>
           <h3 className="flex items-baseline gap-2 text-[13px] font-medium"><span className="shrink-0 font-mono text-xs text-accent">[{source.index}]</span>{source.title}</h3>
-          <p className="mt-1.5 line-clamp-3 whitespace-pre-line break-words text-sm leading-relaxed text-body-muted">{source.snippet}</p>
+          <p className="mt-1.5 line-clamp-3 break-words text-sm leading-relaxed text-body-muted">{cleanSourceSnippet(source.title, source.snippet)}</p>
         </article>)}
       </div>
     </div>

@@ -9,13 +9,28 @@ function mount(initial = '', pending = false) {
   const onSend = vi.fn();
   function Harness() {
     const [value, setValue] = useState(initial);
-    return <Composer value={value} onChange={setValue} onSend={onSend} pending={pending} sample={false} />;
+    return <Composer value={value} onChange={setValue} onSend={onSend} pending={pending} />;
   }
   render(<Harness />);
   return { onSend, input: screen.getByRole('textbox', { name: '输入问题' }), send: screen.getByRole('button', { name: '发送' }) };
 }
 
 describe('Composer', () => {
+  it.each([false, true])('shows only the input count below the composer (mobile=%s)', mobile => {
+    mockMobile(mobile);
+    const view = render(<Composer value="" onChange={vi.fn()} onSend={vi.fn()} pending={false} />);
+    const input = screen.getByRole('textbox', { name: '输入问题' });
+    expect(screen.queryByText('回答由 AI 根据店铺资料生成，仅供参考')).not.toBeInTheDocument();
+    expect(screen.queryByText(/样例数据/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Enter 发送 · Shift + Enter 换行')).not.toBeInTheDocument();
+    expect(screen.queryByText('对话内容会被记录，用于改进服务')).not.toBeInTheDocument();
+    const countId = input.getAttribute('aria-describedby')!;
+    expect(document.getElementById(countId)).toBeEmptyDOMElement();
+    view.rerender(<Composer value="问题" onChange={vi.fn()} onSend={vi.fn()} pending={false} />);
+    expect(document.getElementById(countId)).toHaveTextContent('2 / 500');
+    expect(input).toHaveAccessibleDescription('2 / 500');
+  });
+
   it('Enter sends; Shift+Enter inserts a newline', async () => {
     const user = userEvent.setup();
     const { input, onSend } = mount();

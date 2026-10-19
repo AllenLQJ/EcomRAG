@@ -6,6 +6,8 @@ import { CONVERSATIONS_KEY, loadConversations, saveConversations, SESSION_KEY } 
 import { conversation } from './test/conversations';
 import { mockMobile } from './test/media';
 import { controlledSSE } from './test/streams';
+import { pointer } from './test/pointer';
+import { SIDEBAR_WIDTH_KEY } from './components/ResizableSidebar';
 
 function seed() {
   saveConversations([conversation('最新', 200), conversation('较早', 100)]);
@@ -90,6 +92,7 @@ describe('history drawer', () => {
     const user = userEvent.setup();
     const view = render(<App />);
     const trigger = screen.getByRole('button', { name: '历史' });
+    expect(screen.queryByRole('separator', { name: '调整历史栏宽度' })).not.toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await user.click(trigger);
     const dialog = screen.getByRole('dialog', { name: '历史对话抽屉' });
@@ -126,7 +129,7 @@ describe('history drawer', () => {
     expect(trigger).toHaveFocus();
     expect(within(screen.getByRole('log')).getByText('回答：较早')).toBeInTheDocument();
   });
-  it('uses the fixed sidebar at 1024px and closes the drawer on resize', async () => {
+  it('uses the resizable sidebar at 1024px and closes the drawer on resize', async () => {
     const resize = mockMobile(true);
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: '历史' }));
@@ -135,7 +138,33 @@ describe('history drawer', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '历史' })).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '历史对话' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: '调整历史栏宽度' })).toHaveAttribute('aria-valuenow', '260');
     expect(document.body.style.overflow).toBe('');
+  });
+  it('ends an active desktop drag on a narrower viewport and restores the saved width on return', () => {
+    const resize = mockMobile(false);
+    render(<App />);
+    const handle = screen.getByRole('separator', { name: '调整历史栏宽度' });
+    Object.defineProperties(handle, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+    pointer(handle, 'pointerdown');
+    pointer(window, 'pointermove', { clientX: 340 });
+    expect(handle).toHaveAttribute('aria-valuenow', '340');
+    expect(document.body.style.userSelect).toBe('none');
+    act(() => resize(true));
+    expect(screen.queryByRole('separator', { name: '调整历史栏宽度' })).not.toBeInTheDocument();
+    expect(document.body.style.userSelect).toBe('');
+    pointer(window, 'pointermove', { clientX: 400 });
+    expect(localStorage.getItem(SIDEBAR_WIDTH_KEY)).toBe('340');
+    fireEvent.click(screen.getByRole('button', { name: '历史' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('历史仅保存在本浏览器')).toBeInTheDocument();
+    act(() => resize(false));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary')).toHaveStyle({ width: '340px' });
+    expect(screen.getByRole('separator', { name: '调整历史栏宽度' })).toHaveAttribute('aria-valuenow', '340');
   });
 });
 
