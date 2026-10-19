@@ -459,18 +459,33 @@ run_eval 内部 trace 不受 ALLOW_TRACE 影响，不会改变 API 开关；JSON
 
 ### 7.3 并发与端到端验收
 
-仓库没有独立压测脚本。可在准备好服务的 backend 目录用下例发 6 路真实 SSE，将每路响应单独留存；再逐步增加并发观察满载。压测前在本机测试配置中提高分钟/日限额并重启，以免 42901 掩盖模型排队，测试结束恢复限额。
+推荐使用独立工具 `python -m eval.load_test`。在已激活项目 Python 环境、服务与依赖就绪的 `backend/` 目录执行；以下命令会访问真实服务与模型，日常离线测试不运行：
 
 ```bash
-mkdir -p logs
-seq 1 6 | xargs -P 6 -I '{}' curl -sS -N --max-time 60 \
-  -H 'Content-Type: application/json' \
-  -d '{"session_id":"load-{}","message":"听岚 S2 关闭与开启降噪时续航分别是多少？","debug":true,"history":[]}' \
-  -o 'logs/load-{}.sse' -w 'load-{} HTTP=%{http_code} total=%{time_total}s\n' \
-  http://127.0.0.1:8010/api/v1/chat/stream
+python -m eval.load_test --concurrency 10 --mode json
+python -m eval.load_test --concurrency 20 --mode stream --debug
+python -m eval.load_test --concurrency 20 --requests 100 --mode both --ramp 30 --output logs/load-test.json
 ```
 
-记录完成率、延迟分布、排队、50302 与 50401；SSE 的 HTTP 200 不代表成功，必须检查每份文件是否以 done/error 结束及 error.code。FAQ 缓存只影响 FAQ，知识库问题不会因重复发送而缓存。真实域名还应验证 meta 及时到达、delta 逐条到达、心跳、取消和错误，不能只看最终完整答案。
+| 参数 | 默认值与行为 |
+| --- | --- |
+| `--base-url` | `http://127.0.0.1:8010`；仅允许 http/https，无 URL 凭据、查询串或 fragment；不跟随重定向、不使用环境代理 |
+| `--concurrency N` / `--requests M` | 默认 N=10、M=N；上限分别为 200、5000。M>N 时由 N 个 worker 持续发送，每请求使用独立 `loadtest-` session_id |
+| `--mode json\|stream\|both` | 默认 json；分别访问 `/api/v1/chat` 与 `/api/v1/chat/stream`；both 交替均分，奇数时 json 多 1 个 |
+| `--questions` | 默认仓库 `data/eval_colloquial.jsonl`，提取 question 去重并循环；不存在或无有效问题时用内置 10 条店铺问题 |
+| `--history-ratio` / `--seed` | 默认 0 / 0；按比例选取请求附带固定的两条历史，数量四舍五入，seed 固定选择结果；session_id 仍每次独立 |
+| `--debug` | 请求带 debug:true；服务端需开启 ALLOW_TRACE 才能获得 trace，否则显示无 trace 数据 |
+| `--timeout` / `--ramp` | 默认 90 秒 / 0 秒；timeout 限制整个单请求（含 SSE）；ramp 将 M 个请求的计划启动时间线性分布于指定秒数内，受 worker 容量约束时延后 |
+| `--output` | 可选 JSON 报告路径，自动创建父目录；不读取或写入 `.env*`，也不加载应用配置 |
+| `--i-know-this-is-not-localhost` | 非 `127.0.0.1/localhost` 主机必须显式确认，运行时仍提醒非本机目标 |
+
+工具在发送压测请求前先检查 `/health` 并显示 MySQL、Redis、Milvus、LLM 状态；HTTP 失败、响应无效或依赖未就绪时退出码非 0。health 不提供服务端限流配置，因此启动时提示「若 RATE_LIMIT_PER_MIN / RATE_LIMIT_IP_ENABLED 未放开，高并发会触发 42901/42902」。如需测容量，请自行在本机测试配置中调整限额并重启，测试结束恢复；工具不修改配置。统计将这两种业务码单列为「被本服务限流」，不计入后端故障/其他失败，仍计入失败总数。
+
+文本表和 JSON 报告包含完成/成功/失败数、HTTP 状态和业务错误码分布（含 50302、50401、42901、42902、50201）、总墙钟时间、成功吞吐与成功请求 min/p50/p90/p95/p99/max。墙钟时间不含 health，包含 ramp 和排队；延迟从实际发送起算，不含 ramp 等待。SSE 以 done/error 判断完成，HTTP 200 不代表成功；缺少终止事件算协议失败，首字耗时取首个非空 delta，完整回答耗时取 done，二者仅汇总成功流式请求。分位数排序后线性插值，空样本为 null。debug 额外统计 router/rerank/generate/faq/retrieve 均值与 p90（同请求同阶段先相加，只统计观察到的阶段）、route 分布及 rerank provider 分布。存在失败时工具返回非 0。
+
+每请求明细只保存序号、模式、是否带历史、问题前 20 字（常见凭据格式脱敏）、状态、路由、耗时、错误码、允许的阶段/provider 指标及答案长度；不保留完整问题、答案、历史、服务端错误原文或 trace 自由文本。不将真实密钥放入问题。`backend/tests/test_load_test.py` 通过 MockTransport 覆盖 JSON/SSE、跨块解析、统计、边界与输出隐私，不调用真实服务。
+
+FAQ 缓存只影响 FAQ，知识库问题不会因重复发送而缓存。真实域名还应验证 meta 及时到达、delta 逐条到达、心跳、取消和错误，不能只看最终完整答案。
 
 验收包括：依赖健康与实际入库可检索；FAQ 首次命中/重复缓存；知识回答事实与引用一致；资料不足、隐私/注入走拒答；多轮追问不串答；Redis 故障仍可回答；非法输入、限流、繁忙和超时有可读提示；手机输入/键盘、历史切换/删除、刷新恢复和链路开关正常。真实供应商、浏览器、读屏与隧道必须实测，源码或单元测试不能证明已通过。
 

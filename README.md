@@ -95,7 +95,15 @@ uv run python -m eval.run_eval --eval-file data/eval_multiturn.jsonl --output lo
 uv run python -m eval.check_retrieval
 ```
 
-再加前端 `npm run build` 和并发压测（做法见开发文档第 7 节）。
+再加前端 `npm run build`。并发压测推荐在 `backend/`、已激活项目 Python 环境且本机服务就绪后执行（会访问真实服务与模型）：
+
+```bash
+python -m eval.load_test --concurrency 10 --mode json
+python -m eval.load_test --concurrency 20 --mode stream --debug
+python -m eval.load_test --concurrency 20 --requests 100 --mode both --ramp 30 --output logs/load-test.json
+```
+
+工具先检查 `/health`，按固定 worker 数发送请求，报告成功延迟分位数、SSE 首字/完整回答耗时与错误码；`--debug` 的阶段统计需服务端开启 `ALLOW_TRACE`。默认循环使用 `data/eval_colloquial.jsonl` 的去重问题，不存在或为空时使用内置 10 题。报告只存问题前 20 字（常见凭据格式脱敏）与答案长度，不保存答案原文。若 RATE_LIMIT_PER_MIN / RATE_LIMIT_IP_ENABLED 未放开，高并发会触发 42901/42902，统计单列为「被本服务限流」。非 `127.0.0.1/localhost` 目标需显式加 `--i-know-this-is-not-localhost`；更多参数和指标口径见[开发文档第 7.3 节](docs/电商RAG智能客服-开发文档.md#73-并发与端到端验收)。
 
 ## 数据维护
 
