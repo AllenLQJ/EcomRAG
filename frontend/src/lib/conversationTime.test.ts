@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { conversation } from '../test/conversations';
-import { groupConversations, relativeTime } from './conversationTime';
+import { groupConversations, nextLocalMidnight, relativeTime } from './conversationTime';
 
 const now = new Date(2026, 9, 18, 12).getTime();
 const at = (day: number, hour = 12) => new Date(2026, 9, day, hour).getTime();
@@ -21,4 +21,16 @@ describe('conversation time labels', () => {
   });
   it.each([[0, '刚刚'], [30_000, '刚刚'], [60_000, '1 分钟前'], [3_600_000, '1 小时前'], [86_400_000, '1 天前'], [-60_000, '刚刚']])
     ('formats elapsed time %i', (elapsed, label) => { expect(relativeTime(now - Number(elapsed), now)).toBe(label); });
+});
+
+describe('local midnight scheduling', () => {
+  it('aligns to the next calendar midnight instead of adding a fixed 24 hours', () => {
+    const time = new Date(2026, 9, 18, 23, 59, 59, 500).getTime();
+    expect(nextLocalMidnight(time)).toBe(new Date(2026, 9, 19, 0, 0, 0, 0).getTime());
+    expect(nextLocalMidnight(time) - time).toBe(500);
+  });
+  it('advances to the next day when called exactly at midnight, including a year boundary', () => {
+    const midnight = new Date(2026, 11, 31, 0, 0, 0, 0).getTime();
+    expect(nextLocalMidnight(midnight)).toBe(new Date(2027, 0, 1, 0, 0, 0, 0).getTime());
+  });
 });

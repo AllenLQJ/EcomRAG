@@ -1,5 +1,15 @@
+import { logoVariant } from '../lib/config';
+
+export function LogoMark({ className = 'h-7 w-7', variant = logoVariant() }: { className?: string; variant?: string }) {
+  return <img src={`/brand/lingma-${variant}.svg`} alt="" aria-hidden="true" draggable={false} className={`${className} shrink-0 select-none`} />;
+}
+
+export function LogoLockup({ className = 'h-14' }: { className?: string }) {
+  return <img src="/brand/lingma-d-lockup.svg" alt="" aria-hidden="true" draggable={false} className={`${className} w-auto select-none`} />;
+}
+
 export function AssistantAvatar() {
-  return <div aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-avatar border border-line bg-card font-serif text-base">灵</div>;
+  return <LogoMark className="h-8 w-8" variant="c-dialog" />;
 }
 
 export function SendIcon() {

@@ -26,3 +26,9 @@ export function relativeTime(timestamp: number, now: number): string {
   if (minutes < 1440) return `${Math.floor(minutes / 60)} 小时前`;
   return `${Math.floor(minutes / 1440)} 天前`;
 }
+
+export function nextLocalMidnight(now: number): number {
+  const next = new Date(now);
+  next.setHours(24, 0, 0, 0);
+  return next.getTime();
+}

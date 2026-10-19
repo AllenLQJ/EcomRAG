@@ -97,7 +97,7 @@ export function useChat(traceEnabled: boolean) {
   }, [cancel, conversations]);
 
   const deleteConversation = useCallback((id: string) => {
-    const remaining = saveConversations(conversations.filter(item => item.id !== id));
+    const remaining = saveConversations(loadConversations().filter(item => item.id !== id));
     setConversations(remaining);
     if (id === sessionId) {
       cancel();
@@ -105,7 +105,7 @@ export function useChat(traceEnabled: boolean) {
       if (next) { persistSessionId(next.id); setSessionId(next.id); setMessages(next.messages); }
       else reset();
     }
-  }, [cancel, conversations, reset, sessionId]);
+  }, [cancel, reset, sessionId]);
 
   const clearConversations = useCallback(() => {
     clearMessages();

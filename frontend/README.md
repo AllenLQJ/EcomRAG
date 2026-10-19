@@ -1,10 +1,10 @@
 # 灵码 · 电商智能客服前端
 
-React 18 + TypeScript + Vite 5 + Tailwind CSS 3.4，视觉遵循 `docs/UI设计规范.md` 与桌面、手机设计稿。字体全部来自系统字体栈，无 CDN、在线字体、外部图片或运行时图标依赖。
+React 18 + TypeScript 5 + Vite 5 + Tailwind CSS 3.4 + react-markdown 9，独立访客聊天界面，支持 SSE/JSON、引用、链路面板、多轮与浏览器历史列表。视觉使用仓库设计 token 和系统字体栈，无在线字体或图片 CDN 依赖；店名默认「灵码」，「栖光」是台灯型号。
 
 ## 安装与启动
 
-需要 Node.js 18.18+（推荐 Node.js 22 LTS）和 npm。在仓库根目录执行：
+Node.js ≥18.18、npm，在根目录执行：
 
 ```bash
 cd frontend
@@ -12,20 +12,26 @@ npm install
 npm run dev
 ```
 
-打开 <http://localhost:3000>。端口固定 3000，已启用 `strictPort`；端口被占用会明确报错。
+打开 <http://localhost:3000>；固定端口 3000，strictPort=true，占用会报错。后端在 backend 运行：
 
 ```bash
-npm test             # Vitest，一次运行
-npm run typecheck    # TypeScript 静态检查（包含测试与配置）
-npm run build        # tsc --noEmit 后再 vite build，产物在 dist/
-npm run preview      # 预览构建产物，不提供 /api 开发代理
+uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers --reload
 ```
 
-本次实现未运行任何 npm 命令，未安装依赖、执行测试、类型检查、开发服务或构建。依赖均使用稳定版 caret 范围，首次安装后请在本机检查并保存生成的锁文件。
+默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定样例用 `VITE_MOCK=1 npm run dev`，不需要后端。
+
+```bash
+npm test             # Vitest 单次运行
+npm run typecheck    # tsc --noEmit，含测试与配置
+npm run build        # 类型检查后构建，产物 dist/
+npm run preview      # 静态预览，不提供 /api 开发代理
+```
+
+日常只跑 npm test + npm run typecheck；大提交/合并 main 前加构建，并执行[开发文档第 7 节](../docs/电商RAG智能客服-开发文档.md#7-评测测试与验收)的后端三个评测集、检索评测与并发压测。测试数量以 `npm test` 的实际输出为准。
 
 ## 环境变量
 
-模板为 [`env.sample`](./env.sample)，仓库不提供环境文件。可以直接把变量传给命令，不需要新建任何 `.env.*` 文件：
+[`env.sample`](env.sample) 仅参考，不会被 Vite 自动加载。可直接传给命令：
 
 ```bash
 VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
@@ -33,59 +39,58 @@ VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `VITE_API_BASE` | 空 | 请求 `${base}/api/v1/chat`；空值走同源开发代理。填写服务 origin，不重复附加 `/api/v1` |
-| `VITE_PROXY_TARGET` | `http://127.0.0.1:8010` | 只供 Vite dev server 代理 `/api`，不进入浏览器配置 |
-| `VITE_HUMAN_SUPPORT_URL` | 空 | 完整 http(s) 人工客服地址；空值或无效值隐藏顶栏与拒答链接 |
-| `VITE_SHOW_SAMPLE_BADGE` | `true` | 仅值为 `false` 时隐藏样例标签；手机端将样例标识放在页脚 |
-| `VITE_STORE_NAME` | `灵码` | 店铺名、欢迎语和网页标题；字标保持「灵」 |
-| `VITE_SHOW_TRACE_TOGGLE` | `0` | 严格为 `1` 时向所有人显示“查看链路”开关，仅用于演示部署 |
-| `VITE_STREAM` | `1` | 默认 POST SSE；设为 `0` 只使用非流式 JSON 接口 |
-| `VITE_MOCK` | `0` | 严格为 `1` 时只使用本地 fixtures，不请求后端 |
+| VITE_API_BASE | 空字符串 | API origin；自动追加 `/api/v1/chat` 或 `/api/v1/chat/stream`，不要重复写 `/api/v1`；空值同源 |
+| VITE_PROXY_TARGET | `http://127.0.0.1:8010` | 仅 Vite 开发服务器 `/api` 代理目标 |
+| VITE_HUMAN_SUPPORT_URL | 空字符串 | 完整 http(s) 人工客服链接；空值/无效值隐藏入口 |
+| VITE_SHOW_SAMPLE_BADGE | `true` | 仅字符串 false 隐藏样例标识 |
+| VITE_STORE_NAME | `灵码` | 店铺名、欢迎语与标题；空白回退灵码，字标保持「灵」 |
+| VITE_MOCK | `0` | 严格为 1 时使用本地 fixtures，不请求后端 |
+| VITE_STREAM | `1` | 默认 SSE；严格为 0 才只走 JSON |
+| VITE_SHOW_TRACE_TOGGLE | `0` | 严格为 1 时向所有访客显示「查看链路」入口，仅演示使用 |
 
-Vite 的客户端变量在构建时注入，改变配置后需要重启开发服务或重新构建。不要把任何密钥放入 `VITE_*`。开发代理目标仅在 Vite 配置读取；没有前端健康检查轮询。
+客户端变量构建时注入，变更后重启开发服务器或重新构建；VITE_* 不能放任何凭据。生产托管 dist，并同源反代 /api；也可构建时设置 VITE_API_BASE，此时后端 CORS_ORIGINS 必须允许实际前端源，默认仅 localhost/127.0.0.1:3000。无健康检查轮询。
 
-## Mock 演示
+## 流式回答与兜底
 
-```bash
-VITE_MOCK=1 npm run dev
-```
+请求为 `{session_id,message,debug,history}`，默认 fetch + ReadableStream POST SSE，事件如下：
 
-流式模式先发送阶段事件，再按字每 30–60ms 发送增量；VITE_STREAM=0 时模拟等待 600–1500ms。返回 `is_mock: true`，回答旁显示 Mock 样例标识。输入「秒回」显示缓存命中的「秒回」来源标签；输入「划痕」显示三条引用的 RAG 回答（包含相邻 `[1][2]`，用于验收间距）；「火星」显示拒答；「你好」显示闲聊；「退货」显示 FAQ；「限流」和「超时」分别模拟 42901、50401；其他输入显示样例 RAG。错误关键词优先匹配，其次「秒回」，划痕优先于退货关键词。Mock 只是固定样例，不会针对其他问题生成政策。
+| 事件 | 数据 |
+| --- | --- |
+| meta | request_id、session_id |
+| status | stage：faq / routing / retrieving / generating |
+| delta | text：文本增量 |
+| done | 完整 ChatResponse，含 answer、route、strategy、sources、is_mock、trace |
+| error | code、message、可选 request_id；缺省编号沿用 meta |
 
-构建时 `VITE_SHOW_TRACE_TOGGLE=1`，或访问 <http://localhost:3000/?debug=1>，或设置 `localStorage.setItem('ecomrag.debug', '1')`，才显示页头「查看链路」按钮。开发者标志只决定入口可见，不自动请求 debug；开关默认关闭，点击开启后请求才带 `debug: true` 并显示回答下方的非空链路折叠区。开关存在 `sessionStorage['ecomrag.trace']`，同标签页刷新保留；关闭后立即隐藏所有链路面板，后续请求带 `debug: false`，即使响应或恢复消息含 trace 也不展示。所有 storage 读写异常均退回内存状态，不影响切换与发送。移除 URL 参数和 `localStorage['ecomrag.debug']`，并保持构建配置为 0，可隐藏入口。
+解析支持 UTF-8 跨块、CRLF、多行 data，忽略注释心跳和未知事件。首合法业务事件前超时 60 秒，之后每个合法业务事件重置 30 秒空闲计时；注释/未知事件不续期。后端每 10 秒 `: ping` 是传输心跳，不增加回答内容。
 
-前端隐藏不是安全边界。后端 `ALLOW_TRACE` 默认 `false`，只有请求 `debug: true` 且后端允许时才返回 trace；仅演示环境才开启，公网长期运行的版本应改回 `false`，前端 `VITE_SHOW_TRACE_TOGGLE` 也应恢复为 0。Mock RAG 开启后返回六阶段演示数据，候选数为 10，说明保留「本地模拟耗时」。
+在首合法事件前发生网络失败、任意 HTTP 非成功（含 404/405）、Content-Type 非 SSE、空流或事件解析失败时，自动调用一次 `/api/v1/chat`；实际代码兜底范围不限于 404/405。收到合法 meta/status/delta/done/error 后失败或提前 EOF，显示错误并允许手动重试，避免重复回答；超时和主动取消不自动回退。reader 取消/释放失败不会覆盖结果或阻断兜底。
 
-已只读核对 `backend/app/pipeline.py`、`contracts.py`、`schemas.py`、`tracing.py` 及 FAQ/检索的记录调用：实际阶段为 cache、faq、router、retrieve、rerank、generate、total；当前记录字段为 stage、ms、hit、top_score、intent、candidates、kept，推测检索时另带 speculative。schema 还定义 route、strategy、detail（当前真实记录未填，可能序列化为 null；Mock 填入 strategy/detail）。当前 trace 不记录问题或答案原文、重写问题、文档正文、API key 或凭据；`contracts.py` 的 question/answer、rewritten_query/content 不会被这些 trace 调用写入。trace 仍暴露路由意图、命中情况、数量和耗时，后端开关需继续限制。未知阶段与字段由前端原样显示。
+done 前引用 `[n]` 为普通文字，done 后以最终 answer 覆盖增量，并按 sources 显示引用、来源、路由与实际客户端耗时。status 对应「正在查找常见问题…」「正在理解问题…」「正在查阅店铺资料…」「正在生成回答…」。错误按业务码显示固定友好文案，42901 限流、50401 超时、40001 输入非法，其余统一服务繁忙；code/requestId 保留在数据里，气泡不显示编号或后端内部错误文本。
 
-## 与后端联调
+后端总预算默认 40 秒，单次传输/首内容 12 秒、后续 content 空闲 20 秒，已有内容后不重试；前端超时设置不延长后端预算。所有事件和完成结果都核对请求 epoch；新对话、会话切换与卸载会取消旧请求，迟到结果不污染新会话。
 
-本前端默认后端端口 **8010**。根 README 里的后端命令原用 8000；联调时请在 `backend/` 使用：
+## 多轮与历史列表
 
-```bash
-uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --reload
-```
+- 输入按 Unicode 码点计数，最多 500 字，空白不发送；Enter 发送，Shift+Enter 换行，IME 组合期间不发送。请求中锁定发送、快捷提问和重试，新对话与切换会话仍可用。
+- 每次发送当前会话最近 3 个已完成无错误问答对，按时间顺序最多 6 条 `{role,content}`；两种角色均截到 500 码点，assistant 先去掉 `[n]`。拒答保留，错误和未完成回合排除；当前问题不放进 history，新对话发送空数组。
+- 后端先校验全部 history 再保留最近 6 条，每条最多 1000 字、总 4000 字。有 history 时不读写缓存，先路由再用改写问句查 FAQ/检索/重排，关闭投机检索；服务端不根据 session 自动补历史。
+- 当前 UUID 存 `localStorage['ecomrag.session_id']`，列表存 `localStorage['lingma.conversations.v1']`，每项含 id/title/createdAt/updatedAt/messages，时间为 Unix 毫秒。标题取首问前 20 码点；最多 30 个会话，每个最近 100 条已完成消息（50 轮），按 updatedAt 保留最新会话。
+- 首轮失败只保留页面上的错误与重试入口，首次完整成功回答（含拒答）后才列入历史；已有成功会话可保留完整错误回合，但不将它发给模型。刷新时不恢复在途请求，未完成 user 不保存。
+- 旧 `sessionStorage['ecomrag.messages']` 自动迁移完整回合并删除旧键。解析失败、禁用存储或配额满时退回内存；刷新可能丢失。localStorage 同源标签页共享，但不监听其他标签页变化、不合并并发编辑、不跨设备同步。
+- 桌面 ≥1024px 使用 260px 侧栏，较窄屏从顶栏打开历史抽屉，按今天/昨天/近 7 天/更早分组。删除与清空需行内二次确认；切换、新对话、删除当前会话、清空均隔离旧请求。抽屉支持 Esc、遮罩关闭、焦点圈定与恢复、滚动锁。
 
-再在 `frontend/` 执行 `npm run dev`，确保 `VITE_MOCK` 未开启。浏览器请求同源 `/api/v1/chat`，开发服务器转发到 8010。后端 CORS 默认允许 `http://localhost:3000` 与 `http://127.0.0.1:3000`；使用其他 origin 或直接设置 `VITE_API_BASE` 跨域访问时，需同步配置后端 CORS。生产环境用 Web 服务器托管 `dist/` 并反代 `/api`，或构建时设置 `VITE_API_BASE`。
+## 引用、链路与 Mock
 
-请求发送 `{ session_id, message, debug, history }`，输入按 Unicode 码点计数，上限 500 字，空白不可发送。首事件前 60 秒、流开始后两次事件间隔 30 秒，通过 AbortController 中止并显示超时；后端默认总预算 40 秒、首内容超时 12 秒、相邻内容空闲 20 秒、网络/超时最多重试 3 次，已有内容后不重试；耗时由客户端实际测量至 done。新对话也会中止旧请求并忽略迟到结果。错误信息按业务码映射，不把后端内部错误原文展示给顾客。错误气泡不展示请求编号，`requestId` 仍保留在错误数据和会话存储中，重试逻辑不变。
+Markdown 支持加粗、列表、换行，不启用 raw HTML；只转换正文文本节点中的有效 `[n]`，代码、已有链接中的编号保持原样，模型图片只显示替代文字。来源默认展开，点击引用会展开来源、滚动、聚焦并临时高亮卡片；卡片只显示编号、标题、摘要，不显示 doc_id。
 
-## 交互与存储
+VITE_SHOW_TRACE_TOGGLE=1、URL `?debug=1` 或 `localStorage['ecomrag.debug']='1'` 任一条件才显示「查看链路」。入口可见不会自动开启，状态存 `sessionStorage['ecomrag.trace']`，默认关闭；开启后才发送 debug=true，关闭立即隐藏已有面板。后端仍需 ALLOW_TRACE=true，前端隐藏不是权限边界，长期公开部署恢复关闭。
 
-- 手机（≤640px）使用短占位「输入你的问题」；快捷问题默认收起，点「常见问题」展开后换行排列，选中即发送并收起。桌面保持原占位与快捷问题样式。手机欢迎标题及说明常驻消息滚动区上方，与 Mobile.dc.html 一致，桌面仅空状态显示。
-- Enter 发送，Shift+Enter 换行；IME 组合期间的 Enter 不发送。请求期间锁定输入、发送、快捷提问与重试；新对话仍可用。
-- 当前会话 UUID 存在 `localStorage['ecomrag.session_id']`，历史保存在 `localStorage['lingma.conversations.v1']`。存储数组元素为 `{ id, title, createdAt, updatedAt, messages }`，`id` 即请求的 `session_id`，时间为 Unix 毫秒；标题取首个用户问题前 20 个 Unicode 码点。最多 30 个会话，按 `updatedAt` 删除最旧会话；每个会话最多保留最近 100 条已完成消息（50 轮，错误回合也可保留）。新对话先更换 UUID，首次成功收到完整回答（含拒答）后才进入列表，首轮失败只保留当前页面的错误及重试入口。
-- 首次加载自动将旧 `sessionStorage['ecomrag.messages']` 的完整回合迁移到一个历史会话，并删除旧键；末尾未完成问题不迁移。解析失败、存储禁用、配额满时页面继续工作，必要时仅保存在内存，刷新可能丢失。切换会话、新对话、删除当前会话和清空都会中止相关请求并隔离迟到事件，未完成回合不写入历史。
-- 桌面 ≥1024px 使用 260px 固定侧栏；更窄视口由顶栏「历史」打开抽屉。列表按本地日历分「今天 / 昨天 / 近 7 天 / 更早」，显示标题与相对时间；近 7 天含今天及前六个日历日，今天/昨天单独分组。删除单项与「清空全部历史」都需行内二次确认；也可通过浏览器站点数据设置清除。抽屉支持遮罩、关闭按钮和 Esc，锁定页面滚动并圈定焦点，关闭后焦点返回「历史」按钮。
-- 两个接口及 Mock 都接收可选 `history`：前端每次发送当前会话最近 3 个已完成且无错误的问答对，按时间顺序交替排列，最多 6 条 `{ role: 'user' | 'assistant', content }`。assistant 先去掉 `[n]` 引用标记，再按 Unicode 码点截断到 500 字；user 同样截断到 500 字。拒答保留原文，错误回合及未完成回合排除；新会话第一问发送 `history: []`。Mock 接收上下文但仍使用固定关键词样例。
-- Markdown 支持加粗、列表、换行，不启用 raw HTML。仅语法树文本节点中的有效 `[n]` 会转为引用按钮，代码块、行内代码、已有链接内的编号保持原样；未知编号显示原文。模型给出的图片仅显示替代文本，不自动加载外部资源。
-- 来源默认展开，点击或按 Enter 激活引用会展开来源、滚动、聚焦并暂时高亮对应卡片；trace 仅在开发者开关开启且非空时出现，默认折叠，阶段与字段中文显示。来源卡片只显示编号、标题、摘要，不显示 doc_id（包含 FAQ），字段仍保留在数据和类型中。
-- 链路最高分等浮点数保留两位小数，耗时显示整数毫秒；`route` 的五种值及 `speculative` 的是/否均有中文映射，未知字段和枚举值仍可展示。
-- 接近底部时跟随新消息；上滑阅读时保留位置。手机触控目标至少 44px：引用使用独立的「引用」按钮组，相邻热区不重叠；桌面行内引用为紧凑的至少 24×24px 按钮，不撑开行高。快捷标签外层点击区至少 44px；减弱动态效果设置下关闭脉冲。
+真实 trace 包含 cache/faq/router/retrieve/rerank/generate/total；字段含 ms、hit、top_score、intent、candidates、kept、speculative。改写补充重排会填写 detail 和合并后 top_score；不再声称真实 detail 一律为空。链路默认折叠，中文映射，耗时整数毫秒、浮点分数两位，未知字段保留展示；并行阶段不能相加当总耗时。
 
-## 本轮视觉规范补充
+`VITE_MOCK=1 npm run dev` 使用固定关键词样例：秒回→cache、划痕→带三条引用 RAG、火星→拒答、你好→闲聊、退货→FAQ、限流/超时→42901/50401，其余→样例 RAG。错误关键词优先，划痕优先于退货；Mock 不生成新政策，接收 history 但不据此推理。JSON 模拟等待 600–1500ms；流式先发阶段，再按 Unicode 字符每 30–60ms 增量输出，is_mock=true。Mock trace 标注本地模拟耗时，不代表实际性能。
 
-视觉规则与 `docs/UI设计规范.md` 保持一致：回答正文 16px / 500（系统字体栈含非可变字体），加粗 600；用户正文 16px，所有辅助小字至少 12px；引用摘要 14px，使用 `body-muted` 语义 token，在卡片白底上对比度约 9.2:1。卡片仅含编号、标题、摘要。所有界面配色使用 Tailwind token；favicon 的独立 SVG 文档由 Vite 在开发与构建时注入 ink/canvas token，避免另写色值。
+上滑阅读时保留位置，接近底部才自动跟随；手机快捷问题默认收起。生成中 aria-busy 抑制逐字播报，终态显示完整答案或错误。浏览器软键盘、真实 IME、读屏和实际代理传输需实测。
 
 ## 目录
 
@@ -93,38 +98,36 @@ uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --relo
 frontend/
 ├── package.json、tsconfig.json、vite.config.ts
 ├── tailwind.config.ts、postcss.config.js、index.html、env.sample
+├── public/favicon.svg
 └── src/
     ├── main.tsx、App.tsx、index.css
-    ├── api/          # 请求/响应类型、校验、错误映射、可替换的 API client
-    ├── components/   # 顶栏、输入、Markdown、来源、trace、消息
-    ├── hooks/        # 会话状态与滚动跟随
-    ├── lib/          # 引用语法树转换、格式化、安全存储、配置
-    ├── mocks/        # 关键词匹配的本地响应
-    └── test/         # RTL / jest-dom 的全局设置
+    ├── api/          # client、SSE、类型/校验、错误
+    ├── components/   # 消息、输入、来源、trace、历史列表
+    ├── hooks/        # useChat、滚动、手机/桌面断点
+    ├── lib/          # 引用、格式、配置、history、storage、会话时间
+    ├── mocks/        # fixtures
+    └── test/         # RTL/jest-dom 设置、流和会话工具
 ```
 
-测试与模块就近放置：`format.test.ts`（中文与未知字段映射）、`citations.test.tsx`、`client.test.ts`、`Composer.test.tsx`、`App.test.tsx`、`storage.test.ts`、`fixtures.test.ts`。补充手机收起/展开/发送后收起、短占位与断点切换、独立引用按钮组、欢迎区保留、来源文件名消失、trace 默认关闭/入口条件/会话持久化/隐藏服务端 trace/存储异常、缓存样例与相邻引用；保留原有测试覆盖，包括引用边界与代码跳过、所有错误码/网络/非 JSON/超时、输入与 IME、聊天及重试与新会话、存储异常与恢复、trace、debug 与 Mock。
+测试与模块就近放置，覆盖请求、SSE、Mock、引用、输入/IME、历史边界/迁移、切换取消、epoch、存储异常和链路可见性。此目录说明依据 package.json、vite.config.ts 与 src，不把历史交付记录当作当前验证结果。
 
-## 已知限制与待验证
+## 公网部署与常见问题
 
-- 本期为支持 SSE 与 JSON 兜底的单页，不做登录、个人订单查询、真实人工工单、深色模式；人工入口只是配置的链接。
-- 若在请求中刷新，仅恢复已完成回合；未回复的末尾 user 消息会丢弃，不恢复在途请求或加载态，可重新提问。存储不可用时刷新无法保留会话。
-- localStorage 历史与当前会话 ID 在同源标签页共享；已打开页面不监听其他标签页的切换或清理事件，刷新后读取存储。不提供跨标签页并发编辑合并或跨设备同步。
-- `env.sample` 仅作模板，不会被 Vite 自动加载。生产静态预览需要另外配置 API 服务。
-- 尚未验证：依赖安装与解析、TypeScript 检查、Vitest 测试、Vite 构建、浏览器视觉与移动端软键盘/安全区、真实 IME 与读屏、开发代理及真实后端联调。请在本机逐项验收。
+公网采用本机 + Cloudflare 固定 named tunnel，临时隧道不支持项目所需 SSE；生产链路和 Nginx 示例见[开发文档第 8 节](../docs/电商RAG智能客服-开发文档.md#8-部署防滥用与已知限制)。保留 Content-Type: text/event-stream、Cache-Control: no-cache、X-Accel-Buffering: no、Content-Encoding: identity，关闭 API 的缓存、压缩与缓冲，验证 meta 和 delta 实时到达。
 
-## SSE 与部署验收
+后端只监听 127.0.0.1:8010，使用 --no-proxy-headers。可信固定隧道可设置 TRUST_PROXY_HEADERS=true、CLIENT_IP_HEADER=cf-connecting-ip，socket 对端还须在 TRUSTED_PROXIES（默认回环地址）；中间代理须保留验证后的 CF 头，禁止绕过入口伪造。缺失/非法头或对端不可信时回退 socket 地址，不能靠前端设置真实 IP。
 
-默认向 `/api/v1/chat/stream` POST 同一请求体，使用 fetch + ReadableStream，事件为 meta（request_id/session_id）、status（faq/routing/retrieving/generating）、delta（text）、done（完整 ChatResponse）和 error（code/message/request_id）。解析支持跨块、UTF-8、CRLF、多行 data，忽略 `: ping` 注释心跳。前 60 秒等待首事件，之后每个业务事件重置 30 秒空闲计时；注释不会续期。首事件前网络失败、404/405 或 Content-Type 非 SSE 自动改用 `/api/v1/chat`；仅合法的 meta/status/delta/done/error 事件算流已开始；未知事件忽略且不禁用兜底、不重置计时。已收到合法事件后、主动取消或超时不自动重复请求。error.request_id 可省略，仍保留业务码，并可沿用 meta 的 request_id；reader.cancel/releaseLock 清理失败不会覆盖结果、错误或兜底。
+- **3000 启动报占用**：strictPort=true，先释放端口。
+- **preview 能看页面但问答失败**：preview 无开发 API 代理，需生产反代或正确的 VITE_API_BASE/CORS。
+- **修改变量无效**：env.sample 不自动加载；运行时应传变量，构建变量变更需重新构建，VITE_MOCK 仅 1 开启、VITE_STREAM 仅 0 关闭。
+- **人工入口不显示**：VITE_HUMAN_SUPPORT_URL 必须为完整 http(s) 地址；它只是外链，没有工单系统。
+- **历史刷新丢失**：仅完整回合会保存，首轮失败不进列表；存储异常只保留内存，不做跨设备同步。
+- **流式整段出现或中途失败**：查固定隧道和代理缓冲，流开始后的错误不会自动重复请求，使用重试入口。
+- **并发慢**：本机重排串行，既有记录约每分钟 20 个知识库问题；海外到智谱可能抖动，16 GB 内存压力下重排可从约 2.5 秒退化至 20 秒以上，前端超时不能消除这些瓶颈。
 
-四个阶段分别显示「正在查找常见问题…」「正在理解问题…」「正在查阅店铺资料…」「正在生成回答…」。增量仍由 react-markdown 渲染，禁用 raw HTML；done 前 `[n]` 是普通文字，done 后用最终 answer 与 sources 显示引用、来源、路由与耗时。fallback 使用现有人工客服与换个问法入口。上滑时保持阅读位置；新对话取消旧流；send、重试、reset 使用递增 epoch，迟到事件及结果在提交状态前再次校验。localStorage 历史仅写入已完成回合，旧 sessionStorage 数据迁移时移除末尾无回复的 user。消息区生成时 aria-busy=true、aria-relevant=additions，LoadingMessage 不再含 role=status；done/error 后仅宣告新增的完整答案/错误，避免逐字与重复播报。
+## 变更与决策记录
 
-生产反代必须保留 `Content-Type: text/event-stream`、`Cache-Control: no-cache`、`X-Accel-Buffering: no`，关闭 API 路径的压缩、缓存与缓冲。后端每 10 秒发送心跳，完整 Cloudflare 固定隧道与 Nginx 示例见根 README「流式回答与公网代理」。`TRUST_PROXY_HEADERS=false` 为默认值；仅后端绑定 127.0.0.1 且受可信代理保护时开启，Cloudflare 可选择 `CLIENT_IP_HEADER=cf-connecting-ip`。新增 `TRUSTED_PROXIES` 默认 `["127.0.0.1","::1"]`，支持 IP/CIDR；只有白名单内的 socket 对端才能提供转发头，缺失/非法头或不可信对端回退 socket 地址。生产命令使用 `--host 127.0.0.1 --no-proxy-headers`，由应用统一校验代理对端。
-
-新增 `sse.test.ts`（任意块边界/CRLF/多行/注释）、`stream.test.ts`（UTF-8/兜底/错误/超时/取消/Mock）、`Stream.test.tsx`（逐步文本、最终引用、重试、fallback、滚动与新对话）。旧 App.test.tsx 显式使用 VITE_STREAM=0 保留 JSON 端到端回归。没有新增运行时依赖。本轮没有运行 npm、Vitest、tsc 或 build，也未验证真实服务与 Cloudflare 隧道；请在本机运行这些检查。
-
-审核回归另补 `hooks/useChat.test.tsx`（忽略 abort 时旧请求代次隔离、重试、完整回合存储与刷新恢复）、stream.test.ts（未知/非法事件前兜底、可选错误编号、清理异常）及 live region 的 busy/终态切换断言。本轮不运行 npm；尚需本机执行 Vitest、tsc --noEmit、build，并用读屏实测终态播报。
-
-## 会话历史验收补充
-
-新增 `lib/history.test.ts`（三轮/截断/去引用/拒答/错误与未完成回合排除）、`lib/conversationTime.test.ts`（固定时钟、本地日历边界、排序与相对时间）、`components/ConversationHistory.test.tsx`（列表语义、键盘与删除/清空确认）、`History.test.tsx`（恢复/继续/取消旧流/空会话/删除当前/抽屉焦点、Esc、遮罩、断点与滚动锁）与 `api/history.test.ts`（Mock 两条传输路径与真实 fixture 接收上下文）。扩展 storage/useChat/client/stream 回归以覆盖版本化读写、上限、迁移、存储异常、请求 history、迟到事件与新会话。仅做代码静态审阅与 diff 检查；未运行 tsc --noEmit、Vitest、build 或浏览器，需本机分别验收。
+- 后端拒答阈值从 0.5 调为 0.2，减少 child 模式低分应答题误拒；改写补充重排不设相似度门槛，依据 backend/app/pipeline.py、retrieval/rewrite.py 及对应回归测试，前端据最终 route 展示拒答。
+- 固定隧道沿用 docs/演示准备.md 的 SSE 部署约定；api/client.ts 在首合法事件前提供 JSON 兜底，已开始的流不自动重发。
+- glm-5.3-flash 需后端配置 enabled/low 思考，依据后端诊断与思考参数测试；浏览器不保存或发送供应商凭据。
+- 后端 LLM 并发默认 2，来自 config.py/test_settings.py；演示建议 4 来自既有演示配置，仍需核对配额与压测，不改变前端请求契约。

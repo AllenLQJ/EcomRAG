@@ -1,6 +1,6 @@
 import { turn, conversation } from '../test/conversations';
 import { describe, expect, it, vi } from 'vitest';
-import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled, CONVERSATIONS_KEY, loadConversations, saveConversations } from './storage';
+import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled, CONVERSATIONS_KEY, MAX_STORAGE_LENGTH, loadConversations, saveConversations } from './storage';
 
 describe('storage', () => {
   it('creates/reuses a UUID and replaces it for a new conversation', () => {
@@ -187,5 +187,130 @@ describe('legacy migration cleanup failures', () => {
     expect(loadConversations(100)).toHaveLength(1);
     clearMessages();
     expect(loadConversations()).toEqual([]);
+  });
+});
+
+describe('bounded and individually validated history snapshots', () => {
+  it.each([false, true])('rejects raw input over 2MB before parsing, including when cleanup is blocked (%s)', blocked => {
+    saveConversations([conversation('cached', 100)]);
+    const oversized = '[]' + ' '.repeat(MAX_STORAGE_LENGTH - 1);
+    localStorage.setItem(CONVERSATIONS_KEY, oversized);
+    const parse = vi.spyOn(JSON, 'parse');
+    const remove = vi.spyOn(Storage.prototype, 'removeItem');
+    if (blocked) remove.mockImplementation(() => { throw new Error('blocked'); });
+    expect(loadConversations()).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith(CONVERSATIONS_KEY);
+    expect(localStorage.getItem(CONVERSATIONS_KEY)).toBe(blocked ? oversized : null);
+    expect(loadConversations()).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+  });
+  it('accepts raw input at exactly the 2MB boundary', () => {
+    const item = conversation('boundary', 100);
+    const json = JSON.stringify([item]);
+    const raw = json + ' '.repeat(MAX_STORAGE_LENGTH - json.length);
+    localStorage.setItem(CONVERSATIONS_KEY, raw);
+    const parse = vi.spyOn(JSON, 'parse');
+    expect(loadConversations()).toEqual([item]);
+    expect(parse).toHaveBeenCalledWith(raw);
+    expect(localStorage.getItem(CONVERSATIONS_KEY)).toBe(raw);
+  });
+  it('limits raw parsed snapshots to the latest 30 sessions and 100 completed messages', () => {
+    const items = Array.from({ length: 32 }, (_, index) => conversation(String(index), index));
+    const latest = items[31];
+    latest.messages = Array.from({ length: 51 }, (_, index) => turn(String(index))).flat();
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(items));
+    const loaded = loadConversations();
+    expect(loaded).toHaveLength(30);
+    expect(loaded.map(item => item.id)).toEqual(items.slice(2).reverse().map(item => item.id));
+    expect(loaded[0].messages).toEqual(latest.messages.slice(-100));
+  });
+  it.each(['read', 'write'])('truncates long text/answers/snippets/titles without dropping a completed turn (%s)', mode => {
+    const item = conversation('long', 100);
+    item.title = '题'.repeat(41);
+    item.messages = turn('问'.repeat(4001), '答'.repeat(8001));
+    const reply = item.messages[1];
+    if (reply.kind !== 'assistant') throw new Error('expected fixture assistant');
+    reply.response.sources = [{ index: 1, doc_id: 'doc', title: '源'.repeat(41), snippet: '摘'.repeat(501), score: 1 }];
+    if (mode === 'read') localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([item]));
+    else saveConversations([item]);
+    const loaded = loadConversations();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].title).toBe('题'.repeat(40));
+    expect(loaded[0].messages).toHaveLength(2);
+    expect(loaded[0].messages[0]).toMatchObject({ kind: 'user', text: '问'.repeat(4000) });
+    expect(loaded[0].messages[1]).toMatchObject({ kind: 'assistant', question: '问'.repeat(4000), response: {
+      answer: '答'.repeat(8000), sources: [{ index: 1, doc_id: 'doc', title: '源'.repeat(40), snippet: '摘'.repeat(500), score: 1 }],
+    } });
+    if (mode === 'write') expect(JSON.parse(localStorage.getItem(CONVERSATIONS_KEY)!)).toEqual(loaded);
+  });
+  it('does not split surrogate pairs at a text limit', () => {
+    saveMessages('emoji', turn('x'.repeat(3999) + '😀'), 100);
+    expect(loadMessages('emoji')[0]).toMatchObject({ text: 'x'.repeat(3999) });
+    expect(loadMessages('emoji')[1]).toMatchObject({ question: 'x'.repeat(3999) });
+  });
+  it('drops only malformed messages, repairing pairs across discarded entries', () => {
+    const complete = [...turn('保留一'), ...turn('保留二')];
+    const messages: unknown[] = [null, complete[0], { kind: 'assistant', id: 'broken', response: null }, complete[1],
+      ...turn('丢弃未完成').slice(0, 1), complete[2], { kind: 'user', id: 'missing-text' }, complete[3]];
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([{ ...conversation('mixed', 100), messages }]));
+    expect(loadMessages('mixed')).toEqual(complete);
+  });
+  it('recovers a noncritical title but discards sessions with invalid IDs or timestamps', () => {
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([
+      { ...conversation('recover', 100), title: null }, { ...conversation('bad-id', 100), id: '' },
+      { ...conversation('bad-time', 100), updatedAt: 'invalid' },
+    ]));
+    expect(loadConversations()).toEqual([{ ...conversation('recover', 100), title: 'recover' }]);
+  });
+  it.each([Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN])('rejects non-finite error codes on write (%s)', code => {
+    const invalid = turn('错误', '', true);
+    const error = invalid[1];
+    if (error.kind !== 'error') throw new Error('expected fixture error');
+    error.code = code;
+    saveConversations([{ ...conversation('mixed', 100), messages: [...invalid, ...turn('保留')] }]);
+    expect(loadMessages('mixed')).toEqual(turn('保留'));
+  });
+  it('rejects non-finite error codes from otherwise valid JSON on read', () => {
+    const raw = JSON.stringify([{ ...conversation('mixed', 100), messages: [...turn('错误', '', true), ...turn('保留')] }])
+      .replace('"code":50401', '"code":1e309');
+    localStorage.setItem(CONVERSATIONS_KEY, raw);
+    expect(loadMessages('mixed')).toEqual(turn('保留'));
+  });
+  it('normalizes in memory and skips disk when the bounded aggregate still exceeds 2MB', () => {
+    saveConversations([conversation('on-disk', 100)]);
+    const previous = localStorage.getItem(CONVERSATIONS_KEY);
+    const items = Array.from({ length: 6 }, (_, index) => ({ ...conversation(String(index), index),
+      messages: Array.from({ length: 50 }, (_, question) => turn(`${index}-${question}`, '答'.repeat(8001))).flat(),
+    }));
+    const write = vi.spyOn(Storage.prototype, 'setItem');
+    const saved = saveConversations(items);
+    expect(write).not.toHaveBeenCalled();
+    expect(localStorage.getItem(CONVERSATIONS_KEY)).toBe(previous);
+    expect(loadConversations()).toEqual(saved);
+    expect(saved).toHaveLength(6);
+    expect(saved[0].messages).toHaveLength(100);
+    expect(saved[0].messages[1]).toMatchObject({ response: { answer: '答'.repeat(8000) } });
+    saveConversations([saved[0]]);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(loadConversations()).toEqual([saved[0]]);
+  });
+  it('migrates legacy snapshots with per-message filtering and the same content limits', () => {
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 'legacy', messages: [
+      ...turn('问'.repeat(4001), '答'.repeat(8001)), null, ...turn('另一个'),
+    ] }));
+    const loaded = loadConversations(100);
+    expect(loaded[0].messages).toHaveLength(4);
+    expect(loaded[0].messages[0]).toMatchObject({ text: '问'.repeat(4000) });
+    expect(loaded[0].messages[1]).toMatchObject({ question: '问'.repeat(4000), response: { answer: '答'.repeat(8000) } });
+    expect(loaded[0].messages.slice(2)).toEqual(turn('另一个'));
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
+  });
+  it('never parses an oversized legacy snapshot', () => {
+    sessionStorage.setItem(MESSAGES_KEY, '[]' + ' '.repeat(MAX_STORAGE_LENGTH));
+    const parse = vi.spyOn(JSON, 'parse');
+    expect(loadConversations()).toEqual([]);
+    expect(parse).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
   });
 });

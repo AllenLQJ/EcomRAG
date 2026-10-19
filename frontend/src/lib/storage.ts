@@ -5,6 +5,8 @@ export const SESSION_KEY = 'ecomrag.session_id';
 export const MESSAGES_KEY = 'ecomrag.messages';
 export const TRACE_KEY = 'ecomrag.trace';
 export const CONVERSATIONS_KEY = 'lingma.conversations.v1';
+// Bound the raw JS string before parsing, including legacy snapshots.
+export const MAX_STORAGE_LENGTH = 2 * 1024 * 1024;
 
 export interface Conversation {
   id: string;
@@ -80,7 +82,7 @@ function isMessage(value: unknown): value is ChatMessage {
   if (!isRecord(value) || typeof value.id !== 'string') return false;
   if (value.kind === 'user') return typeof value.text === 'string';
   if (typeof value.question !== 'string') return false;
-  if (value.kind === 'error') return typeof value.code === 'number'
+  if (value.kind === 'error') return typeof value.code === 'number' && Number.isFinite(value.code)
     && (value.requestId === undefined || typeof value.requestId === 'string');
   return value.kind === 'assistant' && isChatResponse(value.response)
     && typeof value.elapsedMs === 'number' && Number.isFinite(value.elapsedMs) && value.elapsedMs >= 0;
@@ -92,7 +94,7 @@ export function completedMessages(messages: ChatMessage[]): ChatMessage[] {
   for (let i = 0; i < messages.length - 1; i += 1) {
     const user = messages[i];
     const reply = messages[i + 1];
-    if (user.kind === 'user' && reply.kind !== 'user' && reply.question === user.text) {
+    if (user?.kind === 'user' && reply && reply.kind !== 'user' && reply.question === user.text) {
       complete.push(user, reply);
       i += 1;
     }
@@ -100,45 +102,93 @@ export function completedMessages(messages: ChatMessage[]): ChatMessage[] {
   return complete;
 }
 
-function normalize(conversations: Conversation[]): Conversation[] {
+interface StoredConversation {
+  id: string;
+  title?: unknown;
+  createdAt: number;
+  updatedAt: number;
+  messages: unknown[];
+}
+
+/** Message validity is checked individually, never as a condition on the whole session. */
+function isConversation(value: unknown): value is StoredConversation {
+  return isRecord(value) && typeof value.id === 'string' && !!value.id.trim() && Array.from(value.id).length <= 128
+    && typeof value.createdAt === 'number' && Number.isFinite(new Date(value.createdAt).getTime()) && value.createdAt >= 0
+    && typeof value.updatedAt === 'number' && Number.isFinite(new Date(value.updatedAt).getTime()) && value.updatedAt >= value.createdAt
+    && Array.isArray(value.messages);
+}
+
+// Storage limits use string length (UTF-16 code units), without splitting surrogate pairs.
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const end = /[\uD800-\uDBFF]/.test(text[limit - 1]) ? limit - 1 : limit;
+  return text.slice(0, end);
+}
+
+function limitMessage(message: ChatMessage): ChatMessage {
+  if (message.kind === 'user') return { ...message, text: truncate(message.text, 4000) };
+  const question = truncate(message.question, 4000);
+  if (message.kind === 'error') return { ...message, question };
+  return { ...message, question, response: { ...message.response,
+    answer: truncate(message.response.answer, 8000),
+    sources: message.response.sources.map(source => ({ ...source,
+      title: truncate(source.title, 40), snippet: truncate(source.snippet, 500),
+    })),
+  } };
+}
+
+function normalize(conversations: unknown[]): Conversation[] {
   const ids = new Set<string>();
-  return conversations.map(item => ({ ...item, messages: completedMessages(item.messages).slice(-100) }))
-    .filter(item => item.messages.length > 0)
+  return conversations.filter(isConversation).map(item => {
+    const messages = completedMessages(item.messages.filter(isMessage)).slice(-100);
+    return { id: item.id, createdAt: item.createdAt, updatedAt: item.updatedAt,
+      title: typeof item.title === 'string' ? truncate(item.title, 40) : titleFor(messages),
+      messages: messages.map(limitMessage),
+    };
+  }).filter(item => item.messages.length > 0)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .filter(item => { if (ids.has(item.id)) return false; ids.add(item.id); return true; })
     .slice(0, 30);
 }
 
-function isConversation(value: unknown): value is Conversation {
-  return isRecord(value) && typeof value.id === 'string' && !!value.id.trim() && Array.from(value.id).length <= 128
-    && typeof value.title === 'string' && Array.from(value.title).length <= 20
-    && typeof value.createdAt === 'number' && Number.isFinite(new Date(value.createdAt).getTime()) && value.createdAt >= 0
-    && typeof value.updatedAt === 'number' && Number.isFinite(new Date(value.updatedAt).getTime()) && value.updatedAt >= value.createdAt
-    && Array.isArray(value.messages) && value.messages.every(isMessage);
+function readJSON(storage: Storage, key: string, fallback: unknown): unknown {
+  const raw = storage.getItem(key);
+  if (!raw) return fallback;
+  // Never pass oversized input to JSON.parse, even when clearing the key is blocked.
+  if (raw.length <= MAX_STORAGE_LENGTH) {
+    try { return JSON.parse(raw) as unknown; } catch { /* Treat malformed JSON as corrupt. */ }
+  }
+  try { storage.removeItem(key); } catch { /* The corrupt snapshot is still ignored. */ }
+  return fallback;
 }
 
 export function saveConversations(conversations: Conversation[]): Conversation[] {
   memory = normalize(conversations);
-  try { localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(memory)); volatile = false; }
-  catch { volatile = true; /* Keep the entire list usable even after quota failures. */ }
+  try {
+    const serialized = JSON.stringify(memory);
+    // Do not persist a snapshot that the next load must reject. Keep it in memory instead.
+    if (serialized.length > MAX_STORAGE_LENGTH) { volatile = true; return memory; }
+    localStorage.setItem(CONVERSATIONS_KEY, serialized);
+    volatile = false;
+  } catch { volatile = true; /* Keep the entire list usable even after quota failures. */ }
   return memory;
 }
 
 export function loadConversations(now = Date.now()): Conversation[] {
   if (!volatile) {
     try {
-      const raw: unknown = JSON.parse(localStorage.getItem(CONVERSATIONS_KEY) || '[]');
-      memory = Array.isArray(raw) ? normalize(raw.filter(isConversation)) : [];
+      const raw = readJSON(localStorage, CONVERSATIONS_KEY, []);
+      memory = Array.isArray(raw) ? normalize(raw) : [];
     } catch { /* Keep the last in-memory snapshot on blocked storage or malformed JSON. */ }
   }
   if (legacyRead) return memory;
   legacyRead = true;
   try {
-    const legacy: unknown = JSON.parse(sessionStorage.getItem(MESSAGES_KEY) || 'null');
+    const legacy = readJSON(sessionStorage, MESSAGES_KEY, null);
     if (isRecord(legacy) && typeof legacy.session_id === 'string'
       && legacy.session_id.trim() && Array.from(legacy.session_id).length <= 128
-      && Array.isArray(legacy.messages) && legacy.messages.every(isMessage)) {
-      const messages = completedMessages(legacy.messages);
+      && Array.isArray(legacy.messages)) {
+      const messages = completedMessages(legacy.messages.filter(isMessage));
       if (messages.length && !memory.some(item => item.id === legacy.session_id)) {
         saveConversations([...memory, { id: legacy.session_id, title: titleFor(messages), createdAt: now, updatedAt: now, messages }]);
         try { if (!localStorage.getItem(SESSION_KEY)) setSessionId(legacy.session_id); } catch { /* Keep current memory selection. */ }
@@ -160,7 +210,7 @@ export function loadMessages(sessionId: string): ChatMessage[] {
 
 export function saveMessages(sessionId: string, messages: ChatMessage[], now = Date.now()): Conversation[] {
   const conversations = loadConversations(now);
-  const complete = completedMessages(messages);
+  const complete = completedMessages(messages.filter(isMessage));
   if (!complete.length) return conversations;
   const existing = conversations.find(item => item.id === sessionId);
   return saveConversations([...conversations.filter(item => item.id !== sessionId), {

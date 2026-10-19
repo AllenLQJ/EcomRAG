@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { Conversation } from '../lib/storage';
 import { groupConversations, relativeTime } from '../lib/conversationTime';
+import { useConversationClock } from '../hooks/useConversationClock';
 
 interface Props {
   conversations: Conversation[];
@@ -12,15 +13,24 @@ interface Props {
 }
 
 export function ConversationHistory({ conversations, currentId, onNew, onSelect, onDelete, onClear }: Props) {
-  const [confirmation, setConfirmation] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now);
+  const [confirmation, setConfirmation] = useState<{ type: 'delete' | 'clear'; id?: string } | null>(null);
+  const now = useConversationClock();
   const nav = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(timer);
-  }, []);
   useEffect(() => { setConfirmation(null); }, [currentId]);
-  function focusNew() { nav.current?.querySelector<HTMLButtonElement>('button')?.focus(); }
+  const focusNew = useCallback(() => { nav.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, []);
+  useEffect(() => {
+    if (!confirmation) return;
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setConfirmation(null);
+      focusNew();
+    };
+    // Capture before the drawer's Escape handler, including when focus is on its close button.
+    document.addEventListener('keydown', cancel, true);
+    return () => document.removeEventListener('keydown', cancel, true);
+  }, [confirmation, focusNew]);
   return <nav ref={nav} aria-label="历史对话" className="flex h-full min-h-0 flex-col bg-canvas p-4">
     <button type="button" className="secondary-button w-full shrink-0" aria-label="新对话" onClick={onNew}>＋ 新对话</button>
     <div className="mt-6 min-h-0 flex-1 overflow-y-auto px-1 pb-4">
@@ -35,12 +45,12 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
                 <span className="block truncate text-sm">{item.title}</span>
                 <time dateTime={new Date(item.updatedAt).toISOString()} className="mt-1 block text-xs text-muted">{relativeTime(item.updatedAt, now)}</time>
               </button>
-              <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation(item.id)}
+              <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation({ type: 'delete', id: item.id })}
                 className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
                 <svg aria-hidden="true" viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
               </button>
             </div>
-            {confirmation === item.id && <div role="group" aria-label={`确认删除：${item.title}`} className="rounded-card border border-outline bg-card p-2 text-xs">
+            {confirmation?.type === 'delete' && confirmation.id === item.id && <div role="group" aria-label={`确认删除：${item.title}`} className="rounded-card border border-outline bg-card p-2 text-xs">
               <p>删除这段对话？</p>
               <div className="flex gap-1">
                 <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
@@ -52,14 +62,14 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
       </section>)}
     </div>
     <div className="shrink-0 border-t border-line pt-3">
-      {confirmation === 'clear-all' ? <div role="group" aria-label="确认清空全部历史" className="text-xs">
+      {confirmation?.type === 'clear' ? <div role="group" aria-label="确认清空全部历史" className="text-xs">
         <p>清空所有历史对话？此操作无法恢复。</p>
         <div className="flex gap-1">
           <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
           <button type="button" aria-label="确认清空" className="min-h-11 rounded-card px-3 font-medium" onClick={() => { setConfirmation(null); onClear(); focusNew(); }}>确认清空</button>
         </div>
       </div> : <button type="button" aria-label="清空全部历史" className="min-h-11 w-full rounded-card text-left text-sm text-muted hover:text-ink disabled:opacity-50"
-        disabled={!conversations.length} onClick={() => setConfirmation('clear-all')}>清空全部历史</button>}
+        disabled={!conversations.length} onClick={() => setConfirmation({ type: 'clear' })}>清空全部历史</button>}
       <p className="mt-2 text-xs text-muted">历史仅保存在本浏览器</p>
     </div>
   </nav>;
@@ -74,6 +84,7 @@ export function HistoryDrawer({ onClose, trigger, ...props }: DrawerProps) {
     document.body.style.overflow = 'hidden';
     dialog.current?.querySelector<HTMLButtonElement>('button')?.focus();
     const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === 'Escape') { event.preventDefault(); onClose(); }
       if (event.key !== 'Tab') return;
       const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex="0"]');

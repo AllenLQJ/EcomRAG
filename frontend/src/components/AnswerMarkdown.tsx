@@ -5,6 +5,12 @@ import { remarkCitations } from '../lib/citations';
 
 interface Props { answer: string; sources: Source[]; onCitation: (index: number) => void }
 
+function allowedLink(href: string | undefined): boolean {
+  if (!href) return false;
+  try { return ['http:', 'https:', 'mailto:'].includes(new URL(href).protocol); }
+  catch { return false; }
+}
+
 export function AnswerMarkdown({ answer, sources, onCitation }: Props) {
   const mobile = useMobile();
   return <div>
@@ -18,7 +24,9 @@ export function AnswerMarkdown({ answer, sources, onCitation }: Props) {
             if (mobile) return <sup aria-hidden="true">[{index}]</sup>;
             return <sup><button type="button" aria-label={`查看引用 ${index}`} className="citation-button" onClick={() => onCitation(index)}>[{index}]</button></sup>;
           },
-          a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-link underline underline-offset-4">{children}</a>,
+          a: ({ href, children }) => allowedLink(href)
+            ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-link underline underline-offset-4">{children}</a>
+            : <>{children}</>,
           // A model-provided image must not make external network requests or track a reader.
           img: ({ alt }) => <span>{alt}</span>,
         }}

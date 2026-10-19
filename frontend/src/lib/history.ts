@@ -10,7 +10,7 @@ export function buildHistory(messages: ChatMessage[]): HistoryMessage[] {
   for (let i = 0; i < complete.length; i += 2) {
     const user = complete[i];
     const reply = complete[i + 1];
-    if (user.kind !== 'user' || reply.kind !== 'assistant') continue;
+    if (!user || !reply || user.kind !== 'user' || reply.kind !== 'assistant') continue;
     history.push({ role: 'user', content: truncate(user.text) },
       { role: 'assistant', content: truncate(reply.response.answer.replace(/\[\d+\]/g, '')) });
   }

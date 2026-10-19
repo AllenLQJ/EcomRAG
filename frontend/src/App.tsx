@@ -4,6 +4,7 @@ import { Composer } from './components/Composer';
 import { ConversationHistory, HistoryDrawer } from './components/ConversationHistory';
 import { useDesktop } from './hooks/useDesktop';
 import { Header } from './components/Header';
+import { LogoLockup } from './components/Brand';
 import { useAutoScroll } from './hooks/useAutoScroll';
 import { useMobile } from './hooks/useMobile';
 import { useChat } from './hooks/useChat';
@@ -15,7 +16,7 @@ export default function App() {
   const desktop = useDesktop();
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyButton = useRef<HTMLButtonElement>(null);
-  const chatArea = useRef<HTMLDivElement>(null);
+  const chatArea = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const area = chatArea.current;
     if (historyOpen) area?.setAttribute('inert', '');
@@ -73,7 +74,7 @@ export default function App() {
     onClear: () => { scroll.resetFollowing(); clearConversations(); setDraft(''); } };
 
   const welcome = <section className={mobile ? 'shrink-0 px-4 pt-6' : 'pb-8 pt-2 sm:py-16'}>
-    <p className="mb-4 hidden text-xs tracking-widest text-muted sm:block">{name} · 客服中心</p>
+    <LogoLockup className="mb-5 hidden h-14 sm:block" />
     <h1 className="font-serif text-title">你好，我是{name}的智能客服</h1>
     <p className="mt-2 text-sm leading-relaxed text-muted">售后、配送、发票、商品参数，都可以问我。</p>
     {messages.length === 0 && <p className="mt-6 text-[13px] text-muted">从下面的问题开始，或写下你想了解的事。</p>}
@@ -81,10 +82,10 @@ export default function App() {
 
   return <div className="app-shell flex bg-canvas font-sans text-ink">
     {desktop && <aside className="h-full w-[260px] shrink-0 border-r border-line"><ConversationHistory {...historyProps} /></aside>}
-    <div ref={chatArea} className="flex min-w-0 flex-1 flex-col" aria-hidden={historyOpen || undefined}>
+    <div className="flex min-w-0 flex-1 flex-col">
     <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(true)} historyButton={historyButton} name={name} supportUrl={supportUrl} sample={sample} onReset={newConversation}
       traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} />
-    <main className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
+    <main ref={chatArea} aria-hidden={historyOpen || undefined} className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
       {mobile && welcome}
       <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-busy={pending} aria-relevant="additions" tabIndex={0}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 sm:px-10">

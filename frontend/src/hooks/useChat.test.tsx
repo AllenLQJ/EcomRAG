@@ -180,3 +180,30 @@ describe('multiple conversation state', () => {
     expect(loadConversations()).toEqual([]);
   });
 });
+
+describe('deletion against the latest stored history', () => {
+  it('preserves externally added/updated conversations and does not resurrect externally removed ones', () => {
+    saveConversations([conversation('delete', 100), conversation('removed', 200), conversation('updated', 300)]);
+    localStorage.setItem(SESSION_KEY, 'delete');
+    const { result } = renderHook(() => useChat(false));
+    const fresh = { ...conversation('updated', 400), messages: turn('外部更新') };
+    const external = conversation('external', 500);
+    // Simulate another tab writing directly, while this hook still has its original React snapshot.
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([conversation('delete', 100), fresh, external]));
+    act(() => result.current.deleteConversation('delete'));
+    expect(loadConversations()).toEqual([external, fresh]);
+    expect(result.current.conversations).toEqual([external, fresh]);
+    expect(result.current.sessionId).toBe('external');
+    expect(result.current.messages).toEqual(external.messages);
+  });
+  it('uses the latest storage even when deleting a noncurrent session', () => {
+    saveConversations([conversation('current', 100), conversation('delete', 200)]);
+    localStorage.setItem(SESSION_KEY, 'current');
+    const { result } = renderHook(() => useChat(false));
+    const external = conversation('external', 300);
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([conversation('current', 100), conversation('delete', 200), external]));
+    act(() => result.current.deleteConversation('delete'));
+    expect(result.current.sessionId).toBe('current');
+    expect(loadConversations().map(item => item.id)).toEqual(['external', 'current']);
+  });
+});

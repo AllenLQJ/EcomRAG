@@ -28,3 +28,15 @@ describe('request history', () => {
     expect(buildHistory(messages)[1].content).toBe('抱歉，店铺资料里没有找到相关说明。建议联系人工客服确认。');
   });
 });
+
+describe('incomplete history boundaries', () => {
+  it('ignores an odd trailing question and a missing reply without throwing', () => {
+    const complete = turn('已完成');
+    expect(buildHistory([...complete, { id: 'tail', kind: 'user', text: '缺少回复' }])).toEqual(buildHistory(complete));
+    expect(buildHistory([{ id: 'only', kind: 'user', text: '第一问' }])).toEqual([]);
+    const sparse = [...complete, { id: 'tail', kind: 'user' as const, text: '缺少回复' }];
+    sparse.length = 4;
+    expect(() => buildHistory(sparse)).not.toThrow();
+    expect(buildHistory(sparse)).toEqual(buildHistory(complete));
+  });
+});

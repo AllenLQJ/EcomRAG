@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>灵码 · 标志预览</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; background: #F6F6F4; color: #16171A; font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 24px 64px; }
+  h1 { font-family: "Noto Serif SC", "Songti SC", serif; font-size: 28px; margin: 0 0 8px; }
+  p.lead { color: #45484E; margin: 0 0 32px; line-height: 1.7; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+  .card { background: #fff; border: 1px solid #E4E4E0; border-radius: 12px; padding: 24px; }
+  .stage { display: flex; align-items: center; justify-content: center; height: 160px; border-radius: 8px; }
+  .light { background: #F6F6F4; } .dark { background: #16171A; }
+  .stage img { height: 112px; width: auto; }
+  .wide img { height: 88px; }
+  .sizes { display: flex; align-items: flex-end; gap: 16px; margin-top: 16px; }
+  .sizes img { display: block; }
+  h2 { font-size: 16px; margin: 20px 0 4px; } p { margin: 0; color: #45484E; font-size: 14px; line-height: 1.6; }
+  code { background: #F0F0EC; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>灵码 · 标志</h1>
+  <p class="lead">把「灵」字拆开来用：上半部「彐」的三道横像对话里的文字行，下半部「火」是 AI 的灵光，朱砂色一点作点睛。字形全部是手工路径，不依赖字体，可任意缩放。前端用 <code>VITE_LOGO</code> 切换顶栏与头像使用的变体。</p>
+  <div class="grid">
+    <section class="card"><div class="stage light"><img src="/brand/lingma-a-spark.svg" alt="灵光一点"></div>
+      <h2>A · 灵光一点</h2><p>最克制、最像字，适合放在文字旁或做单色线稿。<code>VITE_LOGO=a-spark</code></p></section>
+    <section class="card"><div class="stage light"><img src="/brand/lingma-b-seal.svg" alt="墨印"></div>
+      <div class="sizes"><img src="/brand/lingma-b-seal.svg" width="48" height="48" alt=""><img src="/brand/lingma-b-seal.svg" width="32" height="32" alt=""><img src="/brand/lingma-b-seal.svg" width="16" height="16" alt=""></div>
+      <h2>B · 墨印（默认）</h2><p>主标志。块面完整，缩到 16px 仍可辨认，用于网站图标、头像、顶栏。<code>VITE_LOGO=b-seal</code></p></section>
+    <section class="card"><div class="stage dark"><img src="/brand/lingma-c-dialog.svg" alt="对话灵光"></div>
+      <h2>C · 对话灵光</h2><p>对话气泡里三道线是「彐」，朱砂四角星是「火」，一眼是智能客服。<code>VITE_LOGO=c-dialog</code></p></section>
+    <section class="card wide"><div class="stage light wide"><img src="/brand/lingma-d-lockup.svg" alt="灵码 智能客服"></div>
+      <h2>D · 组合标</h2><p>墨印加「灵码 / 智能客服」字样，用于欢迎区、封面和文档页眉。</p></section>
+  </div>
+</main>
+</body>
+</html>

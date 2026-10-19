@@ -59,3 +59,23 @@ describe('citations', () => {
   });
 
 });
+
+describe('answer link protocols', () => {
+  it.each(['http://example.test/help', 'https://example.test/help', 'mailto:help@example.test', 'HTTPS://example.test/help'])
+    ('allows the approved protocol in %s', href => {
+      render(<AnswerMarkdown answer={`[联系店铺](${href})`} sources={[]} onCitation={vi.fn()} />);
+      const link = screen.getByRole('link', { name: '联系店铺' });
+      expect(link).toHaveAttribute('href', href);
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    });
+  it.each([
+    'javascript:alert%281%29', 'vbscript:msgbox%281%29', 'data:text/html;base64,PHNjcmlwdD4=',
+    'file:///tmp/private', 'ftp://example.test/help', 'tel:123456', 'irc://example.test/help',
+    'xmpp:help@example.test', 'blob:https://example.test/id', '/relative/help', '//example.test/help', '#section',
+  ])('renders %s as text without an anchor', href => {
+    const { container } = render(<AnswerMarkdown answer={`[联系店铺](${href})`} sources={[]} onCitation={vi.fn()} />);
+    expect(screen.getByText('联系店铺')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(container.querySelector('a')).toBeNull();
+  });
+});

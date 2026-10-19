@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import { LogoMark } from './Brand';
 
 interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void; historyButton: RefObject<HTMLButtonElement>; name: string; supportUrl?: string; sample: boolean; onReset: () => void; traceVisible: boolean; traceEnabled: boolean; onToggleTrace: () => void }
 
@@ -9,7 +10,7 @@ export function Header({ desktop, historyOpen, onHistory, historyButton, name, s
         onClick={onHistory} className="flex min-h-11 min-w-11 items-center justify-center rounded-card text-muted hover:text-ink">
         <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 4h16v16H4zM9 4v16m4-11h4m-4 4h4" /></svg>
       </button>}
-      <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink font-serif text-base text-card">灵</span>
+      <LogoMark className="h-8 w-8" />
       <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
         <span className="truncate font-serif text-base font-semibold sm:text-lg">{name}<span className="sm:hidden">客服</span></span>
         <span className="hidden text-sm text-muted sm:inline">客服中心</span>

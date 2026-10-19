@@ -138,3 +138,45 @@ describe('history drawer', () => {
     expect(document.body.style.overflow).toBe('');
   });
 });
+
+describe('drawer accessibility during confirmation', () => {
+  it('leaves the history trigger outside hidden/inert ancestors and only hides main content', () => {
+    mockMobile(); seed();
+    render(<App />);
+    const trigger = screen.getByRole('button', { name: '历史' });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('button', { name: '历史' })).toBe(trigger);
+    expect(trigger.closest('[aria-hidden="true"], [inert]')).toBeNull();
+    expect(screen.getByRole('banner')).not.toHaveAttribute('aria-hidden');
+    const main = screen.getByRole('main', { hidden: true });
+    expect(main).toHaveAttribute('aria-hidden', 'true');
+    expect(main).toHaveAttribute('inert');
+    fireEvent.click(screen.getByRole('button', { name: '关闭历史' }));
+    expect(main).not.toHaveAttribute('aria-hidden');
+    expect(main).not.toHaveAttribute('inert');
+    expect(trigger).toHaveFocus();
+  });
+  it.each(['delete', 'clear'])('uses the first Escape to cancel %s and the second to close the drawer', async type => {
+    mockMobile(); seed();
+    render(<App />);
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: '历史' });
+    await user.click(trigger);
+    const nav = screen.getByRole('navigation', { name: '历史对话' });
+    await user.click(within(nav).getByRole('button', { name: type === 'delete' ? '删除对话：最新' : '清空全部历史' }));
+    expect(screen.getByRole('group', { name: type === 'delete' ? '确认删除：最新' : '确认清空全部历史' })).toBeInTheDocument();
+    // Escape must cancel even with focus outside the navigation subtree.
+    screen.getByRole('button', { name: '关闭历史' }).focus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: '新对话' })).toHaveFocus();
+    expect(loadConversations()).toHaveLength(2);
+    expect(document.body.style.overflow).toBe('hidden');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(document.body.style.overflow).toBe('');
+    expect(loadConversations()).toHaveLength(2);
+  });
+});
