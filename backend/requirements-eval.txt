@@ -1,0 +1,4 @@
+# 离线 RAGAS 评估的独立环境依赖（不进入主 pyproject / uv.lock）
+# 安装后用 uv pip freeze 生成 requirements-eval.lock.txt 固定版本。
+ragas
+langchain-openai

@@ -30,3 +30,6 @@ frontend/dist/
 
 # 占位 SVG 与商品真图均提交，仅忽略图片构建临时文件。
 data/images/**/*.tmp
+
+# 离线评估的独立虚拟环境
+backend/.venv-eval/

@@ -140,7 +140,8 @@ def select_context(docs, settings):
 
 
 async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings, services,
-                   trace_sink=None, history=None, before_chat=None, on_status=None, on_delta=None) -> ChatResponse:
+                   trace_sink=None, history=None, before_chat=None, on_status=None, on_delta=None,
+                   collector=None) -> ChatResponse:
     trace = [] if trace_sink is None else trace_sink
     token = items.set(trace)
     started, result = perf_counter(), None
@@ -157,7 +158,7 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
                 await before_chat()
             result = await _run(chat, request_id or str(uuid4()), settings, services, trace,
                                 chat.history if history is None else normalize_history(history), executor,
-                                on_status=on_status, on_delta=on_delta)
+                                on_status=on_status, on_delta=on_delta, collector=collector)
             return result
     except TimeoutError:
         raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
@@ -170,8 +171,20 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
             executor.shutdown()
 
 
-async def _run(chat, request_id, settings, services, trace, history, executor, *, on_status=None, on_delta=None):
-    def response(answer, route, sources=(), strategy=None):
+async def _run(chat, request_id, settings, services, trace, history, executor, *, on_status=None, on_delta=None,
+               collector=None):
+    # 仅离线调用方显式传入；HTTP/流式入口不传递该回调，也不增加响应字段。
+    collected_contexts = None
+    intent = "unknown"
+
+    def response(answer, route, sources=(), strategy=None, *, intent_override=None, refuse_reason=None):
+        if collector is not None:
+            collector({"question": chat.message, "history": [dict(item) for item in history],
+                       "answer": answer, "route": route,
+                       "intent": intent_override or intent, "refuse_reason": refuse_reason,
+                       "contexts": collected_contexts or [],
+                       "sources": [{"index": source.index, "doc_id": source.doc_id,
+                                    "title": source.title, "score": source.score} for source in sources]})
         return ChatResponse(request_id=request_id, session_id=chat.session_id,
                             answer=answer, route=route, strategy=strategy, sources=list(sources),
                             is_mock=False, trace=trace if chat.debug and settings.allow_trace else None)
@@ -199,7 +212,8 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                        top_score=hit.score if hit else getattr(services, "top_score", None))
         if hit:
             return response(hit.answer, hit.source, [Source(index=1, doc_id=f"faq:{hit.faq_id}",
-                            title=hit.question, snippet=hit.answer[:60], score=hit.score)])
+                            title=hit.question, snippet=hit.answer[:60], score=hit.score)],
+                            intent_override=hit.source)
 
     if not history:
         faq_response = await lookup_faq(chat.message)
@@ -214,13 +228,14 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         if on_status is not None:
             await on_status("routing")
         decision = await services.route(chat.message, history)
+        intent = decision.intent
         record("router", started, intent=decision.intent)
         if decision.intent in {"sensitive", "general"}:
             if speculative is not None:
                 discard(speculative)
                 speculative = None
             if decision.intent == "sensitive":
-                return response(SENSITIVE_REFUSAL, "fallback")
+                return response(SENSITIVE_REFUSAL, "fallback", refuse_reason="sensitive")
             started = perf_counter()
             if on_delta is not None:
                 if on_status is not None:
@@ -232,7 +247,7 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
             answer, no_answer = clean_generated_answer(answer)
             if no_answer:
                 logger.info("chat_fallback reason=generator_no_answer")
-                return response(REFUSAL, "fallback")
+                return response(REFUSAL, "fallback", refuse_reason="no_answer")
             return response(answer, "general")
         if history:
             faq_response = await lookup_faq(decision.rewritten_query)
@@ -270,9 +285,15 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
     threshold = refuse_threshold(settings, docs)
     if not docs or (settings.rerank_enabled and not uses_rrf(docs) and threshold is not None
                     and max(doc.score for doc in docs) < threshold):
-        return response(REFUSAL, "fallback", strategy="direct")
+        return response(REFUSAL, "fallback", strategy="direct",
+                        refuse_reason="no_docs" if not docs else "low_score")
     # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
     docs = select_context(docs, settings)
+    if collector is not None:
+        # 与 Generator._rag_messages 的资料块逐项一致，保留未引用项和原始编号。
+        collected_contexts = [{"index": i, "doc_id": doc.doc_id, "title": doc.title,
+                               "score": doc.score, "text": f"[{i}] {doc.title}\n{doc.content}"}
+                              for i, doc in enumerate(docs, 1)]
     started = perf_counter()
     if on_delta is not None:
         if on_status is not None:
@@ -286,7 +307,7 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
     answer, no_answer = clean_generated_answer(generated.answer)
     if no_answer:
         logger.info("chat_fallback reason=generator_no_answer")
-        return response(REFUSAL, "fallback", strategy="direct")
+        return response(REFUSAL, "fallback", strategy="direct", refuse_reason="no_answer")
     generated = validate_citations(answer, len(docs))
     indices = generated.cited_indices or {max(range(len(docs)), key=lambda i: docs[i].score) + 1}
     sources = [Source(index=i, doc_id=doc.doc_id, title=doc.title,
