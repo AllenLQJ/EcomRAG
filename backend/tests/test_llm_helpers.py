@@ -196,3 +196,55 @@ class LlmHelperTests(unittest.TestCase):
             self.assertTrue(rewritten.endswith("？"))
             self.assertIsNone(re.search(r"[0-9０-９]", rewritten))
             self.assertNotIn("系统提示词", rewritten)
+
+    def test_product_overview_routes_to_knowledge_with_retrievable_rewrites(self):
+        router = load("router")
+        for phrase in (
+            "商品总览、商品品类/分类、选购推荐属于店铺知识咨询",
+            "有什么商品、卖什么、有哪些品类、商品分类、有什么卖的、推荐什么、哪款好",
+            "即使没有具体商品名或只是口语短句，也一律路由 knowledge，不得归为 general",
+            "仍遵守 sensitive 优先级", "单纯「你好」「谢谢」保持 general",
+            "包含「店铺商品品类总览」的检索问句", "保留用户明确提出的品类、用途和比较条件",
+            "不得凭空补入商品名、品类、型号、价格或库存",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, router)
+        examples = re.findall(r"^\d+\. 「([^」]+)」 → 「([^」]+)」$", router, re.MULTILINE)
+        self.assertEqual(len(examples), 12)
+        catalog_examples = examples[8:]
+        for question, rewritten in catalog_examples[:3]:
+            with self.subTest(question=question):
+                self.assertIn("店铺商品品类总览", rewritten)
+                self.assertTrue(rewritten.endswith("？"))
+        self.assertIn("推荐", catalog_examples[3][1])
+        self.assertIn("用途", catalog_examples[3][1])
+        schema = json.loads(router.splitlines()[1])
+        self.assertEqual(schema, dict(intent="general|knowledge|sensitive", strategy="direct", rewritten_query="..."))
+
+    def test_all_numbered_router_examples_are_disjoint_from_eval_questions(self):
+        from pathlib import Path
+
+        examples = re.findall(r"^\d+\. 「([^」]+)」", load("router"), re.MULTILINE)
+        self.assertTrue(examples)
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        for name in ("eval_colloquial.jsonl", "eval.jsonl", "eval_multiturn.jsonl", "eval_ragas_gold.jsonl"):
+            path = data_dir / name
+            if name == "eval_ragas_gold.jsonl" and not path.exists():
+                continue
+            questions = [json.loads(line)["question"] for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertTrue(questions, name)
+            for example in examples:
+                for question in questions:
+                    with self.subTest(dataset=name, example=example, question=question):
+                        self.assertNotIn(example, question)
+                        self.assertNotIn(question, example)
+
+    def test_general_prompt_forbids_catalog_claims_and_redirects_without_products(self):
+        general = load("general")
+        for phrase in (
+            "硬约束：闲聊回复不得陈述、猜测或编造店铺售卖的商品、品类、价格、库存、政策",
+            "即使用户询问商品总览、分类或推荐，也不得列举任何商品或品类",
+            "不从常识或历史答案补充商品信息", "引导用户直接提问具体商品或售后问题",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, general)

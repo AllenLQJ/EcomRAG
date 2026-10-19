@@ -85,6 +85,8 @@ cd backend && uv run pytest -q
 cd frontend && npm test && npm run typecheck
 ```
 
+商品总览、品类分类与选购推荐统一由 router 判为 `knowledge`，总览问句改写为含「店铺商品品类总览」的检索问句；general 禁止陈述或列举店铺商品、品类、价格、库存和政策，并引导直接提问具体商品或售后问题。`data/eval_colloquial.jsonl` 末尾追加 8 条商品问句（`answer`，参考 `product_catalog.md`）和「你好」「谢谢」2 条 `general` 对照；「你好」作为显式对照重复保留。提示词与数据格式回归测试见 `backend/tests/test_llm_helpers.py`、`backend/tests/test_eval_colloquial.py`，离线测试仅验证规则与数据约束，提示效果必须由总控使用真实模型评测。
+
 大提交、合并到 main 前再跑全量（需要依赖服务和真实模型）：
 
 ```bash
@@ -94,6 +96,8 @@ uv run python -m eval.run_eval --eval-file data/eval_colloquial.jsonl --output l
 uv run python -m eval.run_eval --eval-file data/eval_multiturn.jsonl --output logs/eval-multiturn.json
 uv run python -m eval.check_retrieval
 ```
+
+`eval.run_eval` 可加 `--label baseline-name`，名称写入 `meta.label`（默认空）。JSON 保留原有字段与控制台格式，新增 `meta`（Git 短 hash、UTC 时间、Python 版本、数据路径/行数/12 位 SHA256、配置白名单、generate/router/general 提示词 hash）、`cases`、`failures` 与 `route_stats`。`cases` 记录可选 id（数据行含 id 时记录）、问题、history 条数、期望/实际路由及来源、拒答/缓存/FAQ 标记、通过判定、错误类别和耗时；`matched_by` 记录实际 faq/cache/rag 回答路径，仅实际 rag 路由将来源未命中判为失败，正确 FAQ/cache 命中不要求 RAG 引用；旧 RAG 指标分母保持原有口径。`failures` 只含未通过题。`route_stats` 按实际 faq/cache/rag/general/fallback 分组统计题数、通过数和总耗时 P50/P90，异常单列 error。配置不导出 API key/SecretStr，base URL 仅记录 host，嵌入模型仅记录路径 basename；异常仅保存错误码与类别。报告仍包含原有问题和答案，请妥善保管；复现前需固定索引、FAQ、缓存状态及预热策略，详情见[指标解释](docs/电商RAG智能客服-开发文档.md#72-指标解释)。
 
 再加前端 `npm run build`。并发压测推荐在 `backend/`、已激活项目 Python 环境且本机服务就绪后执行（会访问真实服务与模型）：
 

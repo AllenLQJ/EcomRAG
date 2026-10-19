@@ -273,7 +273,7 @@ LLM_MAX_CONCURRENCY=50
 | 评测文件 | 题数 | 用途与期望路由 |
 | --- | --- | --- |
 | data/eval.jsonl | 24 | 标准链路回归：6 FAQ、8 RAG、5 general、5 fallback，RAG 指定参考文档 |
-| data/eval_colloquial.jsonl | 34 | 口语与短问法：25 answer、6 fallback、3 general，关注误拒答/误答 |
+| data/eval_colloquial.jsonl | 44 | 口语与短问法；按当前 JSONL 的 expected_route 统计：33 answer、5 general、6 fallback，关注误拒答/误答 |
 | data/eval_multiturn.jsonl | 9 | 追问改写、历史隔离和注入：7 条接受 faq/rag、1 fallback、1 general |
 
 ### 5.2 入库与维护命令
@@ -452,8 +452,21 @@ npm run build
 | completed / errors | 成功完成数、错误清单及按业务码汇总的 error_distribution |
 | stage_mean_ms / stage_p50_ms / stage_p90_ms | 实际执行阶段的耗时统计，含失败前完成阶段；同阶段多次执行先相加 |
 | total_p50_ms / total_p90_ms | 所有题目的实际总耗时，含失败；排序后线性插值，空样本为 null |
+| cases / failures | 逐题明细 / 未通过题的相同明细；通过要求路由正确、实际 rag 且有参考文档时来源命中、且无异常；FAQ/cache 不要求 RAG 引用 |
+| route_stats | 按实际 faq/cache/rag/general/fallback 分组的 total、passed、total_p50_ms、total_p90_ms；异常单列 error，空组耗时为 null |
 
 run_eval 内部 trace 不受 ALLOW_TRACE 影响，不会改变 API 开关；JSON results 含问题、答案、最终引用编号/来源、耗时与错误，评测导出可能包含原文，应自行保管。引用命中不等于回答事实完全正确，仍需人工检查。
+
+可在上述 `eval.run_eval` 命令后加 `--label baseline-name` 标记基线，默认 `meta.label` 为空字符串。原有顶层字段、`results` 字段及控制台输出保持兼容；新增 JSON 字段口径如下：
+
+- `meta.git_commit` 使用 `git rev-parse --short HEAD`，Git 不可用、失败或超时则为 null；`generated_at` 为 UTC ISO 时间，`python_version` 记录解释器版本。Git hash 不包含未提交改动，比较前应自行确认工作区状态。
+- `meta.eval_file` 含解析后的 `path`、原始文件 `line_count`（含空行）、有效题数 `row_count` 和原始字节 SHA256 的前 12 位 `sha256`，读取与解析使用同一份字节。直接注入 rows 的离线调用不推测文件版本，路径、行数、hash 为 null，题数仍保留。
+- `meta.model_config` 白名单记录 `router_model`、`generate_model`、`rerank_provider`、`rerank_enabled`、`rerank_candidates`、`rerank_top_k`、`rerank_text_mode`、本机 `refuse_threshold`、`remote_refuse_threshold`、`remote_rag_context_min_score`、`rag_context_min_score`、`faq_threshold`、`speculative_retrieval`、`warmup_on_start`。`bge_m3_path` 仅含 basename，`llm_base_url_host` 仅含 host；仅 remote 时增加 `rerank_remote_model` 和实际生效地址的 `rerank_remote_base_url_host`。不导出 API key、SecretStr、数据库/Redis 配置或 extra body，URL 不含用户名、密码、端口、路径、查询串和片段。
+- `meta.prompt_hashes` 分别记录 `generate.md` / `router.md` / `general.md` 原始字节 SHA256 的前 12 位，文件不可读时为 null；不保存提示词内容。
+- `cases` 保留数据自带的 `id`（若有）、`question`、输入 `history_count`，不复制 history 内容。`expected` 含原始 `route`、`doc` 和 `should_refuse`；仅允许 fallback 时为 true，不允许时为 false，拒答/回答皆可时为 null。`actual` 含实际 `route`、去重来源文档名列表 `sources` 和 `is_refusal`（异常时为 null）。文档名通过入库路径摘要或评测参考映射反查；无法反查时保留 doc_id 的 basename，不臆造文件名。
+- `passed` 为整体通过判定；`error_types` 可同时含“路由错”“来源未命中”“误拒”“误答”，异常时仅含“异常”。原有 `route_accuracy` 仍只衡量路由；只有实际 rag 路由才把来源未命中判为失败，answer 或列表期望允许的 FAQ/cache 正确命中不要求 RAG 引用。`cases.source_hit` 在非 rag 路由时为 null；`matched_by` 记录实际 faq/cache/rag 回答路径，其余路由为 null，不表示来源必然命中。旧 `results.source_hit`、`rag_total`、`rag_source_hits`、`rag_source_hit_rate` 和控制台输出保留原口径：期望允许 rag 且有参考文档的 FAQ/cache 行仍以未命中计入旧 RAG 指标分母。`error` 只含 code 与固定类别 AppError / Exception，不记录异常正文、校验输入、堆栈或 URL；未知异常错误码为 null，逐题继续。`total_ms` / `stage_ms` 沿用内部耗时，失败题保留出错前的阶段；`cache_hit` / `faq_hit` 仅按最终路由单独标记，执行过查询阶段不代表命中。
+
+元数据用于追溯配置与输入版本，不能独自复现在线状态：索引内容、FAQ 版本、缓存初始状态、预热策略和外部模型行为仍需固定。总体延迟保留旧口径；比较 RAG 性能时使用 `route_stats.rag`，避免 FAQ/cache 命中比例变化影响判断。
 
 `eval.check_retrieval` 只处理 expected_route 为字符串 rag/fallback 的题，固定开启重排，不调用 LLM 路由、FAQ 或生成；默认依次对比 child/parent，参数可选单模式与候选数。Hit@1/Hit@5 为参考文件在前 1/5 个检索父块中的命中比例，fallback 报最高分是否低于拒答阈值，rerank_ms 不含召回。可在题目附 rewritten_query 复现补充重排；缺省用原问，不自动调用模型改写。它跳过 answer，且当前将路由值直接用于集合成员判断，列表期望会触发 TypeError；不要把多轮集直接传入，也不能用口语集替代标准集解释 Hit 指标。此处仅记录脚本限制，未改代码。
 
