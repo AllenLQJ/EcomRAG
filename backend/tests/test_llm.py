@@ -236,6 +236,10 @@ def test_generator_uses_parent_blocks_and_escapes_delimiters():
 
 def test_prompt_files_contain_guardrails():
     root = Path(__file__).resolve().parents[1] / "app/llm/prompts"
+    for path in root.glob("*.md"):
+        text = path.read_text()
+        assert "虚构" not in text and "样例" not in text
+        assert "灵码" in text
     assert '"strategy":"direct"' in (root / "router.md").read_text()
     for name in ("general", "generate"):
         text = (root / f"{name}.md").read_text()

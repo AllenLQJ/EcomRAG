@@ -65,8 +65,8 @@ class FaqImportTests(unittest.TestCase):
         self.assertEqual(upsert_faq(connection, rows), 37)
         self.assertEqual(upsert_faq(connection, rows), 37)
         self.assertEqual(len(connection.rows), 37)
-        upsert_faq(connection, [FaqRow("怎么申请退货？", "更新后的虚构样例答案", "after_sales")])
-        self.assertEqual(connection.rows["怎么申请退货？"][0], "更新后的虚构样例答案")
+        upsert_faq(connection, [FaqRow("怎么申请退货？", "更新后的售后答案", "after_sales")])
+        self.assertEqual(connection.rows["怎么申请退货？"][0], "更新后的售后答案")
         self.assertFalse(connection.locked)
 
     def test_failure_rolls_back_and_releases_lock(self):

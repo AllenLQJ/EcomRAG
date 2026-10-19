@@ -12,8 +12,8 @@ from ingest.splitter import split_document
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class SampleDataTests(unittest.TestCase):
-    def test_documents_have_headings_size_and_fiction_label(self):
+class StoreDataTests(unittest.TestCase):
+    def test_documents_have_business_headings_and_size_without_fiction_labels(self):
         docs = list((ROOT / "data/docs").glob("*.md"))
         self.assertEqual(len(docs), 19)
         for path in docs:
@@ -21,9 +21,10 @@ class SampleDataTests(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 self.assertTrue(300 <= len(text) <= 1500)
                 self.assertGreaterEqual(len(re.findall(r"[\u4e00-\u9fff]", text)), 300)
-                self.assertTrue(text.startswith("# "))
+                self.assertTrue(text.startswith("# 灵码"))
                 self.assertIn("\n## ", text)
-                self.assertIn("虚构样例", text)
+                self.assertNotRegex(text, "虚构|样例")
+                self.assertNotIn("｜", text.splitlines()[0])
                 self.assertNotIn("火星", text)
 
     def test_faq_exact_count_unique_questions_and_categories(self):
@@ -36,7 +37,19 @@ class SampleDataTests(unittest.TestCase):
         self.assertIn("怎么申请退货？", {row["question"] for row in rows})
         self.assertEqual(sum(row["question"] == "怎么申请退货？" for row in rows), 1)
         self.assertEqual({row["category"] for row in rows}, CATEGORIES)
-        self.assertTrue(all("虚构样例" in row["answer"] for row in rows))
+        for row in rows:
+            with self.subTest(question=row["question"]):
+                self.assertTrue(row["answer"].strip())
+                self.assertNotRegex(row["answer"], "虚构|样例")
+
+    def test_evaluation_sets_do_not_use_fiction_labels(self):
+        paths = sorted((ROOT / "data").glob("*.jsonl"))
+        self.assertEqual([path.name for path in paths], ["eval.jsonl", "eval_colloquial.jsonl", "eval_multiturn.jsonl"])
+        for path in paths:
+            with self.subTest(path=path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotRegex(text, "虚构|样例")
+                self.assertTrue(all(isinstance(json.loads(line), dict) for line in text.splitlines()))
 
     def test_shipping_invoice_and_catalog_faq_answers_are_document_excerpts(self):
         with (ROOT / "data/faq.csv").open(encoding="utf-8", newline="") as handle:
@@ -54,9 +67,9 @@ class SampleDataTests(unittest.TestCase):
             with self.subTest(question=question):
                 row = faq[question]
                 self.assertEqual(row["category"], category)
-                self.assertTrue(row["answer"].startswith("虚构样例："))
+                self.assertNotRegex(row["answer"], "虚构|样例")
                 document = compact((ROOT / "data/docs" / filename).read_text(encoding="utf-8"))
-                for sentence in compact(row["answer"].removeprefix("虚构样例：")).split("。"):
+                for sentence in compact(row["answer"]).split("。"):
                     if sentence:
                         self.assertIn(sentence, document)
 
@@ -77,7 +90,7 @@ class SampleDataTests(unittest.TestCase):
         names = set()
         for filename, facts in products.items():
             detail = (ROOT / "data/docs" / filename).read_text(encoding="utf-8")
-            names.add(detail.splitlines()[0].removeprefix("# ").split("｜")[0])
+            names.add(detail.splitlines()[0].removeprefix("# "))
             for fact in facts:
                 with self.subTest(product=filename, fact=fact):
                     self.assertIn(fact, compact(detail))
