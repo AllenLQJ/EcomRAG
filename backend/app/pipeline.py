@@ -7,6 +7,7 @@ from uuid import uuid4
 from app.contracts import AppError, TIMEOUT
 from app.executor import BoundedExecutor
 from app.history import normalize_history
+from app.refusals import REFUSAL, SENSITIVE_REFUSAL
 from app.llm.strategies import build_queries
 from app.llm.answer_stream import forward_answer
 from app.llm.generator import clean_generated_answer, validate_citations
@@ -17,10 +18,6 @@ from app.tracing import items, record
 from app.budget import request_budget
 
 logger = logging.getLogger(__name__)
-
-REFUSAL = "抱歉，店铺资料里没有找到相关说明。为避免给你不准确的信息，建议联系人工客服确认。"
-SENSITIVE_REFUSAL = "抱歉，这类问题我无法回答。涉及他人隐私、医疗效果或超出店铺规则的内容，建议联系人工客服。"
-
 
 async def call(function, *args, executor, **kwargs):
     if inspect.iscoroutinefunction(function):

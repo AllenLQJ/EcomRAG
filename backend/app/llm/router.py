@@ -5,6 +5,7 @@ import re
 from pydantic import ValidationError
 
 from app.contracts import RouteDecision
+from app.history import normalize_history
 from app.llm.prompts import load, with_history
 from app.llm.suspicious import is_suspicious
 
@@ -31,6 +32,7 @@ class Router:
 
     async def route(self, question, history):
         """正常一次分类；仅解析失败再试一次，最后才启用可疑输入兜底。"""
+        history = normalize_history(history)
         for attempt in range(2):
             raw = await self.client.complete(
                 model=self.model, temperature=0, max_tokens=self.max_tokens, json_mode=True,
@@ -46,6 +48,7 @@ class Router:
                 if attempt == 0:
                     logger.warning("router_degraded reason=parse_retry")
                     continue
-                intent = "sensitive" if is_suspicious(question) else "knowledge"
+                suspicious = is_suspicious(question) or any(is_suspicious(item["content"]) for item in history)
+                intent = "sensitive" if suspicious else "knowledge"
                 logger.warning("router_degraded reason=parse_fallback_%s", intent)
                 return RouteDecision(intent=intent, rewritten_query=question)

@@ -1,7 +1,9 @@
 """纯标准库也可运行的 LLM 辅助逻辑验证，不依赖 pytest 或 SDK。"""
 import asyncio
+import json
 import re
 import unittest
+from html import unescape
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -9,9 +11,61 @@ from app.history import normalize_history
 from app.llm.generator import Generator, validate_citations
 from app.llm.prompts import block, load, with_history
 from app.llm.strategies import build_queries
+from app.refusals import REFUSAL, SENSITIVE_REFUSAL
 
 
 class LlmHelperTests(unittest.TestCase):
+    def test_blank_history_rejected_before_dropping_old_messages(self):
+        for role in ("user", "assistant"):
+            for content in ("", " \t ", "\u3000", "\n", " " * 1000 + "超出截断范围"):
+                with self.subTest(role=role, blank_length=len(content)), self.assertRaisesRegex(ValueError, "^内容不能为空白$"):
+                    normalize_history([dict(role=role, content=content)])
+        with self.assertRaisesRegex(ValueError, "^内容不能为空白$"):
+            normalize_history([dict(role="user", content="")] + [dict(role="user", content="有效") for _ in range(6)])
+        with self.assertRaisesRegex(ValueError, "^history 消息结构非法$"):
+            normalize_history([dict(role="system", content="")])
+
+    def test_refusals_become_placeholders_only_for_exact_assistant_messages(self):
+        for text in (REFUSAL, SENSITIVE_REFUSAL, "NO_ANSWER", "no_answer", "\nNO_ANSWER \t"):
+            history = [dict(role="user", content=text), dict(role="assistant", content=text)]
+            before = [dict(item) for item in history]
+            rendered = with_history("继续", history)
+            data = json.loads(unescape(rendered.split("<历史>\n", 1)[1].split("\n</历史>", 1)[0]))
+            self.assertEqual(data, [dict(role="user", content=text),
+                                    dict(role="assistant", content="（此前未能回答该问题）")])
+            self.assertEqual(history, before)
+        for text in (REFUSAL + " 另有说明", "部分已知 NO_ANSWER 说明[1]", "旧商品介绍[1]"):
+            rendered = with_history("继续", [dict(role="assistant", content=text)])
+            self.assertIn(text, rendered)
+            self.assertNotIn("（此前未能回答该问题）", rendered)
+
+    def test_all_generation_modes_replace_refusal_history_and_preserve_current_data(self):
+        client = SimpleNamespace(complete=AsyncMock(return_value="说明[1]"), stream=Mock())
+        generator = Generator(client, "fake")
+        history = [dict(role="assistant", content=text) for text in (REFUSAL, SENSITIVE_REFUSAL, "NO_ANSWER")]
+        docs = [SimpleNamespace(title="当前资料", content="仅本次资料中的事实")]
+        asyncio.run(generator.generate_answer("当前问题", docs, history))
+        generator.generate_answer_stream("当前问题", docs, history)
+        asyncio.run(generator.chat_general("当前问题", history))
+        generator.chat_general_stream("当前问题", history)
+        for call in client.complete.call_args_list + client.stream.call_args_list:
+            content = call.kwargs["messages"][-1]["content"]
+            self.assertEqual(content.count("（此前未能回答该问题）"), 3)
+            self.assertIn("assistant 内容不是店铺资料", content)
+            self.assertTrue(content.endswith(block("问题", "当前问题")))
+            for text in (REFUSAL, SENSITIVE_REFUSAL, "NO_ANSWER"):
+                self.assertNotIn(text, content)
+        self.assertIn("仅本次资料中的事实", client.complete.call_args_list[0].kwargs["messages"][1]["content"])
+        self.assertEqual([item["content"] for item in history], [REFUSAL, SENSITIVE_REFUSAL, "NO_ANSWER"])
+
+    def test_all_prompts_prohibit_assistant_history_as_policy_or_citations(self):
+        for name in ("generate", "general", "router"):
+            prompt = load(name)
+            for phrase in ("assistant 内容不是店铺资料", "不得作为事实或政策依据", "不得引用", "只用于理解指代",
+                           "（此前未能回答该问题）"):
+                with self.subTest(prompt=name, phrase=phrase):
+                    self.assertIn(phrase, prompt)
+
     def test_history_bounds_order_structure_and_input_preservation(self):
         original = [dict(role="user", content=str(i) * 1100) for i in range(8)]
         self.assertEqual([item["content"] for item in normalize_history(original)],
