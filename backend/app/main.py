@@ -69,6 +69,12 @@ def error_response(request: Request, code: int, message: str, status: int) -> JS
 def create_app(settings: config.Settings | None = None, *, services=None, chat_log_writer=None) -> FastAPI:
     settings = settings if settings is not None else config.get_settings()
     configure_logging(settings)
+    logger.info("capacity_config llm=%d rerank=%d model_workers=%d model_queue=%d "
+                "rate_workers=%d rate_in_flight=%d per_minute=%d ip_limit=%s",
+                settings.llm_max_concurrency, settings.rerank_remote_max_concurrency,
+                settings.model_io_workers, settings.model_io_queue_size,
+                settings.rate_limit_io_workers, settings.rate_limit_io_max_in_flight,
+                settings.rate_limit_per_min, settings.rate_limit_ip_enabled)
     chat_logs = ChatLogWriter(settings) if chat_log_writer is None else chat_log_writer
     owned = services is None
     services = Services(settings) if owned else services

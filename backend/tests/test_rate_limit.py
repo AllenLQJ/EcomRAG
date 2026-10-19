@@ -82,6 +82,41 @@ def test_ip_and_session_independently_block(same):
     instance.check("ip3", "session3")
 
 
+@pytest.mark.parametrize("backend", ["memory", "redis"])
+def test_shared_proxy_sessions_have_independent_fifty_request_limits(backend):
+    redis = FakeRedis() if backend == "redis" else None
+    instance = RateLimiter(Settings(_env_file=None, rate_limit_ip_enabled=False),
+                           redis=redis, clock=lambda: 100000.0)
+    instance.cache._client = lambda: redis
+    for index in range(50):
+        instance.check("127.0.0.1", f"load-{index}")
+    instance.check("127.0.0.1", "phone")
+    for _ in range(49):
+        instance.check("127.0.0.1", "load-0")
+    with pytest.raises(AppError) as caught:
+        instance.check("127.0.0.1", "load-0")
+    assert (caught.value.code, caught.value.http_status) == (42901, 429)
+    instance.check("127.0.0.1", "phone")
+    assert not any(":ip:" in key for key in instance._counts)
+    if redis:
+        assert not any(":ip:" in key for key in redis.counts)
+
+
+@pytest.mark.parametrize("backend", ["memory", "redis"])
+def test_daily_limit_does_not_tell_user_to_wait_one_minute(backend):
+    redis = FakeRedis() if backend == "redis" else None
+    instance, clock = limiter(minute=1, day=1, redis=redis)
+    instance.check("ip", "session")
+    for elapsed in (0, 60):
+        clock[0] += elapsed
+        with pytest.raises(AppError) as caught:
+            instance.check("ip", "session")
+        assert (caught.value.code, caught.value.http_status, caught.value.message) == (
+            42902, 429, "今天提问次数已达上限，请明天再试")
+    clock[0] += 86400
+    instance.check("ip", "session")
+
+
 def test_minute_reset_still_allows_under_daily_limit():
     instance, clock = limiter(minute=1, day=3)
     instance.check("ip", "s")
@@ -212,6 +247,34 @@ def test_api_trusted_proxy_and_session_limits(app_factory):
         assert ask("203.0.113.2", "two").status_code == 200
         assert ask("203.0.113.3", "one").status_code == 429
         assert ask("203.0.113.2", "three").status_code == 429
+
+
+def test_shared_proxy_api_does_not_charge_phone_for_another_session(app_factory):
+    from fastapi.testclient import TestClient
+    with TestClient(app_factory(rate_limit_per_min=1, rate_limit_ip_enabled=False),
+                    client=("127.0.0.1", 50000)) as client:
+        def ask(session):
+            return client.post("/api/v1/chat", json={"session_id": session, "message": "问题"})
+        assert ask("load-test").status_code == 200
+        assert ask("phone").status_code == 200
+        assert ask("load-test").status_code == 429
+
+
+def test_fifty_concurrent_sessions_and_phone_succeed_behind_shared_proxy(app_factory):
+    import httpx
+    async def run():
+        app = app_factory(rate_limit_ip_enabled=False)
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                responses = await asyncio.gather(*[
+                    client.post("/api/v1/chat", json={"session_id": f"load-{index}", "message": "你好"})
+                    for index in range(50)])
+                assert all(response.status_code == 200 for response in responses)
+                phone = await client.post("/api/v1/chat", json={"session_id": "phone", "message": "你好"})
+                assert phone.status_code == 200
+        finally:
+            await app.state.rate_limiter.aclose()
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize('trusted', [False, True])

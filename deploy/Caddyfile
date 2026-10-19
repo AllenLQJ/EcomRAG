@@ -1,0 +1,50 @@
+{
+	# 公网 80/443 经樱花分别转发到本机 8080/8443。
+	admin off
+	http_port 8080
+	https_port 8443
+	default_bind 127.0.0.1
+	# 外部 HTTPS 隧道验收前保留原 HTTP 页面入口。
+	auto_https disable_redirects
+	persist_config off
+	storage file_system {
+		root ./logs/caddy-data
+	}
+}
+
+(ecomrag_site) {
+	root * "{$ECOMRAG_FRONTEND_DIR}"
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8010 {
+			# SSE 增量立即发送；不启用压缩、缓存或响应缓冲。
+			flush_interval -1
+
+			# 当前不信任穿透请求携带的客户端 IP；后端同时关闭代理头信任。
+			header_up -CF-Connecting-IP
+			header_up -X-Real-IP
+			header_up -Forwarded
+			header_up X-Forwarded-For 127.0.0.1
+		}
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+http://:8080 {
+	import ecomrag_site
+}
+
+https://rag.ailingma.com:8443 {
+	tls {
+		issuer acme {
+			# 通过已运行的 HTTP 隧道完成验证；无需 DNS API 密钥。
+			disable_tlsalpn_challenge
+		}
+	}
+	import ecomrag_site
+}

@@ -6,10 +6,17 @@ import math
 import os
 from pathlib import Path
 from time import perf_counter
+from typing import Protocol, Awaitable
 
 from app.retrieval.embedder import select_device
 
 logger = logging.getLogger(__name__)
+
+
+class Reranker(Protocol):
+    """分数与输入顺序一致；本地同步，远程异步。"""
+
+    def rerank(self, query: str, texts: list[str]) -> list[float] | Awaitable[list[float]]: ...
 
 
 def rerank_text(doc, mode="child", max_chars=600):

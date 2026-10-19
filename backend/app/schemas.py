@@ -54,6 +54,8 @@ class TraceItem(BaseModel):
     candidates: int | None = None
     kept: int | None = None
     speculative: bool | None = None
+    provider: Literal["local", "remote", "fallback_rrf", "fallback_local"] | None = None
+    fallback: Literal["rrf", "local"] | None = None
 
 
 class ChatResponse(BaseModel):

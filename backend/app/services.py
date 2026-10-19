@@ -13,6 +13,7 @@ from app.llm.generator import Generator
 from app.llm.router import Router
 from app.retrieval.embedder import BgeM3Embedder
 from app.retrieval.reranker import BgeReranker
+from app.retrieval.remote_reranker import RemoteReranker
 from app.retrieval.retriever import Retriever
 from ingest.loaders import resolve_data_path
 
@@ -43,16 +44,32 @@ def _models(embed_path, batch_size, rerank_path, rerank_max_length, rerank_batch
                         fp16=rerank_fp16), threading.Lock())
 
 
+@lru_cache
+def _embedding_model(embed_path, batch_size):
+    return BgeM3Embedder(embed_path, batch_size), threading.Lock()
+
+
 class Services:
     def __init__(self, settings, *, transport=None):
         self.settings = settings
         if not settings.rerank_enabled:
             logger.warning("重排已关闭：RRF 分不与 REFUSE_THRESHOLD 比较，仅在无检索结果时拒答")
-        self.embedder, self.reranker, self._model_lock = _models(
-            str(resolve_data_path(settings.bge_m3_path)), settings.embed_batch_size,
-            str(resolve_data_path(settings.reranker_path)),
-            settings.rerank_max_length, settings.rerank_batch_size, settings.rerank_fp16,
-        )
+        self._local_reranker = None
+        remote = settings.rerank_provider == "remote" and settings.rerank_enabled
+        if remote:
+            self.embedder, self._model_lock = _embedding_model(
+                str(resolve_data_path(settings.bge_m3_path)), settings.embed_batch_size)
+            self.reranker = RemoteReranker(settings, transport=transport)
+            if settings.remote_refuse_threshold is None:
+                logger.warning("远程重排的分数分布与本地不同，REFUSE_THRESHOLD 需用 eval.check_retrieval 校准后设置 REMOTE_REFUSE_THRESHOLD")
+            if not settings.remote_rerank_key or not settings.remote_rerank_base_url:
+                logger.warning("远程重排未配置 key 或 base URL；调用时按 RERANK_FALLBACK 处理")
+        else:
+            self.embedder, self.reranker, self._model_lock = _models(
+                str(resolve_data_path(settings.bge_m3_path)), settings.embed_batch_size,
+                str(resolve_data_path(settings.reranker_path)),
+                settings.rerank_max_length, settings.rerank_batch_size, settings.rerank_fp16,
+            )
         self.cache = FaqCache(url=settings.redis_url, ttl_s=settings.faq_cache_ttl_s)
         self.faq = None
         # Retriever 持有可延迟连接的 MilvusClient 封装。
@@ -62,6 +79,12 @@ class Services:
                                    rerank_candidates=settings.rerank_candidates,
                                    rerank_max_chars=settings.rerank_max_chars,
                                    rerank_text_mode=settings.rerank_text_mode)
+        if remote:
+            self.retriever.rerank_fallback = settings.rerank_fallback
+            self.retriever.local_rerank = self._fallback_local
+            # 保留本地同步契约；pipeline.call 对远程方法直接 await。
+            self.rerank_candidates = self._arerank_candidates
+            self.retrieve = self._aretrieve
         self.llm = LLMClient(settings, transport=transport)
         self.router = Router(self.llm, settings.router_model, max_tokens=settings.router_max_tokens)
         self.generator = Generator(self.llm, settings.generate_model, max_tokens=settings.generate_max_tokens)
@@ -78,7 +101,7 @@ class Services:
         with self._model_lock:
             self._initialize()
             self.embedder.encode(["店铺服务"])
-            if self.settings.rerank_enabled:
+            if self.settings.rerank_enabled and self.settings.rerank_provider == "local":
                 self.reranker.rerank("店铺服务", ["店铺服务"])
             self.retriever._connect()
 
@@ -111,6 +134,26 @@ class Services:
             return self.retriever.rerank_candidates(
                 rerank_query, candidates, self.settings.rerank_top_k if top_k is None else top_k)
 
+    async def _arerank_candidates(self, rerank_query, candidates, top_k=None):
+        return await self.retriever.arerank_candidates(
+            rerank_query, candidates, self.settings.rerank_top_k if top_k is None else top_k)
+
+    async def _aretrieve(self, queries, rerank_query, top_k=None):
+        from app.pipeline import call
+        candidates = await call(self.retrieve_candidates, queries, executor=self.model_executor)
+        return await self._arerank_candidates(rerank_query, candidates, top_k)
+
+    async def _fallback_local(self, query, texts):
+        from app.pipeline import call
+        def invoke():
+            with self._model_lock:
+                if self._local_reranker is None:
+                    self._local_reranker = BgeReranker(
+                        resolve_data_path(self.settings.reranker_path), max_length=self.settings.rerank_max_length,
+                        batch_size=self.settings.rerank_batch_size, fp16=self.settings.rerank_fp16)
+                return self._local_reranker.rerank(query, texts)
+        return await call(invoke, executor=self.model_executor)
+
     async def route(self, question, history):
         return await self.router.route(question, history)
 
@@ -128,6 +171,8 @@ class Services:
 
     async def aclose(self):
         await self.llm.aclose()
+        if isinstance(self.reranker, RemoteReranker):
+            await self.reranker.aclose()
         # 等待已超时请求的同步工作退出，再关闭共享连接。
         def close():
             with self._model_lock:

@@ -121,6 +121,7 @@ def test_no_answer_is_buffered_or_removed_before_deltas(app_factory, route, text
 
 
 @pytest.mark.parametrize('code,status,message', [(42901, 429, '提问有点快，休息一分钟再问吧'),
+                                                 (42902, 429, '今天提问次数已达上限，请明天再试'),
                                                  (50302, 503, '服务有点忙，请稍后再试'),
                                                  (50401, 504, '请求超时，请稍后再试'),
                                                  (50201, 502, '模型服务返回异常'),

@@ -141,16 +141,18 @@ def test_performance_config_defaults_and_zero_char_limit():
     assert settings.rerank_text_mode == "child" and settings.rerank_fp16 is False
     assert settings.generate_max_tokens == 4096
     assert settings.llm_max_retries == 1 and settings.llm_retry_backoff_s == 0.5
-    assert settings.llm_max_concurrency == 2 and settings.llm_rate_limit_retries == 3
+    assert settings.llm_max_concurrency == 50 and settings.llm_rate_limit_retries == 3
     assert settings.llm_keepalive_s == 60 and settings.llm_network_retries == 3
     assert settings.llm_stream_idle_timeout_s == 20
     assert settings.client_ip_header == "x-forwarded-for" and settings.trust_proxy_headers is False
     assert settings.llm_timeout_s == 12 and settings.llm_timeout_retries == 1
     assert settings.request_timeout_s == 40 and settings.refuse_threshold == 0.2
-    assert settings.model_io_workers == 1 and settings.model_io_max_in_flight == 1
-    assert settings.model_io_queue_size == 8 and settings.model_io_queue_timeout_s == 20
+    assert settings.model_io_workers == 50 and settings.model_io_max_in_flight == 1
+    assert settings.model_io_queue_size == 50 and settings.model_io_queue_timeout_s == 20
     assert settings.rag_context_min_score == 0.1
-    assert settings.rate_limit_io_workers == 2 and settings.rate_limit_io_max_in_flight == 16
+    assert settings.rate_limit_io_workers == 50 and settings.rate_limit_io_max_in_flight == 50
+    assert settings.rate_limit_per_min == 50 and settings.rate_limit_per_day == 200
+    assert settings.rate_limit_ip_enabled is True
     assert settings.child_chunk_size == 300 and settings.child_chunk_overlap == 50
 
 
@@ -185,7 +187,7 @@ def test_legacy_model_capacity_still_rejects_nonpositive_values(capacity):
 def test_legacy_model_capacity_is_accepted_but_deprecated_and_does_not_disable_queue(workers, capacity, caplog):
     settings = Settings(_env_file=None, model_io_workers=workers, model_io_max_in_flight=capacity)
     assert settings.model_io_workers == workers and settings.model_io_max_in_flight == capacity
-    assert settings.model_io_queue_size == 8
+    assert settings.model_io_queue_size == 50
     assert "MODEL_IO_MAX_IN_FLIGHT 已弃用" in caplog.text
     assert "model_io_max_in_flight" not in settings.model_dump()
 

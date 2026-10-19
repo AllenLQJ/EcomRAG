@@ -35,10 +35,11 @@ def limited(headers=None):
         "code": "1302", "message": KEY + QUESTION + ANSWER}})
 
 
-def test_default_two_slots_make_third_call_wait_without_starting_transfer_timeout(monkeypatch):
+@pytest.mark.parametrize("limit", [2, 50])
+def test_configured_slots_queue_next_call_without_starting_transfer_timeout(monkeypatch, limit):
     async def run():
         full, release = asyncio.Event(), asyncio.Event()
-        deadlines = ControlledDeadlines(monkeypatch, _semaphore(2))
+        deadlines = ControlledDeadlines(monkeypatch, _semaphore(limit))
         attempts = Counter()
         timeout = asyncio.timeout
         def capture_timeout(seconds):
@@ -51,27 +52,27 @@ def test_default_two_slots_make_third_call_wait_without_starting_transfer_timeou
             active += 1
             entered += 1
             peak = max(peak, active)
-            if entered == 2:
+            if entered == limit:
                 full.set()
             try:
                 await release.wait()
                 return success()
             finally:
                 active -= 1
-        configured = settings(llm_timeout_s=60, request_timeout_s=60)
+        configured = settings(llm_max_concurrency=limit, llm_timeout_s=60, request_timeout_s=60)
         clients = [LLMClient(configured, transport=httpx.MockTransport(handler)) for _ in range(3)]
         tasks = []
         try:
-            tasks.extend(asyncio.create_task(complete(client)) for client in clients[:2])
+            tasks.extend(asyncio.create_task(complete(clients[i % 2])) for i in range(limit))
             await asyncio.wait_for(full.wait(), 2)
             third = asyncio.create_task(complete(clients[2]))
             tasks.append(third)
             assert await asyncio.wait_for(deadlines.waiters.get(), 2) is third
-            assert entered == peak == 2 and not third.done()
+            assert entered == peak == limit and not third.done()
             assert attempts[third] == 0  # 信号量排队尚未创建单次 HTTP 超时。
             release.set()
-            assert await asyncio.wait_for(asyncio.gather(*tasks), 2) == [ANSWER] * 3
-            assert entered == 3 and peak == 2 and attempts[third] == 1
+            assert await asyncio.wait_for(asyncio.gather(*tasks), 2) == [ANSWER] * (limit + 1)
+            assert entered == limit + 1 and peak == limit and attempts[third] == 1
         finally:
             release.set()
             for task in tasks:

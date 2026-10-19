@@ -10,7 +10,7 @@ from app.config import Settings
 from app.llm.client import LLMClient
 
 
-@pytest.mark.parametrize("keepalive,concurrency", [(60, 2), (17.5, 4), (0, 1)])
+@pytest.mark.parametrize("keepalive,concurrency", [(60, 2), (60, 50), (17.5, 4), (0, 1)])
 @pytest.mark.parametrize("socket_options_supported", [True, False])
 def test_pool_parameters_reach_client_and_transport_and_client_is_reused(
         monkeypatch, keepalive, concurrency, socket_options_supported):
@@ -64,4 +64,4 @@ def test_injected_transport_is_preserved_and_skips_default_transport(monkeypatch
     factory.assert_not_called()
     assert client_factory.call_args.kwargs["transport"] is transport
     limits = client_factory.call_args.kwargs["limits"]
-    assert (limits.keepalive_expiry, limits.max_keepalive_connections, limits.max_connections) == (60, 2, 2)
+    assert (limits.keepalive_expiry, limits.max_keepalive_connections, limits.max_connections) == (60, 50, 50)

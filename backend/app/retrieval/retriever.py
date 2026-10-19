@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import importlib
 import math
+import logging
 from time import perf_counter
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, RetrievedDoc
 from app.tracing import record
-from app.retrieval.reranker import rerank_text
+from app.retrieval.reranker import Reranker, rerank_text
 
 OUTPUT_FIELDS = ["parent_id", "doc_id", "title", "source", "parent_text", "child_text"]
+logger = logging.getLogger(__name__)
 
 
 class Retriever:
     """多查询混合检索，父块去重后按需重排；不自行加载配置或模型。"""
 
-    def __init__(self, client, embedder, reranker=None, *,
+    def __init__(self, client, embedder, reranker: Reranker | None = None, *,
                  uri="http://127.0.0.1:19530", collection_name="kb_chunks",
                  rerank_enabled=True, rerank_candidates=10, rerank_max_chars=600,
                  rerank_text_mode="child",
+                 rerank_fallback="rrf", local_rerank=None,
                  timeout_s=10,
                  request_factory=None, rrf_factory=None):
         if rerank_candidates <= 0:
@@ -35,6 +38,7 @@ class Retriever:
         self.rerank_enabled, self.candidate_limit = rerank_enabled, rerank_candidates
         self.rerank_max_chars = rerank_max_chars
         self.rerank_text_mode = rerank_text_mode
+        self.rerank_fallback, self.local_rerank = rerank_fallback, local_rerank
         self.request_factory, self.rrf_factory = request_factory, rrf_factory
 
     def _connect(self):
@@ -111,10 +115,45 @@ class Retriever:
             candidates = candidates[:self.candidate_limit]
             texts = [rerank_text(doc, self.rerank_text_mode, self.rerank_max_chars) for doc in candidates]
             scores = self.reranker.rerank(rerank_query, texts)
-            if len(scores) != len(candidates) or not all(math.isfinite(score) for score in scores):
-                raise ValueError("reranker 必须为每个候选返回一个有限分数")
-            candidates = [doc.model_copy(update={"score": float(score)})
-                          for doc, score in zip(candidates, scores)]
-            candidates.sort(key=lambda doc: doc.score, reverse=True)
-        record("rerank", started, kept=len(candidates[:top_k]))
+            candidates = self._scored(candidates, scores, "local")
+        record("rerank", started, kept=len(candidates[:top_k]), provider="local")
         return candidates[:top_k]
+
+    @staticmethod
+    def _scored(candidates, scores, provider):
+        if len(scores) != len(candidates) or not all(math.isfinite(score) for score in scores):
+            raise ValueError("reranker 必须为每个候选返回一个有限分数")
+        return sorted([doc.model_copy(update={"score": float(score), "score_provider": provider})
+                       for doc, score in zip(candidates, scores)], key=lambda doc: doc.score, reverse=True)
+
+    async def arerank_candidates(self, rerank_query, candidates, top_k=5):
+        """远程 I/O 直接 await；本地回退由 Services 注入受限线程池调用。"""
+        if not self.rerank_enabled:
+            return self.rerank_candidates(rerank_query, candidates, top_k)
+        if top_k <= 0:
+            return []
+        started, provider, fallback = perf_counter(), "remote", None
+        result = candidates
+        if candidates:
+            pool = candidates[:self.candidate_limit]
+            texts = [rerank_text(doc, self.rerank_text_mode, self.rerank_max_chars) for doc in pool]
+            try:
+                scores = await self.reranker.rerank(rerank_query, texts)
+                result = self._scored(pool, scores, provider)
+            except AppError:
+                if self.rerank_fallback == "error":
+                    raise
+                provider, fallback = "fallback_rrf", "rrf"
+                if self.rerank_fallback == "local" and self.local_rerank is not None:
+                    try:
+                        scores = await self.local_rerank(rerank_query, texts)
+                        provider, fallback = "fallback_local", "local"
+                        result = self._scored(pool, scores, provider)
+                    except Exception:
+                        # 不回显本地模型异常里的路径、输入或供应商信息。
+                        logger.warning("rerank_fallback_local_failed fallback=rrf")
+                        provider, fallback = "fallback_rrf", "rrf"
+                if provider == "fallback_rrf":
+                    result = [doc.model_copy(update={"score_provider": provider}) for doc in candidates]
+        record("rerank", started, kept=len(result[:top_k]), provider=provider, fallback=fallback)
+        return result[:top_k]

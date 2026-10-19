@@ -19,6 +19,17 @@ from app.budget import request_budget
 
 logger = logging.getLogger(__name__)
 
+
+def uses_rrf(docs):
+    return any(getattr(doc, "score_provider", None) == "fallback_rrf" for doc in docs)
+
+
+def refuse_threshold(settings, docs):
+    if any(getattr(doc, "score_provider", None) in {"local", "fallback_local"} for doc in docs):
+        return settings.refuse_threshold
+    return settings.rerank_refuse_threshold
+
+
 async def call(function, *args, executor, **kwargs):
     if inspect.iscoroutinefunction(function):
         return await function(*args, **kwargs)
@@ -85,8 +96,8 @@ async def speculate(services, question, trace, *, executor, top_k):
 async def rescue_rerank(services, question, rewritten, docs, candidates, trace, settings, executor):
     # 原问低分时，只要改写规范化后不同且非空就补救，不以文本相似度排除少量增字。
     # 已过阈值、规范化相同、敏感输入、关闭重排或无结果仍直接跳过。
-    if not needs_rewrite_rerank(question, rewritten, docs, enabled=settings.rerank_enabled,
-                                threshold=settings.refuse_threshold):
+    if uses_rrf(docs) or not needs_rewrite_rerank(question, rewritten, docs, enabled=settings.rerank_enabled,
+                                threshold=refuse_threshold(settings, docs)):
         return docs
     started, trace_start = perf_counter(), len(trace)
     try:
@@ -97,7 +108,10 @@ async def rescue_rerank(services, question, rewritten, docs, candidates, trace, 
             raise unavailable() from None
         raise
     # 仅合并两次真正的重排分，绝不把原始候选的 RRF 分当成相关度。
-    result = merge_reranked(docs, revised, settings.rerank_top_k)
+    if uses_rrf(revised):
+        return revised
+    providers = {doc.score_provider for doc in (*docs, *revised)} - {None}
+    result = (revised if len(providers) > 1 else merge_reranked(docs, revised, settings.rerank_top_k))
     if not any(item.stage == "rerank" for item in trace[trace_start:]):
         record("rerank", started, kept=len(result))
     for item in trace[trace_start:]:
@@ -108,11 +122,18 @@ async def rescue_rerank(services, question, rewritten, docs, candidates, trace, 
 
 
 def select_context(docs, settings):
-    if not docs or not settings.rerank_enabled:
+    if not docs or not settings.rerank_enabled or uses_rrf(docs):
+        return docs
+    threshold = settings.rag_context_min_score
+    if not any(doc.score_provider in {"local", "fallback_local"} for doc in docs) and (
+            settings.rerank_provider == "remote" or any(doc.score_provider == "remote" for doc in docs)):
+        # 远程分数需单独校准；未设置时保留 TopK，不沿用本地分数的过滤阈值。
+        threshold = settings.remote_rag_context_min_score
+    if threshold is None:
         return docs
     highest = max(range(len(docs)), key=lambda i: docs[i].score)
     return [doc for i, doc in enumerate(docs)
-            if i == highest or doc.score >= settings.rag_context_min_score]
+            if i == highest or doc.score >= threshold]
 
 
 async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings, services,
@@ -228,6 +249,10 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
             speculative = None
             # 只有完整成功的任务才能交接；私有列表与其中对象不再被主流程共享。
             trace.extend(item.model_copy(update={"speculative": True}) for item in tuple(speculative_trace))
+        elif settings.rerank_enabled and settings.rerank_provider == "remote":
+            # 远程改写重排可能退回 RRF，必须保留未改分、未裁剪的候选池。
+            docs, candidates = await retrieve(services, build_queries(decision, chat.message), rerank_query, trace,
+                                             executor=executor, top_k=settings.rerank_top_k, split=True)
         else:
             docs = await retrieve(services, build_queries(decision, chat.message), rerank_query, trace,
                                   executor=executor, top_k=settings.rerank_top_k)
@@ -239,7 +264,8 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:
             discard(speculative)
-    if not docs or (settings.rerank_enabled and max(doc.score for doc in docs) < settings.refuse_threshold):
+    if not docs or (settings.rerank_enabled and not uses_rrf(docs)
+                    and max(doc.score for doc in docs) < refuse_threshold(settings, docs)):
         return response(REFUSAL, "fallback", strategy="direct")
     # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
     docs = select_context(docs, settings)

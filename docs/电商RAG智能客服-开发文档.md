@@ -63,9 +63,9 @@ bge-m3 输出 1024 维稠密向量与词表 ID 稀疏向量。Milvus 集合 `kb_
 
 重试前剩余预算须**大于**「退避 + min(LLM_TIMEOUT_S, LLM_MIN_ATTEMPT_S)」，默认至少为本次尝试预留 5 秒；不足则按最后错误返回，实际总截止时间耗尽返回 50401。旧 `LLM_TIMEOUT_RETRIES` 仍可读取，但不再限制超时重试。
 
-LLM 并发默认 2，信号量按事件循环及相同上限共享，连接池上限与其一致；keepalive 默认 60 秒。演示配置建议 4，但须符合供应商账号配额并经过压测；多 worker 各有独立名额，需按账号总额度折算，增加 LLM 并发不会增加本地重排吞吐。
+LLM 并发默认 50，信号量按事件循环及相同上限共享，连接池上限与其一致；远程重排并发默认也为 50，keepalive 默认 60 秒。供应商账号额度独立生效；多 worker 各有独立名额，需按账号总额度折算，增加 LLM 并发不会增加本地重排吞吐。
 
-同步 FAQ、编码和检索/重排使用独立模型线程池：默认 1 个执行名额、8 个额外 FIFO 等待名额，等待最多 20 秒。容量满返回 50302，等待超时返回 50401，仍受总预算约束。取消等待项立即回收容量；已执行任务直到真正结束才回收。全进程模型单例由锁保护，提高 workers 不会自动让模型并行。限流使用独立 2 线程、总在飞 16 的池，满载立即返回 50302；关闭时线程池收尾最多等待 5 秒。
+同步 FAQ、编码和检索/重排使用独立模型线程池：默认 50 个执行名额、50 个额外 FIFO 等待名额，等待最多 20 秒。容量满返回 50302，等待超时返回 50401，仍受总预算约束。取消等待项立即回收容量；已执行任务直到真正结束才回收。全进程模型单例由锁保护，提高 workers 不会自动让模型并行。限流使用独立 50 线程、总在飞 50 的池，满载立即返回 50302；关闭时线程池收尾最多等待 5 秒。
 
 以上依据：`backend/app/pipeline.py`、`faq/`、`retrieval/`、`llm/`、`services.py`、`executor.py`、`budget.py`。
 
@@ -117,7 +117,8 @@ JSON 错误结构为 `{"code":数字,"message":"可读信息","request_id":"UUID
 | 40001 | 400 | 参数非法，含消息、会话标识和 history 校验失败 |
 | 40401 | 404 | 地址不存在 |
 | 40501 | 405 | 请求方法不允许 |
-| 42901 | 429 | 仅本服务 IP/session 限流：「提问有点快，休息一分钟再问吧」 |
+| 42901 | 429 | 本服务分钟频率限流：「提问有点快，休息一分钟再问吧」；远程重排上游 429 沿用此业务码但 HTTP 为 502 |
+| 42902 | 429 | 本服务每日频率限流：「今天提问次数已达上限，请明天再试」 |
 | 50001 | 500 | 内部错误 |
 | 50201 | 502 | LLM 未配置、网络失败、非 429 HTTP 失败、坏响应或输出异常 |
 | 50301 | 503 | MySQL/Milvus 等依赖不可用或执行器已关闭 |
@@ -149,7 +150,7 @@ GENERATE_MODEL=glm-5.3-flash
 ROUTER_MAX_TOKENS=2048
 GENERATE_MAX_TOKENS=4096
 LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
-LLM_MAX_CONCURRENCY=4
+LLM_MAX_CONCURRENCY=50
 ```
 
 需另提供 LLM_API_KEY。以上是部署覆盖值，**不是 config.py 的全部默认值**。代码保留阿里云兼容地址、qwen-turbo/qwen-plus 作为通用默认配置；客户端不按模型自动补思考参数。`LLM_EXTRA_BODY` 合并进请求，核心 model/messages/temperature/max_tokens/stream 和路由 response_format 优先。
@@ -202,7 +203,7 @@ LLM_MAX_CONCURRENCY=4
 | LLM_TIMEOUT_S | 12 | 单次传输/流式首内容超时，不含信号量排队 |
 | LLM_MIN_ATTEMPT_S | 5 | 重试预留尝试秒数，与 LLM_TIMEOUT_S 取小 |
 | LLM_STREAM_IDLE_TIMEOUT_S | 20 | 首内容后相邻 content 的空闲超时 |
-| LLM_MAX_CONCURRENCY | 2 | LLM HTTP 并发及连接池上限；演示建议覆盖为 4，须核对账号配额 |
+| LLM_MAX_CONCURRENCY | 50 | LLM HTTP 并发及连接池上限；供应商账号配额独立生效 |
 | LLM_KEEPALIVE_S | 60 | 空闲 TLS 连接保留秒数；0 禁用空闲复用 |
 | LLM_NETWORK_RETRIES | 3 | 网络错误与超时共用的额外重试次数 |
 | LLM_MAX_RETRIES | 1 | 仅 HTTP 5xx 的额外重试次数 |
@@ -215,13 +216,14 @@ LLM_MAX_CONCURRENCY=4
 | CLIENT_IP_HEADER | `x-forwarded-for` | 可选 x-forwarded-for / cf-connecting-ip |
 | TRUSTED_PROXIES | `["127.0.0.1","::1"]` | 可信代理 IP/CIDR 白名单；空数组不信任任何代理 |
 | REQUEST_TIMEOUT_S | 40 | 整请求预算，包含限流、排队、路由与生成 |
-| MODEL_IO_WORKERS | 1 | 同步模型工作线程/执行名额 |
-| MODEL_IO_QUEUE_SIZE | 8 | 执行名额外的等待容量，可为 0 |
+| MODEL_IO_WORKERS | 50 | 同步模型工作线程/执行名额 |
+| MODEL_IO_QUEUE_SIZE | 50 | 执行名额外的等待容量，可为 0 |
 | MODEL_IO_QUEUE_TIMEOUT_S | 20 | 模型等待队列超时 |
 | MODEL_IO_MAX_IN_FLIGHT | 1 | 已弃用兼容项，不参与模型容量计算，显式配置会警告 |
-| RATE_LIMIT_IO_WORKERS | 2 | 独立限流线程数 |
-| RATE_LIMIT_IO_MAX_IN_FLIGHT | 16 | 限流池总在飞容量，满载立即拒绝 |
-| RATE_LIMIT_PER_MIN | 10 | 每 IP、每 session 各自每固定分钟窗口次数 |
+| RATE_LIMIT_IO_WORKERS | 50 | 独立限流线程数 |
+| RATE_LIMIT_IO_MAX_IN_FLIGHT | 50 | 限流池总在飞容量，满载立即拒绝 |
+| RATE_LIMIT_IP_ENABLED | true | 是否启用额外 IP 桶；无法取得真实访客 IP 的本机隧道脚本临时关闭此项，仍保留 session 桶 |
+| RATE_LIMIT_PER_MIN | 50 | 每 IP（开启时）、每 session 各自每固定分钟窗口次数 |
 | RATE_LIMIT_PER_DAY | 200 | 每 IP、每 session 各自每 UTC 自然日窗口次数 |
 | HEALTH_TIMEOUT_S | 1 | 每个依赖的 TCP 连通检查超时 |
 | LOG_LEVEL | `INFO` | DEBUG/INFO/WARNING/ERROR/CRITICAL |
@@ -509,7 +511,7 @@ Cloudflare 固定隧道配置 `TRUST_PROXY_HEADERS=true`、`CLIENT_IP_HEADER=cf-
 
 只有开关开启且 socket 对端位于白名单才读选定头；X-Forwarded-For 只取首个字段，CF-Connecting-IP 必须单个合法 IP。缺失、空白、非法头或不可信对端回退 socket 地址，不改读另一种头；白名单支持 IP/IPv4/IPv6 CIDR，空数组不信任任何代理，非法网段拒绝加载配置。
 
-限流按 IP 和 session 各自累计固定分钟与 UTC 自然日窗口，默认 10/分钟、200/日，任一超限为 42901，超限请求也计数。Redis 使用 INCR+EXPIRE 事务；故障后本进程保留已有本地计数继续限制。回退计数最多 10000 个窗口 key，按过期与 LRU 淘汰，重启清空；多 worker 各自计数，整体限额可能放大，高基数也可能提前淘汰旧计数。session 可自行更换，IP 桶仍是必要约束。
+限流默认按 IP 和 session 各自累计固定分钟与 UTC 自然日窗口，默认 50/分钟、200/日；分钟超限为 42901，日超限为 42902，日限额优先提示，超限请求也计数。`RATE_LIMIT_IP_ENABLED=false` 只停用 IP 桶，session 桶继续生效。本机 FRP/Caddy 尚未透传可信访客 IP，`deploy/start-local.sh` 临时关闭共享 IP 桶，避免压测占用其他手机的额度；接通真实 IP 后应恢复双重限流。Redis 使用 INCR+EXPIRE 事务；故障后本进程保留已有本地计数继续限制。回退计数最多 10000 个窗口 key，按过期与 LRU 淘汰，重启清空；多 worker 各自计数，整体限额可能放大，高基数也可能提前淘汰旧计数。session 可自行更换，仅按 session 限流不能代替按真实来源防刷。
 
 ### 8.3 访客边界与功能范围
 
@@ -521,7 +523,7 @@ SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback
 
 ### 8.4 已知运行限制
 
-- 单机重排受模型全局锁保护，既有演示记录的知识库吞吐约每分钟 20 个；LLM 并发调到 4 不能解除该瓶颈，也不是对任意机器的性能保证。
+- 单机重排受模型全局锁保护，既有演示记录的知识库吞吐约每分钟 20 个；提高 LLM 并发不能解除该瓶颈，也不是对任意机器的性能保证。
 - 海外访问智谱可能有跨境网络抖动；12 秒单次超时、最多三次网络/超时重试仍受 40 秒总预算限制，不能保证每次都有三次重试机会。
 - 16 GB 机器内存紧张或 swap 较高时，既有记录中重排会从约 2.5 秒恶化到 20 秒以上；演示时关闭无关大应用、保持接电与不休眠，先预热并留出内存。以上性能观察来自 `docs/演示准备.md` 的实测记录。
 - 降低候选数或关闭重排可减少工作量，但会改变质量与拒答语义，须重新评测；不能直接沿用 parent/fp16 的历史分数分布解释 child/fp32 阈值。
@@ -533,4 +535,4 @@ SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback
 - **改写补充重排取消相似度门槛**：少量增字也可能改变相关分；`retrieval/rewrite.py` 只排除规范化相同/空改写等条件，`test_rewrite_rerank.py` 用「支持哪些付款方式」与「店铺支持哪些付款方式」的 0.083→0.688 回归用例验证该规则，测试分数是替身输入。
 - **采用固定隧道**：`docs/演示准备.md` 明确临时隧道不支持流式；`app/streaming.py` 与 `frontend/src/api/client.ts` 依赖持续 SSE 事件，因此采用 named tunnel 并关闭代理缓冲，实际域名仍需端到端验收。
 - **切换 glm-5.3-flash 与 enabled/low 思考**：按当前部署约定显式覆盖地址与两个模型角色，保留 OpenAI 兼容客户端；`llm/diagnostics.py` 和 `test_llm_reasoning.py` 对 1210 给出固定 enabled/low 建议，代码不自动切换供应商或修改配置。
-- **LLM 并发默认 2**：以 `config.py` 与 `test_settings.py` 的保守默认值控制 HTTP 名额和连接池（`llm/client.py`）；演示建议值 4 依据 `docs/演示准备.md`，需要匹配账号配额并压测，不据此宣称单机模型吞吐提升。
+- **并发容量统一为 50**：LLM、远程重排、模型工作线程及等待队列、限流检查线程及总在飞容量均默认 50；分钟频率额度提高为 50，日额度保留 200。该调整扩大接纳容量，供应商配额及本地模型锁仍独立生效，不据此宣称单机模型吞吐提升。

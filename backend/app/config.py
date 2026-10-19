@@ -4,8 +4,9 @@ from functools import lru_cache
 from ipaddress import ip_network
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,18 @@ class Settings(BaseSettings):
     faq_threshold: float = Field(default=0.9, ge=0, le=1)
     faq_cache_ttl_s: int = Field(default=86400, gt=0)
     rerank_enabled: bool = True
+    rerank_provider: Literal["local", "remote"] = "local"
+    rerank_remote_base_url: str = ""
+    rerank_remote_api_key: SecretStr = SecretStr("")
+    rerank_remote_model: str = Field(default="rerank", min_length=1)
+    rerank_remote_timeout_s: float = Field(default=10, gt=0, allow_inf_nan=False)
+    rerank_remote_max_retries: int = Field(default=1, ge=0)
+    rerank_remote_retry_backoff_s: float = Field(default=0.5, ge=0, allow_inf_nan=False)
+    rerank_remote_max_concurrency: int = Field(default=50, gt=0)
+    rerank_remote_extra_body: Annotated[dict[str, object], NoDecode] = Field(default_factory=dict, repr=False)
+    rerank_fallback: Literal["rrf", "local", "error"] = "rrf"
+    remote_refuse_threshold: float | None = Field(default=None, allow_inf_nan=False)
+    remote_rag_context_min_score: float | None = Field(default=None, allow_inf_nan=False)
     rerank_candidates: int = Field(default=10, gt=0)
     rerank_max_length: int = Field(default=512, gt=0)
     rerank_batch_size: int = Field(default=16, gt=0)
@@ -70,7 +83,7 @@ class Settings(BaseSettings):
     # 重试前整请求预算至少还要剩下这么多（与 llm_timeout_s 取小）；正常调用 2–5 秒即可完成。
     llm_min_attempt_s: float = Field(default=5, gt=0)
     llm_stream_idle_timeout_s: float = Field(default=20, gt=0)
-    llm_max_concurrency: int = Field(default=2, gt=0)
+    llm_max_concurrency: int = Field(default=50, gt=0)
     llm_keepalive_s: float = Field(default=60, ge=0)
     llm_network_retries: int = Field(default=3, ge=0)
     # 兼容旧配置：只控制 5xx；网络错误和超时使用独立的 llm_network_retries。
@@ -84,14 +97,15 @@ class Settings(BaseSettings):
     client_ip_header: Literal["x-forwarded-for", "cf-connecting-ip"] = "x-forwarded-for"
     trusted_proxies: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1"])
     request_timeout_s: float = Field(default=40, gt=0)
-    model_io_workers: int = Field(default=1, gt=0)
-    model_io_queue_size: int = Field(default=8, ge=0)
+    model_io_workers: int = Field(default=50, gt=0)
+    model_io_queue_size: int = Field(default=50, ge=0)
     model_io_queue_timeout_s: float = Field(default=20, gt=0)
     # 仅兼容旧部署配置；不再参与容量计算，避免旧值 1 关闭新队列。
     model_io_max_in_flight: int = Field(default=1, gt=0, exclude=True, repr=False)
-    rate_limit_io_workers: int = Field(default=2, gt=0)
-    rate_limit_io_max_in_flight: int = Field(default=16, gt=0)
-    rate_limit_per_min: int = Field(default=10, gt=0)
+    rate_limit_io_workers: int = Field(default=50, gt=0)
+    rate_limit_io_max_in_flight: int = Field(default=50, gt=0)
+    rate_limit_ip_enabled: bool = True
+    rate_limit_per_min: int = Field(default=50, gt=0)
     rate_limit_per_day: int = Field(default=200, gt=0)
     health_timeout_s: float = Field(default=1, gt=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -150,9 +164,55 @@ class Settings(BaseSettings):
             raise ValueError("TRUSTED_PROXIES 必须为 IP 地址或 CIDR 网段") from None
         return values
 
-    @field_validator("llm_extra_body", mode="before")
+    @property
+    def remote_rerank_base_url(self):
+        return self.rerank_remote_base_url.strip() or self.llm_base_url.strip()
+
+    @property
+    def remote_rerank_key(self):
+        return (self.rerank_remote_api_key.get_secret_value().strip()
+                or self.llm_api_key.get_secret_value().strip())
+
+    @property
+    def rerank_refuse_threshold(self):
+        if self.rerank_provider == "remote" and self.remote_refuse_threshold is not None:
+            return self.remote_refuse_threshold
+        return self.refuse_threshold
+
+    @field_validator("remote_refuse_threshold", "remote_rag_context_min_score", mode="before")
     @classmethod
-    def parse_llm_extra_body(cls, value):
+    def empty_remote_threshold(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("rerank_remote_base_url")
+    @classmethod
+    def validate_remote_url(cls, value):
+        value = value.strip()
+        if value:
+            try:
+                HttpUrl(value)
+                parts = urlsplit(value)
+                valid = (parts.scheme in {"http", "https"} and parts.hostname and not parts.username
+                         and not parts.password and not parts.query and not parts.fragment
+                         and not any(char.isspace() for char in value))
+                parts.port
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("RERANK_REMOTE_BASE_URL 必须为空或合法 HTTP(S) 基础地址")
+        return value
+
+    @field_validator("rerank_remote_model")
+    @classmethod
+    def validate_remote_model(cls, value):
+        if not value.strip():
+            raise ValueError("RERANK_REMOTE_MODEL 不能为空")
+        return value.strip()
+
+    @field_validator("llm_extra_body", "rerank_remote_extra_body", mode="before")
+    @classmethod
+    def parse_llm_extra_body(cls, value, info):
+        label = info.field_name.upper()
         if isinstance(value, str):
             if not value.strip():
                 return {}
@@ -161,13 +221,13 @@ class Settings(BaseSettings):
                     raise ValueError
                 value = json.loads(value, parse_constant=invalid_constant)
             except ValueError:
-                raise ValueError("LLM_EXTRA_BODY 必须为合法 JSON 对象；空字符串表示不添加参数") from None
+                raise ValueError(f"{label} 必须为合法 JSON 对象；空字符串表示不添加参数") from None
         if not isinstance(value, dict):
-            raise ValueError("LLM_EXTRA_BODY 必须为 JSON 对象，不能是数组、字符串或 null")
+            raise ValueError(f"{label} 必须为 JSON 对象，不能是数组、字符串或 null")
         try:
             json.dumps(value, allow_nan=False)
         except (TypeError, ValueError):
-            raise ValueError("LLM_EXTRA_BODY 必须为可序列化的合法 JSON 对象") from None
+            raise ValueError(f"{label} 必须为可序列化的合法 JSON 对象") from None
         return value
 
 

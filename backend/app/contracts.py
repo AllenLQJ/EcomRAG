@@ -9,7 +9,8 @@ HTTP_ERROR = 40000
 INVALID_ARGUMENT = 40001
 NOT_FOUND = 40401
 METHOD_NOT_ALLOWED = 40501
-RATE_LIMITED = 42901  # 仅用于本服务的 IP/session 限流；上游限流耗尽使用 SERVICE_BUSY。
+RATE_LIMITED = 42901  # IP/session 限流；远程重排沿用该业务码，但 HTTP 映射为上游故障 502。
+DAILY_RATE_LIMITED = 42902
 INTERNAL_ERROR = 50001
 LLM_ERROR = 50201
 DEPENDENCY_UNAVAILABLE = 50301
@@ -33,6 +34,8 @@ class RetrievedDoc(BaseModel):
     content: str
     snippet: str
     score: float
+    # 请求内携带分数来源，避免并发请求共享 fallback 状态；不进入对外响应。
+    score_provider: Literal["local", "remote", "fallback_local", "fallback_rrf"] | None = Field(default=None, exclude=True)
 
 
 class RouteDecision(BaseModel):

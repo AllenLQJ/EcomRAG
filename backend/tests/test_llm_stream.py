@@ -78,7 +78,7 @@ def test_pre_content_retries_reuse_limits_and_only_forward_content(failures, mon
         client = LLMClient(settings(), transport=httpx.MockTransport(handler), sleep=sleep)
         try:
             assert ''.join([part async for part in complete(client)]) == ANSWER
-            assert not _semaphore(2).locked()
+            assert not _semaphore(client.settings.llm_max_concurrency).locked()
         finally:
             await client.aclose()
     asyncio.run(run())
@@ -106,7 +106,7 @@ def test_failures_exhaust_before_content_but_never_retry_after_content(phase, fa
                     async for text in source:
                         visible.append(text)
             assert caught.value.code == (50401 if failure == 'timeout' else 50201)
-            assert not _semaphore(2).locked()
+            assert not _semaphore(client.settings.llm_max_concurrency).locked()
         finally:
             await client.aclose()
     asyncio.run(run())
@@ -281,7 +281,7 @@ def test_expired_whole_budget_never_computes_backoff_or_retries(failure):
                 _ = [part async for part in complete(client)]
             assert (caught.value.code, caught.value.http_status) == (50401, 504)
             client._network_delay.assert_not_called()
-            assert not _semaphore(2).locked()
+            assert not _semaphore(client.settings.llm_max_concurrency).locked()
         finally:
             await client.aclose()
     asyncio.run(run())
