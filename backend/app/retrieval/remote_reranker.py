@@ -11,7 +11,7 @@ from weakref import WeakKeyDictionary
 import httpx
 
 from app.budget import deadline, request_budget
-from app.contracts import AppError, LLM_ERROR, RATE_LIMITED, TIMEOUT
+from app.contracts import AppError, LLM_ERROR, SERVICE_BUSY, TIMEOUT
 from app.llm.client import retryable_network
 from app.llm.diagnostics import diagnostic_info, extra_body_keys, private_texts, redact, target_host
 
@@ -41,8 +41,11 @@ def map_results(results, documents):
     texts = [document_text(result) for result in results]
     indices = [result.get("index") for result in results]
     valid_indices = (all(type(index) is int and 0 <= index < n for index in indices)
-                     and len(set(indices)) == n
-                     and all(text is None or text == documents[index] for text, index in zip(texts, indices)))
+                     and len(set(indices)) == n)
+    mismatch_count = 0
+    if valid_indices:
+        mismatch_count = sum(text is not None and text != documents[index]
+                             for text, index in zip(texts, indices))
     if not valid_indices:
         available = defaultdict(deque)
         for index, text in enumerate(documents):
@@ -58,6 +61,8 @@ def map_results(results, documents):
         if isinstance(score, bool) or not isinstance(score, (int, float)) or not math.isfinite(score):
             raise ValueError("invalid score")
         scores[index] = float(score)
+    if mismatch_count:
+        logger.warning("rerank_document_mismatch count=%d", mismatch_count)
     return scores
 
 
@@ -92,9 +97,10 @@ class RemoteReranker:
         logger.warning("rerank_error %s", json.dumps(info, ensure_ascii=False))
         timeout = category == "timeout"
         limited = response is not None and response.status_code == 429
-        error = AppError(TIMEOUT if timeout else RATE_LIMITED if limited else LLM_ERROR,
-                         504 if timeout else 502,
-                         "重排请求超时，请稍后再试" if timeout else "重排服务暂时不可用")
+        error = AppError(TIMEOUT if timeout else SERVICE_BUSY if limited else LLM_ERROR,
+                         504 if timeout else 503 if limited else 502,
+                         "重排请求超时，请稍后再试" if timeout else
+                         "服务有点忙，请稍后再试" if limited else "重排服务暂时不可用")
         error.diagnostic = info
         return error
 

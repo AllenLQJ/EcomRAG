@@ -166,10 +166,10 @@ REMOTE_RAG_CONTEXT_MIN_SCORE=
 | `RERANK_REMOTE_MAX_CONCURRENCY` | 50 | 正整数；全局共享并发上限，排队和退避计入整请求 deadline |
 | `RERANK_REMOTE_EXTRA_BODY` | 空 | JSON 对象，空表示无扩展；只记录顶层键名，核心参数优先 |
 | `RERANK_FALLBACK` | `rrf` | `rrf` / `local` / `error`，见下 |
-| `REMOTE_REFUSE_THRESHOLD` | 空 | 有限浮点数，不限制到 0–1；空时使用 `REFUSE_THRESHOLD` 并在装配时警告需校准 |
+| `REMOTE_REFUSE_THRESHOLD` | 空 | [0,1] 内的有限浮点数，含边界；空时使用 `REFUSE_THRESHOLD` 并在装配时警告需校准 |
 | `REMOTE_RAG_CONTEXT_MIN_SCORE` | 空 | 远程重排的上下文过滤阈值，允许任意有限浮点数；空时保留全部 TopK，设置后仍至少保留最高分资料；本地及本地回退继续使用 `RAG_CONTEXT_MIN_SCORE` |
 
-远程调用失败时，`rrf` 使用原始 RRF 顺序和分数，仅在无结果时拒答，并跳过改写补救与相关度上下文过滤；trace 标记 `provider=fallback_rrf, fallback=rrf`。`local` 首次失败时才加载本地模型，并在线程池重排，使用本地 `REFUSE_THRESHOLD`；本地再失败则退 RRF。`error` 抛出脱敏的 AppError（50201/502、超时 50401/504；上游持续 429 为 42901/502）。取消和整请求 deadline 不触发额外回退工作。
+远程调用失败时，`rrf` 使用原始 RRF 顺序和分数，仅在无结果时拒答，并跳过改写补救与相关度上下文过滤；trace 标记 `provider=fallback_rrf, fallback=rrf`。`local` 首次失败时才加载本地模型，并在线程池重排，使用本地 `REFUSE_THRESHOLD`；本地再失败则退 RRF。`error` 抛出脱敏的 AppError（50201/502、超时 50401/504；上游持续 429 为 SERVICE_BUSY 50302/503，与 LLM 客户端一致）。42901/429 仅表示本服务分钟频率限流。取消和整请求 deadline 不触发额外回退工作。
 
 在 `backend/` 真实环境中依次执行（这些命令会调用服务）：
 
@@ -183,6 +183,6 @@ uv run python -m eval.check_retrieval --rerank-provider local
 
 接口每次最多 128 条候选，超过时分批；问题与每条候选最多 4096 字符，发送前截断。`RERANK_CANDIDATES`、child/parent 模式与既有 `RERANK_MAX_CHARS` 规则仍生效；远程不使用本地 batch size、token max length 或 FP16 设置。
 
-官方文档未明确 index 从 0 还是 1 开始、分数取值范围、结果是否降序。请求始终设置 `return_documents=true`；只有 index 全部有效且文本文档一致时按 0 基 index 映射，否则按文本逐一匹配（重复文本依出现顺序各用一次）；缺失或无法一一对应视为 `bad_response`。分数不变换，由客户端自行排序；ping 打印实测分数最小/最大值与返回顺序是否降序。
+官方文档未明确 index 从 0 还是 1 开始、分数取值范围、结果是否降序。请求始终设置 `return_documents=true`；index 构成完整 0 基双射（无重复、无越界、覆盖全部候选）时以 index 为准，回显文本被空白规整、截断等差异仅记一条诊断计数，日志不含问题、候选文本或 key。index 非法或缺项时按文本逐一匹配（重复文本依出现顺序各用一次）；仍无法一一对应或结果数量不完整视为 `bad_response`。分数须为有限数，不做变换，由客户端自行排序；ping 打印实测分数最小/最大值与返回顺序是否降序。
 
 隐私：用户问题与检索候选文本会发送到智谱，和 LLM 调用处于同一信任边界。日志与诊断不记录问题、候选文本或密钥；供应商错误仅保留脱敏、截断的允许字段。离线测试全部使用 MockTransport，不发送真实请求。

@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     rerank_remote_max_concurrency: int = Field(default=50, gt=0)
     rerank_remote_extra_body: Annotated[dict[str, object], NoDecode] = Field(default_factory=dict, repr=False)
     rerank_fallback: Literal["rrf", "local", "error"] = "rrf"
-    remote_refuse_threshold: float | None = Field(default=None, allow_inf_nan=False)
+    remote_refuse_threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     remote_rag_context_min_score: float | None = Field(default=None, allow_inf_nan=False)
     rerank_candidates: int = Field(default=10, gt=0)
     rerank_max_length: int = Field(default=512, gt=0)

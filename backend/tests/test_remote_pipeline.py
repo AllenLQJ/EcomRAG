@@ -7,8 +7,9 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.contracts import AppError, RouteDecision
+from app.contracts import AppError, RouteDecision, SERVICE_BUSY
 from app.pipeline import run_chat
+from app.retrieval.remote_reranker import RemoteReranker
 from app.retrieval.retriever import Retriever
 from app.services import Services
 from app.schemas import ChatRequest
@@ -90,6 +91,31 @@ def test_error_policy_reraises_original_app_error_and_cancellation_never_falls_b
         with pytest.raises(asyncio.CancelledError):
             await retriever.arerank_candidates("q", [document()])
         local.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_error_policy_propagates_upstream_429_as_service_busy():
+    async def run():
+        config = configured(rerank_fallback="error", rerank_remote_max_retries=1,
+                            rerank_remote_retry_backoff_s=0)
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(429, json={"error": {"code": "busy"}})
+        remote = RemoteReranker(config, transport=httpx.MockTransport(handler))
+        local = AsyncMock()
+        retriever = Retriever(None, None, remote, rerank_fallback=config.rerank_fallback,
+                              local_rerank=local)
+        try:
+            with pytest.raises(AppError) as caught:
+                await retriever.arerank_candidates("q", [document()])
+            assert (caught.value.code, caught.value.http_status) == (SERVICE_BUSY, 503)
+            assert caught.value.message == "服务有点忙，请稍后再试"
+            assert caught.value.diagnostic["http_status"] == 429
+            assert len(calls) == 2
+            local.assert_not_awaited()
+        finally:
+            await remote.aclose()
     asyncio.run(run())
 
 
@@ -296,14 +322,14 @@ def test_remote_context_uses_its_own_optional_threshold(speculative, context_thr
         services = FakeServices().knowledge()
         candidates = [document(i, 0.04 - i * 0.01) for i in range(1, 4)]
         services.retrieve_candidates = Mock(return_value=candidates)
-        remote = Mock(rerank=AsyncMock(return_value=[-0.5, -0.7, -1.0]))
+        remote = Mock(rerank=AsyncMock(return_value=[0.5, -0.7, -1.0]))
         retriever = Retriever(None, None, remote)
         services.rerank_candidates = retriever.arerank_candidates
         async def retrieve(queries, rerank_query, top_k):
             return await retriever.arerank_candidates(rerank_query, candidates, top_k)
         services.retrieve = AsyncMock(side_effect=retrieve)
         result = await run_chat(ChatRequest(session_id="remote-context", message="q"),
-                               settings=configured(speculative_retrieval=speculative, remote_refuse_threshold=-2,
+                               settings=configured(speculative_retrieval=speculative, remote_refuse_threshold=0,
                                                    remote_rag_context_min_score=context_threshold), services=services)
         assert result.route == "rag"
         assert [doc.parent_id for doc in services.generate_answer.call_args.args[1]] == expected_ids

@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
-from app.contracts import AppError
+from app.contracts import AppError, SERVICE_BUSY
 from app.retrieval.remote_reranker import RemoteReranker, map_results, _semaphore
 from deadline_helpers import ControlledDeadlines
 
@@ -76,7 +76,7 @@ def test_query_is_truncated_before_transmission():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("mode", ["zero", "one", "shuffled", "wrong_index", "no_index", "no_document", "object_document"])
+@pytest.mark.parametrize("mode", ["zero", "one", "shuffled", "swapped_index", "no_index", "no_document", "object_document"])
 def test_maps_results_to_input_order_and_keeps_unbounded_scores(mode):
     documents = ["a", "b", "c"]
     results = [{"index": i, "document": text, "relevance_score": score}
@@ -86,7 +86,7 @@ def test_maps_results_to_input_order_and_keeps_unbounded_scores(mode):
             item["index"] += 1
     if mode == "shuffled":
         results.reverse()
-    if mode == "wrong_index":
+    if mode == "swapped_index":
         results[0]["index"], results[1]["index"] = 1, 0
     if mode == "no_index":
         for item in results:
@@ -97,7 +97,52 @@ def test_maps_results_to_input_order_and_keeps_unbounded_scores(mode):
     if mode == "object_document":
         for item in results:
             item["document"] = {"text": item["document"]}
-    assert map_results(results, documents) == [-3.5, 9.2, 0.0]
+    expected = [9.2, -3.5, 0.0] if mode == "swapped_index" else [-3.5, 9.2, 0.0]
+    assert map_results(results, documents) == expected
+
+
+@pytest.mark.parametrize("echo", ["normalized", "truncated"])
+def test_valid_indices_accept_modified_document_echo_and_log_only_count(echo, caplog):
+    documents = [TEXT + "  first\n passage", TEXT + "\tsecond  passage"]
+    def handler(request):
+        results = [{"index": i, "document": {"text": " ".join(text.split()) if echo == "normalized" else text[:10]},
+                    "relevance_score": score}
+                   for i, text, score in [(1, documents[1], 0.9), (0, documents[0], -0.2)]]
+        return httpx.Response(200, json={"results": results})
+    async def run():
+        client = RemoteReranker(settings(), transport=httpx.MockTransport(handler))
+        try:
+            assert await client.rerank(QUERY, documents) == [-0.2, 0.9]
+        finally:
+            await client.aclose()
+    asyncio.run(run())
+    records = [record for record in caplog.records if record.name == "app.retrieval.remote_reranker"]
+    assert [record.getMessage() for record in records] == ["rerank_document_mismatch count=2"]
+    assert all(private not in caplog.text for private in (KEY, QUERY, TEXT, *documents))
+
+
+@pytest.mark.parametrize("indices", [[2, 0], [0, 0], [None, 0], [True, 0]])
+@pytest.mark.parametrize("matching_text", [True, False])
+def test_invalid_indices_fall_back_to_text_or_raise_bad_response(indices, matching_text):
+    results = [{"document": text, "relevance_score": score}
+               for text, score in [(TEXT + " second" if matching_text else "unmatched", 0.9), (TEXT, 0.2)]]
+    for result, index in zip(results, indices):
+        if index is not None:
+            result["index"] = index
+    async def run():
+        client = RemoteReranker(settings(), transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"results": results})))
+        try:
+            if matching_text:
+                assert await client.rerank(QUERY, [TEXT, TEXT + " second"]) == [0.2, 0.9]
+            else:
+                with pytest.raises(AppError) as caught:
+                    await client.rerank(QUERY, [TEXT, TEXT + " second"])
+                assert caught.value.diagnostic["category"] == "bad_response"
+                assert (caught.value.code, caught.value.http_status) == (50201, 502)
+        finally:
+            await client.aclose()
+    asyncio.run(run())
 
 
 def test_duplicate_texts_consumed_once_in_response_order():
@@ -108,11 +153,12 @@ def test_duplicate_texts_consumed_once_in_response_order():
 
 @pytest.mark.parametrize("results", [None, [], [{"index": 0, "relevance_score": 1}],
     [{"index": 1, "relevance_score": 1}, {"index": 2, "relevance_score": 2}],
-    [{"index": 0, "document": "wrong", "relevance_score": 1}, {"index": 1, "relevance_score": 2}],
+    [{"index": 0, "document": "wrong", "relevance_score": 1}, {"index": 0, "relevance_score": 2}],
     [{"index": 0, "document": "a", "relevance_score": 1}, {"index": 0, "document": "a", "relevance_score": 2}],
     [{"index": 0, "relevance_score": True}, {"index": 1, "relevance_score": 2}],
     [{"index": 0, "relevance_score": "0.5"}, {"index": 1, "relevance_score": 2}],
     [{"index": 0, "relevance_score": float("inf")}, {"index": 1, "relevance_score": 2}],
+    [{"index": 0, "relevance_score": float("nan")}, {"index": 1, "relevance_score": 2}],
     [{"index": 0, "document": 123, "relevance_score": 1}, {"index": 1, "relevance_score": 2}],
 ])
 def test_ambiguous_missing_or_invalid_results_rejected(results):
@@ -148,7 +194,7 @@ def test_retries_only_transient_failures_then_succeeds(mode):
 
 
 @pytest.mark.parametrize("mode,category,code,status,calls_expected", [
-    ("429", "http_status", 42901, 502, 3), ("503", "http_status", 50201, 502, 3),
+    ("429", "http_status", SERVICE_BUSY, 503, 3), ("503", "http_status", 50201, 502, 3),
     ("connect", "network", 50201, 502, 3), ("400", "http_status", 50201, 502, 1),
     ("401", "http_status", 50201, 502, 1), ("404", "http_status", 50201, 502, 1),
     ("302", "http_status", 50201, 502, 1), ("timeout", "timeout", 50401, 504, 1),
@@ -316,15 +362,34 @@ def test_remote_config_defaults_overrides_and_thresholds(monkeypatch):
     assert configured.remote_rerank_key == KEY
     assert configured.remote_rerank_base_url == configured.llm_base_url
     assert configured.rerank_refuse_threshold == 0.3
-    configured = settings(rerank_provider="remote", remote_refuse_threshold=-2.0,
+    configured = settings(rerank_provider="remote", remote_refuse_threshold=0.7,
                           rerank_remote_api_key="override", rerank_remote_base_url="https://override.example")
     assert configured.remote_rerank_key == "override" and configured.remote_rerank_base_url == "https://override.example"
-    assert configured.rerank_refuse_threshold == -2.0
-    assert settings(remote_refuse_threshold=3).rerank_refuse_threshold == 0.2
+    assert configured.rerank_refuse_threshold == 0.7
+    with pytest.raises(ValidationError):
+        settings(rerank_provider="remote", remote_refuse_threshold=3)
     monkeypatch.setenv("RERANK_REMOTE_EXTRA_BODY", '{"return_raw_scores":true}')
-    monkeypatch.setenv("REMOTE_REFUSE_THRESHOLD", "1.5")
-    assert settings(rerank_provider="remote").rerank_refuse_threshold == 1.5
+    monkeypatch.setenv("REMOTE_REFUSE_THRESHOLD", "0.5")
+    assert settings(rerank_provider="remote").rerank_refuse_threshold == 0.5
     assert settings().rerank_remote_extra_body == {"return_raw_scores": True}
+
+
+@pytest.mark.parametrize("value", [-2, -0.001, 1.001, 1.5, 3, float("inf"), float("-inf"), float("nan")])
+def test_remote_refuse_threshold_rejects_out_of_range_values(monkeypatch, value):
+    with pytest.raises(ValidationError):
+        settings(rerank_provider="remote", remote_refuse_threshold=value)
+    monkeypatch.setenv("REMOTE_REFUSE_THRESHOLD", str(value))
+    with pytest.raises(ValidationError):
+        settings(rerank_provider="remote")
+
+
+@pytest.mark.parametrize("value,expected", [(None, 0.3), ("", 0.3), ("  ", 0.3), (0, 0.0), (1, 1.0)])
+def test_remote_refuse_threshold_accepts_boundaries_and_empty_fallback(monkeypatch, value, expected):
+    assert settings(rerank_provider="remote", remote_refuse_threshold=value,
+                    refuse_threshold=0.3).rerank_refuse_threshold == expected
+    if value is not None:
+        monkeypatch.setenv("REMOTE_REFUSE_THRESHOLD", str(value))
+        assert settings(rerank_provider="remote", refuse_threshold=0.3).rerank_refuse_threshold == expected
 
 
 @pytest.mark.parametrize("value,expected", [(None, None), ("", None), ("  ", None),
