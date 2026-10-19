@@ -11,6 +11,7 @@ dist/
 volumes/
 models/
 logs/
+backups/faq/
 .pytest_cache/
 .ruff_cache/
 *.py[cod]
@@ -26,3 +27,6 @@ docs/文件访问边界.md
 # 前端构建与依赖
 frontend/node_modules/
 frontend/dist/
+
+# 占位 SVG 与商品真图均提交，仅忽略图片构建临时文件。
+data/images/**/*.tmp

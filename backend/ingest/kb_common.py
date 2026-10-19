@@ -1,0 +1,108 @@
+"""CLI 公共入口；禁用 dotenv，默认只预览，显式 --yes 才产生写操作。"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from contextlib import nullcontext
+
+from ingest.loaders import resolve_data_path
+
+
+def cli_settings():
+    from app.config import Settings
+    return Settings(_env_file=None)
+
+
+def smoke_check(version, settings, *, eval_file="data/eval_ragas_gold.jsonl", limit=20,
+                retriever=None):
+    if limit <= 0:
+        raise ValueError("check-limit 必须大于零")
+    rows = []
+    with resolve_data_path(eval_file).open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("answerable") is True and row.get("expected_doc"):
+                if not isinstance(row.get("question"), str) or not row["question"].strip():
+                    raise ValueError("冒烟查询缺少 question")
+                rows.append(row)
+    # 文件顺序固定；从整个候选集等间距抽样，避免只测开头同一类问题。
+    if len(rows) > limit:
+        rows = [rows[i * len(rows) // limit] for i in range(limit)]
+    if not rows:
+        raise ValueError("没有 answerable=true 且有 expected_doc 的冒烟查询")
+    own = retriever is None
+    if own:
+        from app.retrieval.embedder import BgeM3Embedder
+        from app.retrieval.retriever import Retriever
+        retriever = Retriever(None, BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size),
+                              uri=settings.milvus_uri, timeout_s=settings.milvus_timeout_s,
+                              collection_name=version, rerank_enabled=False)
+    try:
+        results = []
+        for row in rows:
+            docs = retriever.retrieve([row["question"]], row["question"], top_k=5)
+            expected = row["expected_doc"]
+            hit = any(doc.source == expected or doc.doc_id == expected for doc in docs)
+            results.append({"question": row["question"], "expected_doc": expected, "hit5": hit})
+        return {"hit5": sum(row["hit5"] for row in results) / len(results),
+                "queries": len(results), "results": results}
+    finally:
+        if own and retriever.client is not None:
+            from app.retrieval.store import MilvusStore
+            MilvusStore(client=retriever.client).close()
+
+
+def command(kind, argv=None, *, settings=None, store=None):
+    parser = argparse.ArgumentParser(description=f"知识库 {kind}；默认只读/预览，写操作需 --yes")
+    parser.add_argument("--alias", default="kb_chunks")
+    parser.add_argument("--state-dir", help="发布状态目录；同一 URI/alias 所有发布命令必须共享")
+    parser.add_argument("--yes", action="store_true")
+    if kind == "switch":
+        parser.add_argument("--to", required=True)
+        parser.add_argument("--check", action="store_true")
+        parser.add_argument("--min-hit5", type=float, default=0.9)
+        parser.add_argument("--eval-file", default="data/eval_ragas_gold.jsonl")
+        parser.add_argument("--check-limit", type=int, default=20)
+    if kind == "drop":
+        parser.add_argument("--version", required=True)
+    args = parser.parse_args(argv)
+    try:
+        settings = settings or cli_settings()
+        from app.retrieval.store import MilvusStore
+        from ingest.versioning import VersionManager
+        store = store or MilvusStore(settings.milvus_uri, timeout_s=settings.milvus_timeout_s)
+        manager = VersionManager(store, alias=args.alias, state_dir=args.state_dir)
+        with manager.locked() if args.yes else nullcontext():
+            if kind == "list":
+                result = manager.listing()
+            elif kind == "migrate":
+                result = manager.migrate(yes=args.yes)
+            elif kind == "drop":
+                result = manager.drop(args.version, yes=args.yes)
+            else:
+                check = None
+                if args.check:
+                    # 显式 --check 允许读检索/本地编码，即使未给 --yes 也不切换。
+                    def check(version):
+                        report = smoke_check(version, settings, eval_file=args.eval_file, limit=args.check_limit)
+                        print(json.dumps({"check": report}, ensure_ascii=False), flush=True)
+                        return report
+                    if not args.yes:
+                        import math
+                        if not math.isfinite(args.min_hit5) or not 0 <= args.min_hit5 <= 1:
+                            raise ValueError("min-hit5 必须在 [0, 1]")
+                        manager.verify(args.to)
+                        hit5 = check(args.to)["hit5"]
+                        # NaN 与任何数比较都为假，必须先要求有限值，避免把无效检查当成通过。
+                        if not math.isfinite(hit5) or hit5 < args.min_hit5:
+                            raise ValueError("Hit@5 无效或低于阈值，拒绝切换")
+                result = manager.switch(args.to, yes=args.yes, check=check, min_hit5=args.min_hit5)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except Exception as exc:
+        # 包括 SDK 异常；不重试写入、不把异常解释成 alias 不存在。
+        print(f"知识库 {kind} 失败：{exc}", file=sys.stderr)
+        return 1

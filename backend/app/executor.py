@@ -48,6 +48,29 @@ class BoundedExecutor:
             return await self._run_queued(function, *args, **kwargs)
         return await self._run_immediate(function, *args, **kwargs)
 
+    def try_submit(self, function):
+        """后台任务只用空闲名额，不阻塞提交者或挤占等待者。"""
+        with self._lock:
+            if self._closed or self._waiting or (self._queued_mode and self._active >= self._workers):
+                return None
+            if self._queued_mode:
+                self._active += 1
+                self._admitted += 1
+            elif not self._slots.acquire(blocking=False):
+                return None
+            try:
+                future = self._executor.submit(copy_context().run, function)
+            except BaseException:
+                if self._queued_mode:
+                    self._active -= 1
+                    self._admitted -= 1
+                else:
+                    self._slots.release()
+                raise
+            self._futures.add(future)
+            future.add_done_callback(self._done)
+            return future
+
     async def _run_immediate(self, function, *args, **kwargs):
         abandoned = threading.Event()
         def invoke():

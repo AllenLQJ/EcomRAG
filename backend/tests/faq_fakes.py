@@ -1,6 +1,7 @@
 """FAQ 测试替身：不依赖 jieba、rank_bm25、Redis 或 MySQL。"""
 import math
 from collections import Counter
+from fnmatch import fnmatchcase
 
 
 class FakeRepo:
@@ -48,7 +49,7 @@ class FakeRedis:
         return self.delete(key) if self.values.get(key) == expected else 0
 
     def scan(self, cursor=0, match=None, count=200):
-        return 0, [key for key in self.values if key.startswith("faq:cache:")]
+        return 0, [key for key in self.values if match is None or fnmatchcase(key, match)]
 
     def close(self):
         pass

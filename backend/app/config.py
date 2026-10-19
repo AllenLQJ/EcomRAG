@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     parent_max_chars: int = Field(default=1200, gt=0)
     faq_threshold: float = Field(default=0.9, ge=0, le=1)
     faq_cache_ttl_s: int = Field(default=86400, gt=0)
+    faq_refresh_interval_s: float = Field(default=3, gt=0, allow_inf_nan=False)
+    faq_refresh_warning_interval_s: float = Field(default=60, gt=0, allow_inf_nan=False)
     rerank_enabled: bool = True
     rerank_provider: Literal["local", "remote"] = "local"
     rerank_remote_base_url: str = ""

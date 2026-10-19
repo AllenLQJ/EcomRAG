@@ -26,6 +26,22 @@ class FakeMilvus:
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_same_retriever_uses_alias_on_each_new_request(self):
+        class AliasClient:
+            current = "v1"
+
+            def hybrid_search(self, **kwargs):
+                self_name = kwargs["collection_name"]
+                assert self_name == "kb_chunks"
+                return [[hit(self.current, 0.03)]]
+
+        client = AliasClient()
+        retriever = Retriever(client, FakeEmbedder(), rerank_enabled=False,
+                              request_factory=lambda **kw: kw, rrf_factory=lambda **kw: kw)
+        self.assertEqual(retriever.retrieve(["查询"], "查询")[0].parent_id, "v1")
+        client.current = "v2"
+        self.assertEqual(retriever.retrieve(["查询"], "查询")[0].parent_id, "v2")
+
     def build(self, results, *, enabled=False, limit=20, mode="parent"):
         client = FakeMilvus(results)
         encoder = FakeEmbedder()

@@ -8,6 +8,7 @@ from time import perf_counter
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, RetrievedDoc
 from app.tracing import record
 from app.retrieval.reranker import Reranker, rerank_text
+from app.retrieval.store import DEFAULT_COLLECTION
 
 OUTPUT_FIELDS = ["parent_id", "doc_id", "title", "source", "parent_text", "child_text"]
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ class Retriever:
     """多查询混合检索，父块去重后按需重排；不自行加载配置或模型。"""
 
     def __init__(self, client, embedder, reranker: Reranker | None = None, *,
-                 uri="http://127.0.0.1:19530", collection_name="kb_chunks",
+                 uri="http://127.0.0.1:19530", collection_name=DEFAULT_COLLECTION,
                  rerank_enabled=True, rerank_candidates=10, rerank_max_chars=600,
                  rerank_text_mode="child",
                  rerank_fallback="rrf", local_rerank=None,
@@ -32,6 +33,7 @@ class Retriever:
         if not math.isfinite(timeout_s) or timeout_s <= 0:
             raise ValueError("Milvus 超时必须是正的有限秒数")
         self.client, self.embedder, self.reranker = client, embedder, reranker
+        # 保留逻辑 alias，每次 RPC 由服务端解析；不在进程内固定成实体版本名。
         self.uri, self.collection_name = uri, collection_name
         self.timeout_s = timeout_s
         # 名称与 rerank_candidates() 方法区分，避免实例属性遮蔽方法。

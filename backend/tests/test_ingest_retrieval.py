@@ -43,6 +43,12 @@ class FakeMilvusClient:
     def has_collection(self, **kwargs):
         return self.created is not None
 
+    def list_collections(self, **kwargs):
+        return [self.created["collection_name"]] if self.created else []
+
+    def list_aliases(self, **kwargs):
+        return []
+
     def create_schema(self, **kwargs):
         self.schema_options = kwargs
         return Recorder()

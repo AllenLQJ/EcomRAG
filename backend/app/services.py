@@ -70,8 +70,10 @@ class Services:
                 str(resolve_data_path(settings.reranker_path)),
                 settings.rerank_max_length, settings.rerank_batch_size, settings.rerank_fp16,
             )
-        self.cache = FaqCache(url=settings.redis_url, ttl_s=settings.faq_cache_ttl_s)
+        self.cache = FaqCache(url=settings.redis_url, ttl_s=settings.faq_cache_ttl_s,
+                              warning_interval_s=settings.faq_refresh_warning_interval_s)
         self.faq = None
+        self._faq_init_lock = threading.Lock()
         # Retriever 持有可延迟连接的 MilvusClient 封装。
         self.retriever = Retriever(None, self.embedder, self.reranker, uri=settings.milvus_uri,
                                    timeout_s=settings.milvus_timeout_s,
@@ -91,15 +93,22 @@ class Services:
         self.model_executor = BoundedExecutor(settings.model_io_workers, name="model-io",
                                               queue_size=settings.model_io_queue_size,
                                               queue_timeout_s=settings.model_io_queue_timeout_s)
+        # 刷新不占请求池名额，单 worker 时请求也无需等待整个快照构建。
+        self.faq_refresh_executor = BoundedExecutor(1, name="faq-refresh", queue_size=0)
 
     def _initialize(self, *, use_cache=True):
-        if self.faq is None:
-            self.faq = FaqService(FaqRepo(settings=self.settings), self.cache, self.embedder,
-                                  threshold=self.settings.faq_threshold, clear_cache_on_load=use_cache)
+        with self._faq_init_lock:
+            if self.faq is None:
+                self.faq = FaqService(
+                    FaqRepo(settings=self.settings), self.cache, self.embedder,
+                    threshold=self.settings.faq_threshold, clear_cache_on_load=use_cache,
+                    refresh_interval_s=self.settings.faq_refresh_interval_s,
+                    warning_interval_s=self.settings.faq_refresh_warning_interval_s,
+                    submit_refresh=self.faq_refresh_executor.try_submit, model_lock=self._model_lock)
 
     def _warmup(self):
+        self._initialize()
         with self._model_lock:
-            self._initialize()
             self.embedder.encode(["店铺服务"])
             if self.settings.rerank_enabled and self.settings.rerank_provider == "local":
                 self.reranker.rerank("店铺服务", ["店铺服务"])
@@ -114,11 +123,10 @@ class Services:
             raise
 
     def faq_lookup(self, question, *, use_cache=True):
-        with self._model_lock:
-            self._initialize(use_cache=use_cache)
-            if use_cache:
-                return self.faq.faq_lookup(question)
-            return self.faq.faq_lookup(question, use_cache=False)
+        self._initialize(use_cache=use_cache)
+        if use_cache:
+            return self.faq.faq_lookup(question)
+        return self.faq.faq_lookup(question, use_cache=False)
 
     def retrieve(self, queries, rerank_query, top_k=None):
         with self._model_lock:
@@ -173,8 +181,11 @@ class Services:
         await self.llm.aclose()
         if isinstance(self.reranker, RemoteReranker):
             await self.reranker.aclose()
+        await self.faq_refresh_executor.aclose()
         # 等待已超时请求的同步工作退出，再关闭共享连接。
         def close():
+            if self.faq is not None:
+                self.faq.close()
             with self._model_lock:
                 if self.cache.client is not None:
                     self.cache.client.close()

@@ -1,4 +1,5 @@
 import sys
+from contextlib import nullcontext
 from types import ModuleType
 from unittest.mock import Mock
 
@@ -6,7 +7,7 @@ import pytest
 
 from app import config
 from app.retrieval import embedder, store
-from ingest import load_faq, run
+from ingest import faq_admin, load_faq, run, versioning
 from ingest.loaders import resolve_data_path
 
 
@@ -22,7 +23,10 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         embed_batch_size=7, parent_max_chars=1000, child_chunk_size=280, child_chunk_overlap=40,
     )
     getter = Mock(side_effect=AssertionError("注入配置后不得读取 .env")) if injected else Mock(return_value=settings)
-    monkeypatch.setattr(config, "get_settings", getter)
+    if mode == "faq":
+        monkeypatch.setattr(config, "get_settings", getter)
+    else:
+        monkeypatch.setattr(run, "cli_settings", getter)
     kwargs = {"settings": settings} if injected else {}
 
     if mode == "faq":
@@ -30,26 +34,36 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         driver = ModuleType("pymysql")
         driver.connect = Mock(return_value=connection)
         monkeypatch.setitem(sys.modules, "pymysql", driver)
-        upsert = Mock(return_value=37)
-        monkeypatch.setattr(load_faq, "upsert_faq", upsert)
+        importer = Mock(return_value=True)
+        notifier = Mock(return_value=0)
+        monkeypatch.setattr(faq_admin, "import_rows", importer)
+        monkeypatch.setattr(faq_admin, "notify", notifier)
         assert load_faq.main(["data/faq.csv"], **kwargs) == 0
         driver.connect.assert_called_once_with(
             host="127.0.0.1", port=3307, user="test_user",
             password=settings.mysql_password.get_secret_value(), database="test_qimu",
             charset="utf8mb4", autocommit=False, connect_timeout=10,
+            read_timeout=10, write_timeout=10,
         )
-        assert upsert.call_args.args[0] is connection
-        assert len(upsert.call_args.args[1]) == 37
+        assert importer.call_args.args[0] is connection
+        assert len(importer.call_args.args[1]) == 37
+        assert importer.call_args.kwargs == dict(dry_run=False, prune=False, yes=False, ignored=0,
+                                                 backup_dir=None)
+        notifier.assert_called_once_with(settings, client=None)
         connection.close.assert_called_once_with()
     else:
         encoder = Mock()
         client = Mock()
         monkeypatch.setattr(embedder, "BgeM3Embedder", encoder)
         monkeypatch.setattr(store, "MilvusStore", client)
+        manager = Mock()
+        manager.current.return_value = None
+        manager.locked.side_effect = nullcontext
+        monkeypatch.setattr(versioning, "VersionManager", Mock(return_value=manager))
         # 这里只验证参数传递，统计值为替身；真实默认切块基准见 test_ingest_run.py。
         ingest = Mock(return_value={"documents": 19, "parent_chunks": 41, "child_chunks": 79})
         monkeypatch.setattr(run, "ingest_directory", ingest)
-        args = ["--dir", "data/docs"] + (["--dry-run"] if mode == "dry_run" else [])
+        args = ["--dir", "data/docs"] + (["--dry-run"] if mode == "dry_run" else ["--yes"])
         assert run.main(args, **kwargs) == 0
         expected = {
             "dry_run": mode == "dry_run", "batch_size": 7,

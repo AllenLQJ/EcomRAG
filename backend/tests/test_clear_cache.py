@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from app.faq.cache import FaqCache, clear_cache
 from ingest import clear_cache as cli
+from faq_fakes import FakeRedis
 
 
 class BatchRedis:
@@ -25,6 +26,21 @@ class BatchRedis:
 
 
 class ClearCacheTests(unittest.TestCase):
+    def test_real_scan_argument_excludes_version_and_rate_keys(self):
+        client = FakeRedis()
+        client.values.update({"faq:cache:first": "a", "faq:cache:second": "b",
+                              "faq:data:version": "7", "chat:rate:ip:keep": "3"})
+        self.assertEqual(set(client.scan(match="faq:cache:*")[1]),
+                         {"faq:cache:first", "faq:cache:second"})
+        self.assertIn("faq:data:version", client.scan(match="faq:*")[1])
+        self.assertEqual(set(client.scan(match="*")[1]), set(client.values))
+        self.assertEqual(client.scan(match="chat:rate:*")[1], ["chat:rate:ip:keep"])
+        self.assertEqual(set(client.scan()[1]), set(client.values))
+        with patch.object(client, "scan", wraps=client.scan) as scan:
+            self.assertEqual(clear_cache(client), 2)
+        scan.assert_called_once_with(cursor=0, match="faq:cache:*", count=200)
+        self.assertEqual(client.values, {"faq:data:version": "7", "chat:rate:ip:keep": "3"})
+
     def test_scan_and_delete_are_batched_and_prefix_is_restricted(self):
         client = BatchRedis()
         self.assertEqual(clear_cache(client, batch_size=2), 6)

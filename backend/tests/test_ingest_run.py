@@ -39,7 +39,7 @@ class DryRunTests(unittest.TestCase):
         self.assertTrue(stats["dry_run"])
 
     def test_cli_relative_path_with_mocked_settings_and_no_dotenv_reads(self):
-        # 默认 CLI 调用配置加载器，但在测试中替换它，审计钩子禁止访问真实 .env。
+        # 默认 CLI 禁用 dotenv；替换 Settings 并审计，禁止访问真实 .env。
         code = '''import os, runpy, sys, types
 def audit(event, args):
     if event == "open" and isinstance(args[0], (str, bytes)):
@@ -52,13 +52,16 @@ calls = []
 def get_settings():
     calls.append(True)
     return types.SimpleNamespace(embed_batch_size=16, parent_max_chars=1200, child_chunk_size=300, child_chunk_overlap=50)
-config.get_settings = get_settings
+def settings_factory(**kwargs):
+    assert kwargs == {"_env_file": None}, "CLI 必须禁用 dotenv"
+    return get_settings()
+config.Settings = settings_factory
 sys.modules["app.config"] = config
 sys.argv = ["ingest.run", "--dir", "data/docs", "--dry-run"]
 try:
     runpy.run_module("ingest.run", run_name="__main__")
 finally:
-    assert len(calls) == 1, "CLI 必须通过 get_settings 加载配置"
+    assert len(calls) == 1, "CLI 必须通过禁用 dotenv 的 Settings 加载配置"
 '''
         result = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
