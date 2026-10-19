@@ -240,7 +240,7 @@ LLM_MAX_CONCURRENCY=4
 
 ### 5.1 现有数据
 
-`data/docs/` 有 19 份 Markdown，清单如下；默认父块 1200、子块 300、重叠 50 时为 41 个父块、81 个子块（`backend/tests/test_ingest_run.py` 固定该基准）。
+`data/docs/` 有 19 份 Markdown，清单如下；默认父块 1200、子块 300、重叠 50 时为 41 个父块、79 个子块（`backend/tests/test_ingest_run.py` 固定该基准）。
 
 | 文件 | 内容 |
 | --- | --- |
@@ -264,7 +264,7 @@ LLM_MAX_CONCURRENCY=4
 | promotion_coupons.md | 优惠券使用与返还 |
 | promotion_membership.md | 会员与积分规则 |
 
-`data/faq.csv` 有 37 条数据（不含表头，37 个不同问题），表头固定为 question,answer,category；分类为 after_sales/logistics/payment/product/promotion。导入时同问题保留 CSV 最后一条，数据库按 question 更新或插入，不删除文件中已移除的问题。所有样例答案应与知识文档一致。
+`data/faq.csv` 有 37 条数据（不含表头，37 个不同问题），表头固定为 question,answer,category；分类为 after_sales/logistics/payment/product/promotion。导入时同问题保留 CSV 最后一条，数据库按 question 更新或插入，不删除文件中已移除的问题。所有 FAQ 答案应与知识文档一致。
 
 | 评测文件 | 题数 | 用途与期望路由 |
 | --- | --- | --- |
@@ -290,6 +290,32 @@ uv run python -m ingest.purge_chat_logs --days 30 --yes
 路径先按当前工作目录查找，再回退仓库根目录，所以在 backend 下 `data/docs`、`../data/docs` 均可解析。模型应事先准备在仓库 `models/`，运行时强制离线加载，不自动下载。
 
 loader 支持 MD/TXT/PDF/DOCX，扫描 PDF 不做 OCR；PDF/DOCX 解析器延迟导入。Markdown 按二级标题整节切父块，介绍并入首节，超长再按字符/标点切分；子块前加文档标题。doc_id 来自源相对路径 SHA256 的前 24 位，parent_id/chunk_id 追加块序号，Milvus 按稳定 chunk_id upsert。重复导入相同内容不会增行，但**不会清理删除或切分变化留下的旧块**；变更切块或移除文档时需另行清理/重建集合，再入库验证。
+
+资料标题与介绍精简后，默认子块由 81 变为 79，父块仍为 41。已有库需要先按这 19 份资料的 doc_id 清理旧块，避免遗留旧标题与旧正文。在 `backend/` 下执行以下清理与导入命令；完成后重启后端以重建内存 FAQ 索引。
+
+```bash
+cd backend
+uv run python - <<'PY'
+import json
+from app.config import get_settings
+from ingest.loaders import load_directory
+from pymilvus import MilvusClient
+
+settings = get_settings()
+client = MilvusClient(uri=settings.milvus_uri, timeout=settings.milvus_timeout_s)
+try:
+    if client.has_collection(collection_name="kb_chunks"):
+        doc_ids = [doc.doc_id for doc in load_directory("../data/docs")]
+        client.delete(collection_name="kb_chunks", filter="doc_id in " + json.dumps(doc_ids),
+                      timeout=settings.milvus_timeout_s)
+        client.flush(collection_name="kb_chunks", timeout=settings.milvus_timeout_s)
+finally:
+    client.close()
+PY
+uv run python -m ingest.run --dir ../data/docs
+uv run python -m ingest.load_faq ../data/faq.csv
+uv run python -m ingest.clear_cache
+```
 
 FAQ 导入后重启后端更新内存索引。`clear_cache` 仅 SCAN/分批删除 `faq:cache:*`，保留限流计数，不使用 FLUSHDB。`purge_chat_logs --days N` 默认只统计过期原文，--yes 才删除；此策略不会自动定时执行。查看原文可用 `uv run python -m eval.chat_logs_view --since 1d --limit 20`，完整记录用 `--full ID`，输出不写应用日志。
 
@@ -346,9 +372,8 @@ frontend/
 | VITE_API_BASE | 空字符串 | 浏览器 API origin，空值同源；自动追加 `/api/v1/chat[/stream]`，不要重复写路径 |
 | VITE_PROXY_TARGET | `http://127.0.0.1:8010` | 仅开发服务器 `/api` 代理目标，不进入浏览器配置 |
 | VITE_HUMAN_SUPPORT_URL | 空字符串 | 完整 http(s) 人工客服链接，无效或为空时隐藏入口 |
-| VITE_SHOW_SAMPLE_BADGE | `true` | 仅字符串 false 隐藏样例标签 |
 | VITE_STORE_NAME | `灵码` | 店铺名、欢迎语与网页标题，空白回退灵码 |
-| VITE_MOCK | `0` | 严格为 1 才使用本地样例，不请求后端 |
+| VITE_MOCK | `0` | 严格为 1 才使用本地预设响应，不请求后端 |
 | VITE_STREAM | `1` | 默认 SSE，严格为 0 才只走 JSON |
 | VITE_SHOW_TRACE_TOGGLE | `0` | 严格为 1 时公开显示「查看链路」入口 |
 
@@ -358,7 +383,9 @@ Vite 客户端变量在构建时注入，变更需重启开发服务器或重建
 
 默认用 fetch + ReadableStream POST SSE；解析支持 UTF-8 跨块、CRLF、多行 data 与注释。首个合法业务事件前超时 60 秒，之后每次合法业务事件重置 30 秒空闲计时；未知事件及注释心跳不续期。首合法事件前发生网络错误、HTTP 非成功（含 404/405）、非 SSE、空流或解析异常时，自动回退一次 JSON；**代码的兜底范围不限于 404/405**。已收到 meta/status/delta/done/error 后任何失败都显示错误并允许手动重试，主动取消和超时不自动回退。
 
-done 前 `[n]` 为普通文字，done 后用最终 answer/sources 启用引用、来源、路由与耗时；来源默认展开，点击引用会展开、滚动并聚焦对应卡片，卡片不显示 doc_id。Markdown 不启用 raw HTML，模型图片只显示替代文字。错误气泡保留业务码和 requestId 数据，但不展示编号或后端内部错误文本。
+done 前 `[n]` 为普通文字，done 后用最终 answer/sources 启用引用、来源、路由与耗时；来源默认展开，点击引用会展开、滚动并聚焦对应卡片，卡片不显示 doc_id。摘要只在展示前移除行首 Markdown 标记及重复的开头标题、合并空白和省略号；空正文显示独立兜底，不改接口或历史数据。Markdown 不启用 raw HTML，模型图片只显示替代文字。错误气泡保留业务码和 requestId 数据，但不展示编号或后端内部错误文本。
+
+手机宽度 <641px 的欢迎标题与说明仅在当前会话无消息时显示，第一条消息发出即隐藏，新建空会话后恢复；桌面行为不变。输入区下方仅保留字数，页头保留业务操作入口。应用与品牌预览页均使用 `/favicon.svg?v=2` 的墨印图标和 `#16171A` 主题色。
 
 Enter 发送、Shift+Enter 换行，IME 组合期不发送；请求中锁定发送与重试，新对话/切换会话可取消旧请求。请求 epoch 隔离迟到事件；上滑阅读时不强制滚到底部。生成中消息区 aria-busy，终态再播报完整回答或错误，避免逐字重复播报。
 
@@ -366,7 +393,7 @@ Enter 发送、Shift+Enter 换行，IME 组合期不发送；请求中锁定发�
 
 当前会话 UUID 存 `localStorage['ecomrag.session_id']`，历史存 `localStorage['lingma.conversations.v1']`，每项含 id/title/createdAt/updatedAt/messages；标题取首问前 20 个 Unicode 码点。最多 30 个会话，每个最多最近 100 条已完成消息（50 轮，已有成功会话可包含错误回合）；按 updatedAt 保留最新项。首轮失败不创建列表项，首次成功回答或拒答后才进入列表。
 
-旧 `sessionStorage['ecomrag.messages']` 的完整回合会迁移并删除旧键，未完成末尾 user 不保存。存储异常退回内存，刷新可能丢失；同源标签页共享 localStorage，但没有跨标签页事件合并或跨设备同步。桌面 ≥1024px 为固定侧栏，较窄屏为历史抽屉；列表分今天/昨天/近 7 天/更早，删除与清空需行内确认。切换、新对话、删除当前会话、清空时中止相关请求。
+旧 `sessionStorage['ecomrag.messages']` 的完整回合会迁移并删除旧键，未完成末尾 user 不保存。存储异常退回内存，刷新可能丢失；同源标签页共享 localStorage，但没有跨标签页事件合并或跨设备同步。桌面 ≥1024px 的侧栏默认 260px，可拖拽调整至 200–420px；分隔线支持左右方向键每次 16px、Home 最小值、End/双击默认值，宽度保存到版本化 localStorage，较窄屏为历史抽屉；列表分今天/昨天/近 7 天/更早，删除与清空需行内确认。切换、新对话、删除当前会话、清空时中止相关请求。
 
 `VITE_SHOW_TRACE_TOGGLE=1`、URL `?debug=1` 或 `localStorage['ecomrag.debug']='1'` 任一项才显示链路入口。入口可见不等于开启，开关状态存 `sessionStorage['ecomrag.trace']`，默认关闭；开启才请求 debug=true，关闭立即隐藏已有面板。后端仍须 ALLOW_TRACE=true；前端隐藏不是权限边界。真实阶段含 cache/faq/router/retrieve/rerank/generate/total，改写补充重排有 detail，未知字段仍可展示。
 
@@ -374,7 +401,7 @@ Enter 发送、Shift+Enter 换行，IME 组合期不发送；请求中锁定发�
 
 后端在 `backend/` 使用 `uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers --reload`；前端在 `frontend/` 使用 `npm install`、`npm run dev`，固定端口 3000 且 strictPort=true。默认代理仅转 `/api`，不代理 `/health`；浏览器可直接访问后端健康检查地址。
 
-`VITE_MOCK=1 npm run dev` 为离线样例界面，Mock 流式按 Unicode 字符发送增量，含阶段事件，is_mock=true；history 可传入但不驱动真实推理。`npm run build` 先类型检查再生成 dist，`npm run preview` 只预览静态产物，不提供开发 API 代理；生产需同源反代 `/api` 或构建时指定 API origin 并匹配后端 CORS。
+`VITE_MOCK=1 npm run dev` 为离线模拟界面，Mock 流式按 Unicode 字符发送增量，含阶段事件，is_mock=true；history 可传入但不驱动真实推理。`npm run build` 先类型检查再生成 dist，`npm run preview` 只预览静态产物，不提供开发 API 代理；生产需同源反代 `/api` 或构建时指定 API origin 并匹配后端 CORS。
 
 ## 7. 评测、测试与验收
 
@@ -498,12 +525,12 @@ SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback
 - 海外访问智谱可能有跨境网络抖动；12 秒单次超时、最多三次网络/超时重试仍受 40 秒总预算限制，不能保证每次都有三次重试机会。
 - 16 GB 机器内存紧张或 swap 较高时，既有记录中重排会从约 2.5 秒恶化到 20 秒以上；演示时关闭无关大应用、保持接电与不休眠，先预热并留出内存。以上性能观察来自 `docs/演示准备.md` 的实测记录。
 - 降低候选数或关闭重排可减少工作量，但会改变质量与拒答语义，须重新评测；不能直接沿用 parent/fp16 的历史分数分布解释 child/fp32 阈值。
-- 知识覆盖仅为现有样例，NO_ANSWER 是第二道资料不足兜底；不把商品总览或历史回答当作完整店铺事实。
+- 知识覆盖仅为现有资料，NO_ANSWER 是第二道资料不足兜底；不把商品总览或历史回答当作完整店铺事实。
 
 ## 9. 变更与决策记录
 
 - **拒答阈值 0.5 → 0.2**：既有 child 模式调参记录中应答口语题可落在 0.20–0.44，0.5 会误拒，拒答样本约 0.088，另有 0.1396 的样本已被 sensitive 路由拒绝；代码与 `backend/tests/test_pipeline.py` 固定验证这些分数及 0.2 边界，并保留 NO_ANSWER 兜底，原始真实评测报告未随仓库提供。
-- **改写补充重排取消相似度门槛**：少量增字也可能改变相关分；`retrieval/rewrite.py` 只排除规范化相同/空改写等条件，`test_rewrite_rerank.py` 用「支持哪些付款方式」与「店铺支持哪些付款方式」的 0.083→0.688 回归样例验证该规则，测试分数是替身输入。
+- **改写补充重排取消相似度门槛**：少量增字也可能改变相关分；`retrieval/rewrite.py` 只排除规范化相同/空改写等条件，`test_rewrite_rerank.py` 用「支持哪些付款方式」与「店铺支持哪些付款方式」的 0.083→0.688 回归用例验证该规则，测试分数是替身输入。
 - **采用固定隧道**：`docs/演示准备.md` 明确临时隧道不支持流式；`app/streaming.py` 与 `frontend/src/api/client.ts` 依赖持续 SSE 事件，因此采用 named tunnel 并关闭代理缓冲，实际域名仍需端到端验收。
 - **切换 glm-5.3-flash 与 enabled/low 思考**：按当前部署约定显式覆盖地址与两个模型角色，保留 OpenAI 兼容客户端；`llm/diagnostics.py` 和 `test_llm_reasoning.py` 对 1210 给出固定 enabled/low 建议，代码不自动切换供应商或修改配置。
 - **LLM 并发默认 2**：以 `config.py` 与 `test_settings.py` 的保守默认值控制 HTTP 名额和连接池（`llm/client.py`）；演示建议值 4 依据 `docs/演示准备.md`，需要匹配账号配额并压测，不据此宣称单机模型吞吐提升。

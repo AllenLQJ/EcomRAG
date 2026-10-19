@@ -1,6 +1,6 @@
 # 灵码 · 电商 RAG 智能客服
 
-面向虚构店铺「灵码」公开政策与商品咨询的访客客服。后端 Python 3.11 / FastAPI，前端 React 18 / TypeScript / Vite / Tailwind。
+面向店铺「灵码」公开政策与商品咨询的访客客服。后端 Python 3.11 / FastAPI，前端 React 18 / TypeScript / Vite / Tailwind。
 
 在线链路：限流 → Redis 缓存 → FAQ（BM25 + bge-m3）→ LLM 路由 → Milvus 混合检索 → 重排 → 带 `[n]` 引用的生成；资料不足或敏感问题拒答。支持 SSE 流式回答、多轮上下文和浏览器历史对话。
 
@@ -54,7 +54,7 @@ npm install
 npm run dev
 ```
 
-打开 <http://localhost:3000>。不想启动后端，可以用 `VITE_MOCK=1 npm run dev` 体验固定样例。
+打开 <http://localhost:3000>。不想启动后端，可以用 `VITE_MOCK=1 npm run dev` 体验离线固定响应。
 
 检查后端：`curl http://127.0.0.1:8010/health`。
 
@@ -105,7 +105,7 @@ uv run python -m ingest.clear_cache                 # 清 FAQ 缓存
 uv run python -m ingest.migrate_db                  # 数据库补列（幂等）
 ```
 
-改了文档或 FAQ 后重新入库并清缓存；FAQ 更新需重启后端重建内存索引。
+改了文档或 FAQ 后重新入库并清缓存；标题或切块变化需先按[开发文档 5.2 节](docs/电商RAG智能客服-开发文档.md#52-入库与维护命令)清理受影响资料的旧块，再导入，避免保留旧文案。FAQ 更新需重启后端重建内存索引。
 
 ## 部署
 
