@@ -142,7 +142,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         payload = getattr(request.state, "chat_payload", None)
         if settings.chat_log_enabled and payload is not None:
             row = ChatLog(request.state.request_id, payload.session_id, payload.message, "", "error",
-                          (perf_counter() - request.state.chat_started) * 1000, error_code=exc.code)
+                          (perf_counter() - request.state.chat_started) * 1000, error_code=exc.code,
+                          history_count=len(payload.history))
             response.background = BackgroundTask(persist, chat_logs, row)
         return response
 
@@ -172,7 +173,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         payload = getattr(request.state, "chat_payload", None)
         if settings.chat_log_enabled and payload is not None:
             row = ChatLog(request.state.request_id, payload.session_id, payload.message, "", "error",
-                          (perf_counter() - request.state.chat_started) * 1000, error_code=INTERNAL_ERROR)
+                          (perf_counter() - request.state.chat_started) * 1000, error_code=INTERNAL_ERROR,
+                          history_count=len(payload.history))
             response.background = BackgroundTask(persist, chat_logs, row)
         return response
 
@@ -202,23 +204,25 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             if settings.chat_log_enabled:
                 row = ChatLog(result.request_id, result.session_id, payload.message, result.answer,
                               result.route, (perf_counter() - started) * 1000, strategy=result.strategy,
-                              sources=[source.model_dump() for source in result.sources])
+                              sources=[source.model_dump() for source in result.sources],
+                              history_count=len(payload.history))
                 background_tasks.add_task(persist, chat_logs, row)
             return result
         finally:
             stages = {}
             for item in trace:
                 stages[item.stage] = round(stages.get(item.stage, 0) + item.ms, 3)
-            session = payload.session_id
+            # 多轮不输出客户端 session，避免客户端把历史片段放入标识造成旁路泄露。
+            session = "[redacted]" if payload.history else payload.session_id
             # session 是用户输入，避免意外与原文或 key 相同，并转义换行。
             for secret in (payload.message, result.answer if result else "",
                            settings.llm_api_key.get_secret_value()):
                 if secret:
                     session = session.replace(secret, "[redacted]")
-            logger.info("chat_done session_id=%s route=%s strategy=%s total_ms=%.3f stages_ms=%s documents=%d",
+            logger.info("chat_done session_id=%s route=%s strategy=%s total_ms=%.3f stages_ms=%s documents=%d history_count=%d",
                         json.dumps(session), result.route if result else "error",
                         result.strategy if result else None, (perf_counter() - started) * 1000,
-                        json.dumps(stages), len(result.sources) if result else 0)
+                        json.dumps(stages), len(result.sources) if result else 0, len(payload.history))
 
     @app.post("/api/v1/chat/stream")
     async def chat_stream(payload: ChatRequest, request: Request):

@@ -1,16 +1,30 @@
 from typing import Literal
+from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field, field_validator
+
+from app.history import normalize_history
 
 Route = Literal["cache", "faq", "rag", "general", "fallback"]
 Intent = Literal["general", "knowledge", "sensitive"]
 Strategy = Literal["direct", "hyde", "subquery", "stepback"]
 
 
+class HistoryMessage(TypedDict):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=500)
     debug: bool = False
+    history: list[HistoryMessage] = Field(default_factory=list)
+
+    @field_validator("history", mode="before")
+    @classmethod
+    def validate_history(cls, value):
+        return normalize_history(value)
 
     @field_validator("message", "session_id")
     @classmethod

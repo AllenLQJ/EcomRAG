@@ -6,7 +6,7 @@ from app.chat_log import connect_mysql, ensure_chat_logs_schema
 
 
 def main(argv=None, *, settings=None, connection_factory=None):
-    argparse.ArgumentParser(description="为 chat_logs 幂等补充 sources_json 和 error_code").parse_args(argv)
+    argparse.ArgumentParser(description="为 chat_logs 幂等补充 sources_json、error_code 和 history_count").parse_args(argv)
     if settings is None:
         from app.config import get_settings
         settings = get_settings()

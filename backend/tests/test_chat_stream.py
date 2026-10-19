@@ -288,7 +288,8 @@ def test_stream_actual_dependency_failure_and_unexpected_error_do_not_leak(app_f
 
 
 @pytest.mark.parametrize('write_fails', [False, True])
-def test_disconnect_shields_partial_chat_log_and_preserves_cancellation(write_fails, caplog):
+@pytest.mark.parametrize('history', [[], [{'role': 'assistant', 'content': 'PRIVATE_HISTORY'}]])
+def test_disconnect_shields_partial_chat_log_and_preserves_cancellation(write_fails, history, caplog):
     caplog.set_level(logging.INFO)
     async def run():
         entered, closed, writing, finish_write = (asyncio.Event() for _ in range(4))
@@ -307,7 +308,7 @@ def test_disconnect_shields_partial_chat_log_and_preserves_cancellation(write_fa
                 raise RuntimeError('PRIVATE_QUESTION PRIVATE_PARTIAL_ANSWER FAKE_KEY')
         writer = SimpleNamespace(write=AsyncMock(side_effect=write))
         services.chat_general_stream = source
-        stream = chat_events(ChatRequest(session_id='s', message='PRIVATE_QUESTION'), 'r',
+        stream = chat_events(ChatRequest(session_id='s', message='PRIVATE_QUESTION', history=history), 'r',
                              settings=Settings(_env_file=None, speculative_retrieval=False, llm_api_key='FAKE_KEY'),
                              services=services, before_chat=AsyncMock(), chat_logs=writer)
         pending = None
@@ -327,6 +328,7 @@ def test_disconnect_shields_partial_chat_log_and_preserves_cancellation(write_fa
             writer.write.assert_awaited_once()
             row = writer.write.await_args.args[0]
             assert (row.question, row.answer, row.route) == ('PRIVATE_QUESTION', 'PRIVATE_PARTIAL_ANSWER', 'error')
+            assert row.history_count == len(history) and not hasattr(row, 'history')
         finally:
             finish_write.set()
             if pending is not None and not pending.done():
@@ -334,7 +336,7 @@ def test_disconnect_shields_partial_chat_log_and_preserves_cancellation(write_fa
                 await asyncio.gather(pending, return_exceptions=True)
             await stream.aclose()
     asyncio.run(run())
-    assert all(value not in caplog.text for value in ('PRIVATE_QUESTION', 'PRIVATE_PARTIAL_ANSWER', 'FAKE_KEY'))
+    assert all(value not in caplog.text for value in ('PRIVATE_QUESTION', 'PRIVATE_PARTIAL_ANSWER', 'FAKE_KEY', 'PRIVATE_HISTORY'))
 
 
 @pytest.mark.parametrize('failure', ['cancelled', 'serialize'])

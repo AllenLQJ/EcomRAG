@@ -49,7 +49,8 @@ async def evaluate(rows, *, settings, services, doc_ids=None):
         error_result = None
         started = perf_counter()
         try:
-            result = await run_chat(ChatRequest(session_id=f"eval-{i}", message=row["question"], debug=True),
+            result = await run_chat(ChatRequest(session_id=f"eval-{i}", message=row["question"], debug=True,
+                                                history=row.get("history", [])),
                                     settings=settings, services=services, trace_sink=trace)
         except AppError as exc:
             errors.append({"question": row["question"], "code": exc.code})

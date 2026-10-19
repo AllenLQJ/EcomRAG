@@ -69,10 +69,10 @@ class Services:
                                               queue_size=settings.model_io_queue_size,
                                               queue_timeout_s=settings.model_io_queue_timeout_s)
 
-    def _initialize(self):
+    def _initialize(self, *, use_cache=True):
         if self.faq is None:
             self.faq = FaqService(FaqRepo(settings=self.settings), self.cache, self.embedder,
-                                  threshold=self.settings.faq_threshold)
+                                  threshold=self.settings.faq_threshold, clear_cache_on_load=use_cache)
 
     def _warmup(self):
         with self._model_lock:
@@ -90,10 +90,12 @@ class Services:
                 raise unavailable() from None
             raise
 
-    def faq_lookup(self, question):
+    def faq_lookup(self, question, *, use_cache=True):
         with self._model_lock:
-            self._initialize()
-            return self.faq.faq_lookup(question)
+            self._initialize(use_cache=use_cache)
+            if use_cache:
+                return self.faq.faq_lookup(question)
+            return self.faq.faq_lookup(question, use_cache=False)
 
     def retrieve(self, queries, rerank_query, top_k=None):
         with self._model_lock:

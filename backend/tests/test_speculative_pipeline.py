@@ -123,6 +123,7 @@ def test_disabled_or_multiturn_uses_rewritten_query_after_router(enabled, histor
         def retrieve(queries, rerank_query, top_k):
             services.route.assert_awaited_once_with("原问题", history)
             assert queries == ["改写后的检索问题"]
+            assert rerank_query == ("改写后的检索问题" if history else "原问题")
             return [document()]
         services.retrieve.side_effect = retrieve
         result = await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=enabled),

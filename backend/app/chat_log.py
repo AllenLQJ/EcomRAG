@@ -37,7 +37,8 @@ def ensure_chat_logs_schema(connection):
                 "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s", ("chat_logs",))
             columns = {row[0] for row in cursor.fetchall()}
             # 只能从固定白名单生成 DDL；标识符不来自输入。
-            for name, definition in (("sources_json", "JSON NULL"), ("error_code", "INT NULL")):
+            for name, definition in (("sources_json", "JSON NULL"), ("error_code", "INT NULL"),
+                                     ("history_count", "TINYINT UNSIGNED NOT NULL DEFAULT 0")):
                 if name not in columns:
                     cursor.execute(f"ALTER TABLE chat_logs ADD COLUMN {name} {definition}")
         connection.commit()
@@ -58,15 +59,18 @@ class ChatLog:
     strategy: str | None = None
     sources: list[dict] = field(default_factory=list)
     error_code: int | None = None
+    history_count: int = 0
 
 
 def insert_chat_log(connection, row):
     with connection.cursor() as cursor:
         cursor.execute(
             "INSERT INTO chat_logs (request_id, session_id, user_id, question, answer, route, "
-            "strategy, latency_ms, sources_json, error_code) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            "strategy, latency_ms, sources_json, error_code, history_count) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (row.request_id, row.session_id, None, row.question, row.answer, row.route, row.strategy,
-             max(0, round(row.latency_ms)), json.dumps(row.sources, ensure_ascii=False), row.error_code),
+             max(0, round(row.latency_ms)), json.dumps(row.sources, ensure_ascii=False), row.error_code,
+             row.history_count),
         )
     connection.commit()
 

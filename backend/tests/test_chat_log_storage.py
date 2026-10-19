@@ -61,13 +61,15 @@ class ChatLogStorageTests(unittest.TestCase):
     def test_insert_preserves_original_text_only_in_bound_values(self):
         connection = FakeConnection()
         row = ChatLog("r", "s", "question'); DROP TABLE chat_logs; --", "原始答案", "rag", 12.6,
-                      strategy="direct", sources=[{"doc_id": "d", "index": 1}])
+                      strategy="direct", sources=[{"doc_id": "d", "index": 1}], history_count=4)
         insert_chat_log(connection, row)
         sql, params = connection.calls[0]
-        self.assertEqual(sql.count("%s"), 10)
+        self.assertEqual(sql.count("%s"), 11)
         self.assertEqual(params[:8], ("r", "s", None, row.question, row.answer, "rag", "direct", 13))
         self.assertEqual(json.loads(params[8]), row.sources)
         self.assertIsNone(params[9])
+        self.assertIn("history_count", sql)
+        self.assertEqual(params[10], 4)
         self.assertNotIn(row.question, sql)
         self.assertNotIn(row.answer, sql)
         self.assertEqual(connection.commits, 1)
@@ -77,6 +79,7 @@ class ChatLogStorageTests(unittest.TestCase):
         insert_chat_log(connection, ChatLog("r", "s", "原始问题", "", "error", 3, error_code=50201))
         params = connection.calls[0][1]
         self.assertEqual((params[4], params[5], params[9]), ("", "error", 50201))
+        self.assertEqual(params[10], 0)
 
     def test_schema_idempotent_and_lock_released(self):
         connection = FakeConnection()
@@ -84,7 +87,8 @@ class ChatLogStorageTests(unittest.TestCase):
         ensure_chat_logs_schema(connection)
         alters = [sql for sql, _ in connection.calls if sql.startswith("ALTER")]
         self.assertEqual(alters, ["ALTER TABLE chat_logs ADD COLUMN sources_json JSON NULL",
-                                  "ALTER TABLE chat_logs ADD COLUMN error_code INT NULL"])
+                                  "ALTER TABLE chat_logs ADD COLUMN error_code INT NULL",
+                                  "ALTER TABLE chat_logs ADD COLUMN history_count TINYINT UNSIGNED NOT NULL DEFAULT 0"])
         self.assertEqual(sum("RELEASE_LOCK" in sql for sql, _ in connection.calls), 2)
         self.assertEqual(connection.commits, 2)
 
@@ -200,6 +204,7 @@ class ChatLogStorageTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(migrate_db.main([], settings=config(), connection_factory=lambda: connection), 0)
         self.assertIn("sources_json", connection.columns)
+        self.assertIn("history_count", connection.columns)
         self.assertTrue(connection.closed)
 
     def test_cli_failure_messages_are_safe_and_nonzero(self):

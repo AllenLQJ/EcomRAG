@@ -88,7 +88,7 @@ async def chat_events(payload, request_id, *, settings, services, before_chat, c
                           result.route if result else "error", (perf_counter() - started) * 1000,
                           strategy=result.strategy if result else None,
                           sources=[source.model_dump() for source in result.sources] if result else [],
-                          error_code=error["code"] if error else None)
+                          error_code=error["code"] if error else None, history_count=len(payload.history))
             await write_once(row)
             if error is not None:
                 await queue.put(("error", error))
@@ -99,7 +99,7 @@ async def chat_events(payload, request_id, *, settings, services, before_chat, c
                 await queue.put(("done", result.model_dump()))
         except asyncio.CancelledError:
             row = ChatLog(request_id, payload.session_id, payload.message, "".join(partial), "error",
-                          (perf_counter() - started) * 1000)
+                          (perf_counter() - started) * 1000, history_count=len(payload.history))
             try:
                 await write_once(row)
             except BaseException:
@@ -107,9 +107,9 @@ async def chat_events(payload, request_id, *, settings, services, before_chat, c
                 pass
             raise
         finally:
-            logger.info("chat_stream_done route=%s total_ms=%.3f stages=%s",
+            logger.info("chat_stream_done route=%s total_ms=%.3f stages=%s history_count=%d",
                         result.route if result else "error", (perf_counter() - started) * 1000,
-                        json.dumps([item.stage for item in trace]))
+                        json.dumps([item.stage for item in trace]), len(payload.history))
 
     producer = asyncio.create_task(produce())
     pending = None

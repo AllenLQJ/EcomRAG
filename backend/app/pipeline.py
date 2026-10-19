@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from app.contracts import AppError, TIMEOUT
 from app.executor import BoundedExecutor
+from app.history import normalize_history
 from app.llm.strategies import build_queries
 from app.llm.answer_stream import forward_answer
 from app.llm.generator import clean_generated_answer, validate_citations
@@ -134,7 +135,8 @@ async def run_chat(chat: ChatRequest, request_id: str | None = None, *, settings
             if before_chat is not None:
                 await before_chat()
             result = await _run(chat, request_id or str(uuid4()), settings, services, trace,
-                                [] if history is None else history, executor, on_status=on_status, on_delta=on_delta)
+                                chat.history if history is None else normalize_history(history), executor,
+                                on_status=on_status, on_delta=on_delta)
             return result
     except TimeoutError:
         raise AppError(TIMEOUT, 504, "请求超时，请稍后再试") from None
@@ -153,24 +155,35 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                             answer=answer, route=route, strategy=strategy, sources=list(sources),
                             is_mock=False, trace=trace if chat.debug and settings.allow_trace else None)
 
-    if on_status is not None:
-        await on_status("faq")
-    started = perf_counter()
-    try:
-        hit = await call(services.faq_lookup, chat.message, executor=executor)
-    except Exception as exc:
-        if dependency_error(exc):
-            raise unavailable() from None
-        raise
-    # 假服务无需实现 tracing；真实服务已分别记录 cache 与 FAQ。
-    if not any(item.stage == "cache" for item in trace):
-        record("cache", started, hit=hit is not None and hit.source == "cache")
-        if hit is None or hit.source != "cache":
-            record("faq", started, hit=hit is not None,
-                   top_score=hit.score if hit else getattr(services, "top_score", None))
-    if hit:
-        return response(hit.answer, hit.source, [Source(index=1, doc_id=f"faq:{hit.faq_id}",
-                        title=hit.question, snippet=hit.answer[:60], score=hit.score)])
+    async def lookup_faq(question):
+        if on_status is not None:
+            await on_status("faq")
+        started = perf_counter()
+        try:
+            options = {"use_cache": False} if history else {}
+            hit = await call(services.faq_lookup, question, executor=executor, **options)
+        except Exception as exc:
+            if dependency_error(exc):
+                raise unavailable() from None
+            raise
+        # 假服务无需实现 tracing；真实服务已分别记录 cache 与 FAQ。
+        if history:
+            if not any(item.stage == "faq" for item in trace):
+                record("faq", started, hit=hit is not None,
+                       top_score=hit.score if hit else getattr(services, "top_score", None))
+        elif not any(item.stage == "cache" for item in trace):
+            record("cache", started, hit=hit is not None and hit.source == "cache")
+            if hit is None or hit.source != "cache":
+                record("faq", started, hit=hit is not None,
+                       top_score=hit.score if hit else getattr(services, "top_score", None))
+        if hit:
+            return response(hit.answer, hit.source, [Source(index=1, doc_id=f"faq:{hit.faq_id}",
+                            title=hit.question, snippet=hit.answer[:60], score=hit.score)])
+
+    if not history:
+        faq_response = await lookup_faq(chat.message)
+        if faq_response is not None:
+            return faq_response
     speculative, speculative_trace = None, []
     if settings.speculative_retrieval and not history:
         speculative = asyncio.create_task(speculate(services, chat.message, speculative_trace,
@@ -200,6 +213,12 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                 logger.info("chat_fallback reason=generator_no_answer")
                 return response(REFUSAL, "fallback")
             return response(answer, "general")
+        if history:
+            faq_response = await lookup_faq(decision.rewritten_query)
+            if faq_response is not None:
+                return faq_response
+        # 多轮原问可能只有「那台灯呢」，所有重排与补救均使用补齐后的问句。
+        rerank_query = decision.rewritten_query if history else chat.message
         if on_status is not None:
             await on_status("retrieving")
         if speculative is not None:
@@ -213,11 +232,11 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
             # 只有完整成功的任务才能交接；私有列表与其中对象不再被主流程共享。
             trace.extend(item.model_copy(update={"speculative": True}) for item in tuple(speculative_trace))
         else:
-            docs = await retrieve(services, build_queries(decision, chat.message), chat.message, trace,
+            docs = await retrieve(services, build_queries(decision, chat.message), rerank_query, trace,
                                   executor=executor, top_k=settings.rerank_top_k)
             # 顺序路径已完成改写检索；复用已返回的 TopK，避免重复检索。
             candidates = docs
-        docs = await rescue_rerank(services, chat.message, decision.rewritten_query, docs, candidates,
+        docs = await rescue_rerank(services, rerank_query, decision.rewritten_query, docs, candidates,
                                    trace, settings, executor)
     finally:
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS chat_logs (
     latency_ms INT UNSIGNED NOT NULL,
     sources_json JSON NULL,
     error_code INT NULL,
+    history_count TINYINT UNSIGNED NOT NULL DEFAULT 0,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     INDEX idx_chat_logs_request_id (request_id),
     INDEX idx_chat_logs_session_created (session_id, created_at)

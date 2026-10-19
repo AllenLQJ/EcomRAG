@@ -71,6 +71,6 @@ async def embed(texts: list[str]) -> list[list[float]]:
     raise NotImplementedError
 
 
-def faq_lookup(question: str) -> FaqHit | None:
-    """同步 FAQ 契约；阈值在 FaqService 构造时注入。"""
+def faq_lookup(question: str, *, use_cache: bool = True) -> FaqHit | None:
+    """同步 FAQ 契约；多轮禁用缓存，阈值仍由 FaqService 构造时注入。"""
     raise NotImplementedError

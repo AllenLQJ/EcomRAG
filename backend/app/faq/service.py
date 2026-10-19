@@ -19,21 +19,22 @@ def cosine(left: list[float], right: list[float]) -> float:
 class FaqService:
     """同步服务，构造/reload 时预计算全部 FAQ 问句；后续每次仅编码查询。"""
 
-    def __init__(self, repo, cache, embedder, *, threshold=0.9, tokenizer=None, index_factory=None):
+    def __init__(self, repo, cache, embedder, *, threshold=0.9, tokenizer=None, index_factory=None,
+                 clear_cache_on_load=True):
         if not 0 <= threshold <= 1:
             raise ValueError("FAQ 阈值必须在 0 到 1 之间")
         self.repo, self.cache, self.embedder = repo, cache, embedder
         self.threshold = threshold
         self.tokenizer, self.index_factory = tokenizer, index_factory
         self._top_score = ContextVar("faq_top_score", default=None)
-        self.reload()
+        self.reload(clear_cache=clear_cache_on_load)
 
     @property
     def top_score(self) -> float | None:
         """当前调用上下文的 trace 分数；无候选时为 None，未达阈值时仍保留。"""
         return self._top_score.get()
 
-    def reload(self) -> None:
+    def reload(self, *, clear_cache=True) -> None:
         index = Bm25Index(self.repo, tokenizer=self.tokenizer, index_factory=self.index_factory)
         records = list(index.records.values())
         dense = self.embedder.encode([row.question for row in records]).dense if records else []
@@ -43,22 +44,30 @@ class FaqService:
         self._snapshot = (index, {row.id: vector for row, vector in zip(records, dense)})
         # 先替换快照再清缓存；已在旧快照上运行的并发查询仍可能稍后写回旧答案。
         # 服务装配的模型锁限制同实例查询竞争；跨进程/管理员写入不具备全局原子性。
-        self.cache.clear()
+        self._cache_needs_clear = True
+        if clear_cache:
+            self.cache.clear()
+            self._cache_needs_clear = False
 
-    def faq_lookup(self, question: str) -> FaqHit | None:
+    def faq_lookup(self, question: str, *, use_cache=True) -> FaqHit | None:
         self._top_score.set(None)
         started = perf_counter()
-        cached = self.cache.get(question, threshold=self.threshold)
-        record("cache", started, hit=cached is not None)
+        # 首次由多轮构建索引时不能碰缓存；延迟至后续单轮查询恢复原有失效语义。
+        if use_cache and self._cache_needs_clear:
+            self.cache.clear()
+            self._cache_needs_clear = False
+        cached = self.cache.get(question, threshold=self.threshold) if use_cache else None
+        if use_cache:
+            record("cache", started, hit=cached is not None)
         if cached is not None:
             self._top_score.set(cached.score)
             return cached.model_copy(update={"source": "cache"})
         started = perf_counter()
-        hit = self._lookup_faq(question)
+        hit = self._lookup_faq(question, use_cache=use_cache)
         record("faq", started, hit=hit is not None, top_score=self.top_score)
         return hit
 
-    def _lookup_faq(self, question):
+    def _lookup_faq(self, question, *, use_cache=True):
         index, vectors = self._snapshot
         candidates = index.top_k(question, k=5)
         if not candidates:
@@ -72,5 +81,6 @@ class FaqService:
         row = index.records[faq_id]
         hit = FaqHit(faq_id=row.id, question=row.question, answer=row.answer,
                      category=row.category, score=score, source="faq")
-        self.cache.set(question, hit)
+        if use_cache:
+            self.cache.set(question, hit)
         return hit
