@@ -361,7 +361,8 @@ def test_remote_config_defaults_overrides_and_thresholds(monkeypatch):
     configured = settings(rerank_provider="remote", remote_refuse_threshold="", refuse_threshold=0.3)
     assert configured.remote_rerank_key == KEY
     assert configured.remote_rerank_base_url == configured.llm_base_url
-    assert configured.rerank_refuse_threshold == 0.3
+    assert configured.rerank_refuse_threshold is None
+    assert default.rerank_refuse_threshold == default.refuse_threshold == 0.2
     configured = settings(rerank_provider="remote", remote_refuse_threshold=0.7,
                           rerank_remote_api_key="override", rerank_remote_base_url="https://override.example")
     assert configured.remote_rerank_key == "override" and configured.remote_rerank_base_url == "https://override.example"
@@ -383,8 +384,8 @@ def test_remote_refuse_threshold_rejects_out_of_range_values(monkeypatch, value)
         settings(rerank_provider="remote")
 
 
-@pytest.mark.parametrize("value,expected", [(None, 0.3), ("", 0.3), ("  ", 0.3), (0, 0.0), (1, 1.0)])
-def test_remote_refuse_threshold_accepts_boundaries_and_empty_fallback(monkeypatch, value, expected):
+@pytest.mark.parametrize("value,expected", [(None, None), ("", None), ("  ", None), (0, 0.0), (1, 1.0)])
+def test_remote_refuse_threshold_accepts_boundaries_and_empty_disables_gate(monkeypatch, value, expected):
     assert settings(rerank_provider="remote", remote_refuse_threshold=value,
                     refuse_threshold=0.3).rerank_refuse_threshold == expected
     if value is not None:

@@ -59,6 +59,61 @@ class RetrievalCheckTests(unittest.TestCase):
             self.assertIn(label, text)
         for question in ("第一", "第二", "低分", "空结果"):
             self.assertIn(question, text)
+        for line in (
+            '[FALLBACK] 低分 top_score=0.261000 REFUSE_THRESHOLD=0.5 (0.261000 < 0.5) 是否会被拒答=是 rerank_ms=-',
+            '[FALLBACK] 边界 top_score=0.500000 REFUSE_THRESHOLD=0.5 (0.500000 >= 0.5) 是否会被拒答=否 rerank_ms=-',
+            '[FALLBACK] 空结果 top_score=无结果 REFUSE_THRESHOLD=0.5 (无检索结果) 是否会被拒答=是 rerank_ms=-',
+            'RAG 最低分=0.894 / 拒答最高分=0.894 / 建议阈值=0.894（两者中点，仅供参考）',
+        ):
+            self.assertIn(line, text.splitlines())
+        self.assertNotIn("云端分数", text)
+
+    def test_remote_without_threshold_reports_scores_without_refusal_or_rewrite(self):
+        from app.config import Settings
+
+        rows = [dict(question="商品", rewritten_query="商品参数", expected_route="rag", expected_doc="a.md"),
+                *[dict(question=q, rewritten_query=q + "改写", expected_route="fallback")
+                  for q in ("高分", "低分", "空结果")]]
+        results = {"商品": [doc("a.md", 1.0)], "高分": [doc("other.md", 1.0)],
+                   "低分": [doc("other.md", 0.05)], "空结果": []}
+        for docs in results.values():
+            for item in docs:
+                item.score_provider = "remote"
+
+        class RemoteRetriever:
+            def __init__(self):
+                self.reranks = []
+            def retrieve_candidates(self, queries):
+                return results[queries[0]]
+            async def rerank_candidates(self, question, candidates, top_k):
+                self.reranks.append(question)
+                return candidates[:top_k]
+
+        settings = Settings(_env_file=None, rerank_provider="remote")
+        self.assertIsNone(settings.rerank_refuse_threshold)
+        for retriever in (RemoteRetriever(), FakeRetriever(results)):
+            with self.subTest(retriever=type(retriever).__name__):
+                with patch("eval.check_retrieval.needs_rewrite_rerank",
+                           side_effect=AssertionError("未设阈值时不得触发改写补救比较")):
+                    report = evaluate(rows, retriever, refuse_threshold=settings.rerank_refuse_threshold)
+                self.assertEqual([item["top_score"] for item in report["fallback"]], [1.0, 0.05, None])
+                self.assertEqual([item["refused"] for item in report["fallback"]], [None, None, None])
+                self.assertEqual((report["rag_min_score"], report["fallback_max_score"],
+                                  report["suggested_threshold"]), (1.0, 1.0, 1.0))
+                self.assertEqual((report["hit_at_1"], report["hit_at_5"]), (1.0, 1.0))
+                if isinstance(retriever, RemoteRetriever):
+                    self.assertEqual(retriever.reranks, [row["question"] for row in rows])
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    print_report(report)
+                text = output.getvalue()
+                self.assertEqual(text.count("云端分数不用于拒答（阈值未设）"), 3)
+                for score in ("1.000000", "0.050000", "无结果"):
+                    self.assertIn("top_score=" + score, text)
+                self.assertNotIn("是否会被拒答", text)
+                self.assertNotIn("REFUSE_THRESHOLD=", text)
+                self.assertIn("RAG 最低分=1.0 / 拒答最高分=1.0 / 建议阈值=1.0", text)
+                self.assertIn("云端分数无区分度时，该建议仅供参考", text)
 
     def test_no_rag_rows_does_not_divide_by_zero(self):
         report = evaluate([], FakeRetriever({}), refuse_threshold=0.5)

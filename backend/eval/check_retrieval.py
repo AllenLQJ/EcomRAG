@@ -17,11 +17,11 @@ async def invoke(function, *args, **kwargs):
     return await result if inspect.isawaitable(result) else result
 
 
-def evaluate(rows, retriever, *, refuse_threshold: float) -> dict:
+def evaluate(rows, retriever, *, refuse_threshold: float | None) -> dict:
     return asyncio.run(evaluate_async(rows, retriever, refuse_threshold=refuse_threshold))
 
 
-async def evaluate_async(rows, retriever, *, refuse_threshold: float) -> dict:
+async def evaluate_async(rows, retriever, *, refuse_threshold: float | None) -> dict:
     """仅评估 RAG 和 fallback；可注入假检索器，不加载配置或模型。"""
     rag, fallback = [], []
     for row in rows:
@@ -36,7 +36,9 @@ async def evaluate_async(rows, retriever, *, refuse_threshold: float) -> dict:
             # 可在 --eval-file 的行里附 rewritten_query；共用在线判断，少量增字也补充重排。
             # 仅标点/空格/大小写变化视为相同，其他排除条件仍由共用函数处理；不调用 LLM。
             rewritten = row.get("rewritten_query", question)
-            if not any(getattr(doc, "score_provider", None) == "fallback_rrf" for doc in docs) and needs_rewrite_rerank(question, rewritten, docs, enabled=True, threshold=refuse_threshold):
+            if (refuse_threshold is not None
+                    and not any(getattr(doc, "score_provider", None) == "fallback_rrf" for doc in docs)
+                    and needs_rewrite_rerank(question, rewritten, docs, enabled=True, threshold=refuse_threshold)):
                 revised = await invoke(retriever.rerank_candidates, rewritten, candidates, top_k=5)
                 if any(getattr(doc, "score_provider", None) == "fallback_rrf" for doc in revised):
                     docs = revised
@@ -62,7 +64,8 @@ async def evaluate_async(rows, retriever, *, refuse_threshold: float) -> dict:
             top_score = max((doc.score for doc in docs), default=None)
             fallback.append({
                 "question": question, "top_score": top_score,
-                "refused": top_score is None or top_score < refuse_threshold,
+                "refused": ((top_score is None or top_score < refuse_threshold)
+                            if refuse_threshold is not None else None),
                 "rerank_ms": rerank_ms,
             })
     total = len(rag)
@@ -96,13 +99,18 @@ def print_report(report: dict) -> None:
     for item in report["fallback"]:
         score = f'{item["top_score"]:.6f}' if item["top_score"] is not None else "无结果"
         ms = f'{item["rerank_ms"]:.3f}' if item["rerank_ms"] is not None else "-"
+        if threshold is None:
+            print(f'[FALLBACK] {item["question"]} top_score={score} '
+                  f'云端分数不用于拒答（阈值未设） rerank_ms={ms}')
+            continue
         relation = "<" if item["refused"] else ">="
         comparison = f'{score} {relation} {threshold:g}' if item["top_score"] is not None else "无检索结果"
         print(f'[FALLBACK] {item["question"]} top_score={score} '
               f'REFUSE_THRESHOLD={threshold:g} ({comparison}) '
               f'是否会被拒答={"是" if item["refused"] else "否"} rerank_ms={ms}')
+    note = "；云端分数无区分度时，该建议仅供参考，不能作为有效拒答依据" if threshold is None else ""
     print(f'RAG 最低分={report["rag_min_score"]} / 拒答最高分={report["fallback_max_score"]} / '
-          f'建议阈值={report["suggested_threshold"]}（两者中点，仅供参考）')
+          f'建议阈值={report["suggested_threshold"]}（两者中点，仅供参考）{note}')
     if report["rag_min_score"] is not None and report["fallback_max_score"] is not None and report["rag_min_score"] <= report["fallback_max_score"]:
         print("分数分布重叠，单一阈值无法完全区分；请检查未命中题与数据集。")
 

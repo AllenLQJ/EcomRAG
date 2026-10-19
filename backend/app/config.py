@@ -175,7 +175,8 @@ class Settings(BaseSettings):
 
     @property
     def rerank_refuse_threshold(self):
-        if self.rerank_provider == "remote" and self.remote_refuse_threshold is not None:
+        # 云端未校准时禁用低分拒答；实际本地回退由 pipeline 选用本地阈值。
+        if self.rerank_provider == "remote":
             return self.remote_refuse_threshold
         return self.refuse_threshold
 

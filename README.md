@@ -68,7 +68,7 @@ npm run dev
 | `LLM_MAX_CONCURRENCY` / `RERANK_REMOTE_MAX_CONCURRENCY` | 50 / 50 | LLM 与远程重排的并发及 HTTP 连接上限；供应商配额仍独立生效 |
 | `MODEL_IO_WORKERS` / `MODEL_IO_QUEUE_SIZE` | 50 / 50 | 模型任务执行线程与额外等待容量；模型单例仍由锁保护 |
 | `RATE_LIMIT_IO_WORKERS` / `RATE_LIMIT_IO_MAX_IN_FLIGHT` | 50 / 50 | 限流检查线程与总在飞任务上限 |
-| `REFUSE_THRESHOLD` | 0.2 | 重排最高分低于它就拒答 |
+| `REFUSE_THRESHOLD` | 0.2 | 本地及本地回退重排最高分严格低于它就拒答；不用于云端分数 |
 | `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_PER_DAY` | 50 / 200 | 每 IP 与每会话的频率额度，日额度不是并发限制 |
 | `RATE_LIMIT_IP_ENABLED` | true | 是否额外按 IP 限流；关闭后仍保留每会话限流 |
 | `ALLOW_TRACE` | false | 开启后，请求带 `debug=true` 才返回链路 |
@@ -166,10 +166,12 @@ REMOTE_RAG_CONTEXT_MIN_SCORE=
 | `RERANK_REMOTE_MAX_CONCURRENCY` | 50 | 正整数；全局共享并发上限，排队和退避计入整请求 deadline |
 | `RERANK_REMOTE_EXTRA_BODY` | 空 | JSON 对象，空表示无扩展；只记录顶层键名，核心参数优先 |
 | `RERANK_FALLBACK` | `rrf` | `rrf` / `local` / `error`，见下 |
-| `REMOTE_REFUSE_THRESHOLD` | 空 | [0,1] 内的有限浮点数，含边界；空时使用 `REFUSE_THRESHOLD` 并在装配时警告需校准 |
+| `REMOTE_REFUSE_THRESHOLD` | 空 | [0,1] 内的有限浮点数，含边界；空时云端分数不用于拒答，拒答依赖路由 sensitive 与生成 NO_ANSWER；显式设置后最高分严格低于该值才低分拒答 |
 | `REMOTE_RAG_CONTEXT_MIN_SCORE` | 空 | 远程重排的上下文过滤阈值，允许任意有限浮点数；空时保留全部 TopK，设置后仍至少保留最高分资料；本地及本地回退继续使用 `RAG_CONTEXT_MIN_SCORE` |
 
-远程调用失败时，`rrf` 使用原始 RRF 顺序和分数，仅在无结果时拒答，并跳过改写补救与相关度上下文过滤；trace 标记 `provider=fallback_rrf, fallback=rrf`。`local` 首次失败时才加载本地模型，并在线程池重排，使用本地 `REFUSE_THRESHOLD`；本地再失败则退 RRF。`error` 抛出脱敏的 AppError（50201/502、超时 50401/504；上游持续 429 为 SERVICE_BUSY 50302/503，与 LLM 客户端一致）。42901/429 仅表示本服务分钟频率限流。取消和整请求 deadline 不触发额外回退工作。
+云端分数可能对相关和应拒答问题均接近 1.0，因此默认不按分数拒答，也不触发低分改写补救；无召回结果仍直接拒答。路由 sensitive 拦截他人隐私、医疗/疗效/法律承诺和提示词注入；生成器只能依据资料，有直接依据才回答，无依据或命中上述敏感请求时只输出 `NO_ANSWER`，由 pipeline 转为固定拒答文案。`REMOTE_RAG_CONTEXT_MIN_SCORE` 仅过滤生成上下文，不承担拒答判断。
+
+远程调用失败时，`rrf` 使用原始 RRF 顺序和分数，仅在无结果时直接拒答，并跳过改写补救与相关度上下文过滤；生成器仍可输出 `NO_ANSWER`，trace 标记 `provider=fallback_rrf, fallback=rrf`。`local` 首次失败时才加载本地模型，并在线程池重排，使用本地 `REFUSE_THRESHOLD`；本地再失败则退 RRF。`error` 抛出脱敏的 AppError（50201/502、超时 50401/504；上游持续 429 为 SERVICE_BUSY 50302/503，与 LLM 客户端一致）。42901/429 仅表示本服务分钟频率限流。取消和整请求 deadline 不触发额外回退工作。
 
 在 `backend/` 真实环境中依次执行（这些命令会调用服务）：
 
@@ -179,7 +181,7 @@ uv run python -m eval.check_retrieval --rerank-provider remote
 uv run python -m eval.check_retrieval --rerank-provider local
 ```
 
-先用 ping 核实 index、分数范围、返回顺序与 usage，再比较 Hit@1/Hit@5、每题排名/分数、拒答最高分与重排耗时，设置 `REMOTE_REFUSE_THRESHOLD`。建议阈值为 RAG 命中最低分与拒答最高分的中点，仅供参考；分布重叠或存在未命中题时需检查数据。校准工具强制调用失败即报错，防止把回退分数用于远程阈值。`eval.run_eval` 的 rerank 耗时同样包含远程调用与回退。
+先用 ping 核实 index、分数范围、返回顺序与 usage，再比较 Hit@1/Hit@5、每题排名/分数、拒答最高分与重排耗时。默认保持 `REMOTE_REFUSE_THRESHOLD` 为空；仅当实测分数能区分相关与应拒答问题时，才考虑显式设置。RAG 命中最低分与拒答最高分的中点仅供参考；分布重叠或全部接近 1.0 时不能用它作为有效拒答阈值。校准工具强制调用失败即报错，防止把回退分数用于远程阈值。`eval.run_eval` 的 rerank 耗时同样包含远程调用与回退。
 
 接口每次最多 128 条候选，超过时分批；问题与每条候选最多 4096 字符，发送前截断。`RERANK_CANDIDATES`、child/parent 模式与既有 `RERANK_MAX_CHARS` 规则仍生效；远程不使用本地 batch size、token max length 或 FP16 设置。
 

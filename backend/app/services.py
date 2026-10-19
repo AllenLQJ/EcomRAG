@@ -61,7 +61,7 @@ class Services:
                 str(resolve_data_path(settings.bge_m3_path)), settings.embed_batch_size)
             self.reranker = RemoteReranker(settings, transport=transport)
             if settings.remote_refuse_threshold is None:
-                logger.warning("远程重排的分数分布与本地不同，REFUSE_THRESHOLD 需用 eval.check_retrieval 校准后设置 REMOTE_REFUSE_THRESHOLD")
+                logger.warning("云端分数不用于拒答，拒答依赖路由 sensitive 与生成 NO_ANSWER")
             if not settings.remote_rerank_key or not settings.remote_rerank_base_url:
                 logger.warning("远程重排未配置 key 或 base URL；调用时按 RERANK_FALLBACK 处理")
         else:

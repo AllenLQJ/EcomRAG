@@ -27,6 +27,8 @@ def uses_rrf(docs):
 def refuse_threshold(settings, docs):
     if any(getattr(doc, "score_provider", None) in {"local", "fallback_local"} for doc in docs):
         return settings.refuse_threshold
+    if any(getattr(doc, "score_provider", None) == "remote" for doc in docs):
+        return settings.remote_refuse_threshold
     return settings.rerank_refuse_threshold
 
 
@@ -95,9 +97,10 @@ async def speculate(services, question, trace, *, executor, top_k):
 
 async def rescue_rerank(services, question, rewritten, docs, candidates, trace, settings, executor):
     # 原问低分时，只要改写规范化后不同且非空就补救，不以文本相似度排除少量增字。
-    # 已过阈值、规范化相同、敏感输入、关闭重排或无结果仍直接跳过。
-    if uses_rrf(docs) or not needs_rewrite_rerank(question, rewritten, docs, enabled=settings.rerank_enabled,
-                                threshold=refuse_threshold(settings, docs)):
+    # 未设置阈值、已过阈值、规范化相同、敏感输入、关闭重排或无结果直接跳过。
+    threshold = refuse_threshold(settings, docs)
+    if uses_rrf(docs) or threshold is None or not needs_rewrite_rerank(
+            question, rewritten, docs, enabled=settings.rerank_enabled, threshold=threshold):
         return docs
     started, trace_start = perf_counter(), len(trace)
     try:
@@ -264,8 +267,9 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:
             discard(speculative)
-    if not docs or (settings.rerank_enabled and not uses_rrf(docs)
-                    and max(doc.score for doc in docs) < refuse_threshold(settings, docs)):
+    threshold = refuse_threshold(settings, docs)
+    if not docs or (settings.rerank_enabled and not uses_rrf(docs) and threshold is not None
+                    and max(doc.score for doc in docs) < threshold):
         return response(REFUSAL, "fallback", strategy="direct")
     # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
     docs = select_context(docs, settings)

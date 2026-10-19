@@ -93,12 +93,13 @@ def test_sources_use_actual_citations_or_highest_score_only(answer, expected):
         assert result.answer == "无效"
 
 
-@pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.088, "fallback"), (0.1396, "fallback"),
+@pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.05, "fallback"), (0.088, "fallback"), (0.1396, "fallback"),
                                            (0.1999, "fallback"), (0.2, "rag"), (0.2001, "rag"),
                                            (0.44, "rag"), (0.4999, "rag"), (0.5, "rag"), (0.5001, "rag")])
 def test_refusal_boundary_and_skips_generation(score, expected):
     services = FakeServices().knowledge()
-    services.retrieve.return_value = [] if score is None else [document(score=score)]
+    services.retrieve.return_value = [] if score is None else [
+        document(score=score).model_copy(update={"score_provider": "local"})]
     result = run(services)
     assert result.route == expected
     if expected == "fallback":
@@ -167,11 +168,14 @@ def test_generator_and_response_share_renumbered_filtered_sources():
 @pytest.mark.parametrize("marker", ["NO_ANSWER", " \nno_answer\t ", "【No_Answer】。", "!!!NO_ANSWER???",
                                    "n o _ a n s w e r", "`NO_ANSWER`", "NO_ANSWER[1]",
                                    "NO_ANSWER。 nO_aNsWeR", "ＮＯ＿ＡＮＳＷＥＲ", "ｎｏ＿ａｎｓｗｅｒ"])
-def test_generator_no_answer_returns_fixed_fallback_and_safe_reason(marker, caplog):
+@pytest.mark.parametrize("provider", ["local", "remote"])
+def test_generator_no_answer_returns_fixed_fallback_and_safe_reason(marker, provider, caplog):
     caplog.set_level("INFO", logger="app.pipeline")
     services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(score=1.0).model_copy(update={"score_provider": provider})]
     services.generate_answer.return_value = GeneratedAnswer(marker, set())
-    result = run(services, llm_api_key="PRIVATE_KEY_NO_LOG")
+    result = run(services, llm_api_key="PRIVATE_KEY_NO_LOG", rerank_provider=provider)
+    services.generate_answer.assert_awaited_once()
     assert result.route == "fallback" and result.answer == REFUSAL and result.sources == []
     assert "NO_ANSWER" not in result.answer.upper()
     assert sum("reason=generator_no_answer" in record.getMessage() for record in caplog.records) == 1

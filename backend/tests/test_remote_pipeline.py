@@ -9,6 +9,7 @@ import pytest
 from app.config import Settings
 from app.contracts import AppError, RouteDecision, SERVICE_BUSY
 from app.pipeline import run_chat
+from app.refusals import REFUSAL
 from app.retrieval.remote_reranker import RemoteReranker
 from app.retrieval.retriever import Retriever
 from app.services import Services
@@ -40,7 +41,7 @@ def test_remote_assembly_skips_local_loading_warmup_and_warns_safely(caplog):
             finally:
                 await services.aclose()
     asyncio.run(run())
-    assert "远程重排的分数分布与本地不同，REFUSE_THRESHOLD 需用 eval.check_retrieval 校准后设置 REMOTE_REFUSE_THRESHOLD" in caplog.text
+    assert "云端分数不用于拒答，拒答依赖路由 sensitive 与生成 NO_ANSWER" in caplog.text
     assert "未配置" in caplog.text
     assert "vendor.example" not in caplog.text and "PRIVATE_KEY" not in caplog.text
 
@@ -157,14 +158,19 @@ def test_disabled_rerank_has_priority_in_pipeline(provider):
 
 
 @pytest.mark.parametrize("speculative", [False, True])
-@pytest.mark.parametrize("policy,score,expected", [("rrf", 0.001, "rag"), ("remote", 0.5, "fallback"),
-    ("remote", 0.8, "rag"), ("local", 0.3, "rag"), ("local", 0.1, "fallback")])
-def test_pipeline_refusal_uses_actual_score_source_and_rrf_skips_rescue(speculative, policy, score, expected):
+@pytest.mark.parametrize("policy,score,threshold,expected", [
+    ("rrf", 0.001, 0.6, "rag"), ("rrf", 0.001, None, "rag"),
+    ("remote", 0.5, 0.6, "fallback"), ("remote", 0.8, 0.6, "rag"),
+    ("remote", 1.0, None, "rag"), ("remote", 0.05, None, "rag"),
+    ("remote", 0.3, 0.5, "fallback"), ("remote", 0.5, 0.5, "rag"),
+    ("local", 0.3, 0.6, "rag"), ("local", 0.1, 0.6, "fallback"),
+    ("local", 0.05, None, "fallback")])
+def test_pipeline_refusal_uses_actual_score_source_and_rrf_skips_rescue(speculative, policy, score, threshold, expected):
     async def run():
         services = FakeServices().knowledge()
         candidates = [document(1, 0.001), document(2, 0.0001)]
         services.retrieve_candidates = Mock(return_value=candidates)
-        remote = Mock(rerank=AsyncMock(return_value=[score, score - 0.1]))
+        remote = Mock(rerank=AsyncMock(return_value=[score, score]))
         if policy != "remote":
             remote.rerank.side_effect = AppError(50201, 502, "safe")
         local = AsyncMock(return_value=[score, score - 0.1])
@@ -175,16 +181,34 @@ def test_pipeline_refusal_uses_actual_score_source_and_rrf_skips_rescue(speculat
             return await retriever.arerank_candidates(kwargs["rerank_query"], candidates, kwargs["top_k"])
         services.retrieve = retrieve
         result = await run_chat(ChatRequest(session_id="threshold", message="q", debug=True),
-                                settings=configured(allow_trace=True, speculative_retrieval=speculative), services=services)
+                                settings=configured(allow_trace=True, speculative_retrieval=speculative,
+                                                    remote_refuse_threshold=threshold), services=services)
         assert result.route == expected
+        if expected == "fallback":
+            services.generate_answer.assert_not_awaited()
+        else:
+            services.generate_answer.assert_awaited_once()
         stages = [item for item in result.trace if item.stage == "rerank"]
         assert stages[0].provider == {"rrf": "fallback_rrf", "local": "fallback_local", "remote": "remote"}[policy]
-        if policy == "rrf":
+        if policy == "rrf" or (policy == "remote" and threshold is None):
             remote.rerank.assert_awaited_once()
             assert len(services.generate_answer.call_args.args[1]) == 2
         if speculative:
             assert stages[0].speculative is True
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("speculative", [False, True])
+@pytest.mark.parametrize("threshold", [None, 0.5])
+def test_remote_no_results_still_refuses_without_generation(speculative, threshold):
+    services = FakeServices().knowledge()
+    services.retrieve_candidates = Mock(return_value=[])
+    services.rerank_candidates = AsyncMock(return_value=[])
+    result = asyncio.run(run_chat(ChatRequest(session_id="empty-remote", message="q"),
+                                 settings=configured(speculative_retrieval=speculative,
+                                                     remote_refuse_threshold=threshold), services=services))
+    assert result.route == "fallback" and result.answer == REFUSAL and result.sources == []
+    services.generate_answer.assert_not_awaited()
 
 
 def test_lazy_local_fallback_runs_in_model_executor_only_after_remote_failure():
