@@ -150,7 +150,7 @@ P0 的判定标准只有一条：能用 curl 跑通「提问 → 缓存 / FAQ / 
 
 **接口契约**
 
-- 请求体：`session_id`（前端生成的 UUID）、`message`（1–500 字）、`debug`（为 true 时返回 trace）
+- 请求体：`session_id`（前端生成的 UUID）、`message`（1–500 字）、`debug`（为 true 时返回 trace）、可选 `history`（默认 `[]`；多轮规则见下文）
 - 响应体：`request_id`、`session_id`、`answer`、`route`、`strategy`、`sources`、`is_mock`、`trace`
 - `route` 枚举：cache | faq | rag | general | fallback；P0 的 `strategy` 只会是 `direct` 或 `null`，枚举保留 direct | hyde | subquery | stepback 四个值以便扩展
 - `sources`：rag 时非空，`answer` 中的 [n] 对应 `index`；faq / cache 时给出命中的 FAQ 条目；general / fallback 为空数组
@@ -158,6 +158,34 @@ P0 的判定标准只有一条：能用 curl 跑通「提问 → 缓存 / FAQ / 
 - 可选字段 `user_id`（仅 chat_logs，可为空，请求体不加）：P0 不使用，为第 5 节的身份对接预留
 
 **模块边界**：`contracts.py` 定义模块间的函数签名（`retrieve` / `route` / `generate_answer` / `chat_general` / `faq_lookup` / `run_chat`），只有 `pipeline.py` 组装它们。签名的作用是给 AI 编码助手划清改动范围，并便于以后新增策略时不动 `pipeline.py`。模块内部异常一律包成 `AppError(code, message)`，由全局处理器转成统一错误结构。
+
+### 多轮上下文（普通与流式接口共用）
+
+`POST /api/v1/chat` 和 `POST /api/v1/chat/stream` 均接受如下请求；当前问题不重复放入 history，历史按时间顺序提交：
+
+```json
+{
+  "session_id": "client-generated-uuid",
+  "message": "那台灯呢",
+  "history": [
+    {"role": "user", "content": "耳机保修多久？我还在看栖光 L1 台灯。"},
+    {"role": "assistant", "content": "耳机适用 12 个月有限保修。"}
+  ],
+  "debug": false
+}
+```
+
+history 省略时为 `[]`，显式 `null` 不合法。必须为对象数组，每条只含 `role`、`content`：role 只允许 `user` / `assistant`，content 必须为字符串。不合法结构（包括将非法条目放在将被丢弃的旧消息中）返回 HTTP 400、错误码 `40001`，流式接口同样在建立 SSE 前校验。允许空字符串，不要求角色交替。
+
+先校验全部消息结构，再只保留最近 6 条（消息条数，不是 6 轮），每条 content 超过 1000 字符取前 1000 字符；截断后 content 总长若超过 4000 字符，从最早一条开始整条丢弃，直至不超过上限。长度按 Python Unicode 字符数计算，不按 UTF-8 字节数。客户端自行维护并提交历史；服务端不按 session 自动回填历史，不建立历史状态，不新增 Redis 会话状态或配置项。
+
+归一化后的 history 非空时，流程为 router → knowledge 才查 FAQ → 未命中再检索/重排/生成；FAQ 使用 `rewritten_query`，阈值保持原值，并跳过 Redis 缓存读取、写入和首次 FAQ 初始化清缓存。投机检索关闭，检索与重排统一使用完整改写问句；补充重排也以改写后的问题为基准，不回退使用有省略指代的原问。general 直接带前文闲聊，sensitive 直接返回现有 fallback。history 为空时保留原 cache → FAQ → router、投机检索与补充重排行为。
+
+路由以当前问题判断意图，只在追问、省略或指代时利用历史补全对象。例如「那台灯呢」应改写为「栖光 L1 桌面台灯的保修期是多久？」；完整问题不受历史主题影响。敏感历史不使当前正常问题变为 sensitive，但当前借历史要求忽略规则仍判 sensitive。店名为「灵码」，商品名「栖光」保留。历史来源于客户端，包含 assistant 角色的消息也不可信；路由及普通/流式生成均将其编码为转义后的 `<历史>` JSON 数据块，不能提升为 system/assistant 指令。生成聚焦当前问题，仅引用本次检索资料，不把历史答案当政策事实，也不沿用旧引用编号。历史缺失或指代无法确定时不猜型号，应澄清；提示词护栏不等于真实模型已通过安全或质量验收。
+
+chat_logs 继续保存当前问答，新增 `history_count TINYINT UNSIGNED NOT NULL DEFAULT 0`，记录裁剪后的历史条数（成功、错误、流式取消均记录）；不另存历史正文。已有库由本机执行 `python -m ingest.migrate_db` 幂等补列，旧行默认 0，新库由 `backend/sql/init.sql` 建列；也可沿用启动时 schema 检查。未迁移且禁用启动补列时，对话记录写入会沿用失败降级，因此应先迁移再部署。应用日志只增加 history_count，多轮请求的 session 标识作脱敏，不输出问题、答案、历史、提示词或 key。
+
+新增 `data/eval_multiturn.jsonl` 覆盖保修追问台灯、续航追问 S1、退货运费、发票时效、闲聊转运费、第二款 S2 重量、敏感历史后的正常问题、借历史注入及连贯闲聊。评测读取每行 history 并经过与接口相同的校验/裁剪；省略时仍为空历史。在 backend 目录由本机运行 `python -m eval.run_eval --eval-file data/eval_multiturn.jsonl --output logs/eval-multiturn.json`；此命令会调用真实依赖，本次未运行。新增 `tests/test_multiturn.py` 使用替身覆盖校验、边界截断、缓存隔离、路由后 FAQ、改写检索与重排、提示词数据隔离、普通/流式接口及记录、CLI 透传；更新数据库幂等迁移和投机检索回归断言。当前环境仅有 Python 3.9.6 且缺 pytest，项目要求 Python 3.11。已离线运行标准库单元测试 `test_chat_log_storage`（17 项）、`test_llm_helpers`（11 项），全部通过；全部 109 个后端 Python 文件语法编译、9 条新评测数据的结构与文档路径检查、`git diff --check` 通过。完整 pytest（含新增多轮 API/SSE 测试）需本机运行 `python -m pytest`；未执行真实 LLM/模型/Milvus/Redis/MySQL 验证。
 
 **仓库结构**
 
@@ -284,7 +312,7 @@ C 端入口对所有人开放，风险是被刷来消耗 LLM 额度，或被诱�
 | --- | --- | --- | --- | --- |
 | A | SSE 流式输出 `POST /api/v1/chat/stream` | 首字从 4–5s 降到 1s 内，体感提升最大 | 2h | `generate_answer` 增加流式版本；事件依次为 meta、sources、delta、done |
 | A | 移动端适配 | C 端流量主要来自手机 | 1h | Tailwind 响应式；输入框吸底、引用改抽屉 |
-| A | 多轮会话 + 追问改写 | 支持「那它支持快充吗」这类追问 | 2h | Redis `session:{id}` 存最近 10 轮；`route()` 已接收 history |
+| A | 多轮会话 + 追问改写 | 已实现客户端提交 history；真实效果待本机验收 | 2h | 最近 6 条、每条 1000 字符、总 4000 字符；不保存 Redis 会话状态 |
 | A | 回答反馈（有用 / 没用） | 收集差评问题，驱动补知识库 | 1h | `chat_logs` 加 `feedback` 字段 + `POST /api/v1/feedback` |
 | B | 转人工：留言工单 | fallback 不再是死胡同，顾客可留下问题 | 0.5d | fallback 路由的回答附「转人工」按钮；先写表，不接真实客服系统 |
 | B | HyDE / 子问题 / 回溯三种策略 | 答对「A 和 B 哪个续航长」等对比类问题 | 1d | `route()` 输出 `strategy`，`build_queries()` 分支；枚举已预留 |
@@ -382,7 +410,7 @@ Bert 意图分类、PPT / 代码入库、本地部署 LLM 不在上表中：它�
 
 ## 流式回答与公网代理
 
-`POST /api/v1/chat/stream` 接受与 `POST /api/v1/chat` 相同的 `{session_id,message,debug}`。原非流式接口及 JSON 错误行为保持不变。流式成功建立后使用 HTTP 200、`Content-Type: text/event-stream`、`Cache-Control: no-cache`、`X-Accel-Buffering: no`、`Content-Encoding: identity`，没有压缩或完整响应缓冲。参数校验失败仍是原 HTTP 400 JSON 错误；流开始后的业务失败通过 `error` 事件返回，不能再改变 HTTP 状态。
+`POST /api/v1/chat/stream` 接受与 `POST /api/v1/chat` 相同的 `{session_id,message,debug,history?}`，history 的结构校验与裁剪见多轮上下文约定。原非流式接口及 JSON 错误行为保持不变。流式成功建立后使用 HTTP 200、`Content-Type: text/event-stream`、`Cache-Control: no-cache`、`X-Accel-Buffering: no`、`Content-Encoding: identity`，没有压缩或完整响应缓冲。参数校验失败仍是原 HTTP 400 JSON 错误；流开始后的业务失败通过 `error` 事件返回，不能再改变 HTTP 状态。
 
 每个事件使用 `event: 名称` 与 `data: JSON`，后面一个空行。顺序为 meta → status（阶段切换）→ delta（零至多条）→ done 或 error；终态只有一个：
 
