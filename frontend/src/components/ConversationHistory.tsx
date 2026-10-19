@@ -1,0 +1,105 @@
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import type { Conversation } from '../lib/storage';
+import { groupConversations, relativeTime } from '../lib/conversationTime';
+
+interface Props {
+  conversations: Conversation[];
+  currentId: string;
+  onNew: () => void;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  onClear: () => void;
+}
+
+export function ConversationHistory({ conversations, currentId, onNew, onSelect, onDelete, onClear }: Props) {
+  const [confirmation, setConfirmation] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  const nav = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => { setConfirmation(null); }, [currentId]);
+  function focusNew() { nav.current?.querySelector<HTMLButtonElement>('button')?.focus(); }
+  return <nav ref={nav} aria-label="历史对话" className="flex h-full min-h-0 flex-col bg-canvas p-4">
+    <button type="button" className="secondary-button w-full shrink-0" aria-label="新对话" onClick={onNew}>＋ 新对话</button>
+    <div className="mt-6 min-h-0 flex-1 overflow-y-auto px-1 pb-4">
+      {!conversations.length && <p className="py-4 text-sm text-muted">还没有历史对话</p>}
+      {groupConversations(conversations, now).filter(group => group.conversations.length).map(group => <section key={group.label} className="mb-6">
+        <h2 className="mb-2 px-2 text-xs text-muted">{group.label}</h2>
+        <ul aria-label={`${group.label}的对话`} className="space-y-1">
+          {group.conversations.map(item => <li key={item.id} className="group rounded-card">
+            <div className={`flex items-center rounded-card ${currentId === item.id ? 'bg-line' : 'hover:bg-card'}`}>
+              <button type="button" aria-label={`打开对话：${item.title}`} aria-current={currentId === item.id ? 'page' : undefined}
+                onClick={() => { setConfirmation(null); onSelect(item.id); }} className="min-h-11 min-w-0 flex-1 rounded-card px-2 py-2 text-left">
+                <span className="block truncate text-sm">{item.title}</span>
+                <time dateTime={new Date(item.updatedAt).toISOString()} className="mt-1 block text-xs text-muted">{relativeTime(item.updatedAt, now)}</time>
+              </button>
+              <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation(item.id)}
+                className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
+              </button>
+            </div>
+            {confirmation === item.id && <div role="group" aria-label={`确认删除：${item.title}`} className="rounded-card border border-outline bg-card p-2 text-xs">
+              <p>删除这段对话？</p>
+              <div className="flex gap-1">
+                <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
+                <button type="button" aria-label="确认删除" className="min-h-11 rounded-card px-3 font-medium" onClick={() => { setConfirmation(null); onDelete(item.id); focusNew(); }}>确认删除</button>
+              </div>
+            </div>}
+          </li>)}
+        </ul>
+      </section>)}
+    </div>
+    <div className="shrink-0 border-t border-line pt-3">
+      {confirmation === 'clear-all' ? <div role="group" aria-label="确认清空全部历史" className="text-xs">
+        <p>清空所有历史对话？此操作无法恢复。</p>
+        <div className="flex gap-1">
+          <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
+          <button type="button" aria-label="确认清空" className="min-h-11 rounded-card px-3 font-medium" onClick={() => { setConfirmation(null); onClear(); focusNew(); }}>确认清空</button>
+        </div>
+      </div> : <button type="button" aria-label="清空全部历史" className="min-h-11 w-full rounded-card text-left text-sm text-muted hover:text-ink disabled:opacity-50"
+        disabled={!conversations.length} onClick={() => setConfirmation('clear-all')}>清空全部历史</button>}
+      <p className="mt-2 text-xs text-muted">历史仅保存在本浏览器</p>
+    </div>
+  </nav>;
+}
+
+interface DrawerProps extends Props { onClose: () => void; trigger: RefObject<HTMLButtonElement> }
+
+export function HistoryDrawer({ onClose, trigger, ...props }: DrawerProps) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialog.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+      if (event.key !== 'Tab') return;
+      const controls = dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], [tabindex="0"]');
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog.current?.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.current?.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener('keydown', keydown);
+    const triggerElement = trigger.current;
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', keydown);
+      triggerElement?.focus();
+    };
+  }, [onClose, trigger]);
+  return <div className="fixed inset-0 z-50 flex">
+    <button type="button" aria-label="关闭历史遮罩" tabIndex={-1} onClick={onClose} className="absolute inset-0 bg-ink/30" />
+    <div ref={dialog} id="history-drawer" role="dialog" aria-modal="true" aria-label="历史对话抽屉"
+      className="relative flex h-full w-[280px] max-w-[85vw] flex-col border-r border-line bg-canvas">
+      <button type="button" aria-label="关闭历史" onClick={onClose} className="mx-4 mt-2 min-h-11 shrink-0 self-end rounded-card px-3 text-sm text-muted">关闭</button>
+      <div className="min-h-0 flex-1"><ConversationHistory {...props} /></div>
+    </div>
+  </div>;
+}

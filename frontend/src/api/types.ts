@@ -2,10 +2,13 @@ export type Route = 'cache' | 'faq' | 'rag' | 'general' | 'fallback';
 export type Strategy = 'direct' | 'hyde' | 'subquery' | 'stepback';
 export type Intent = 'general' | 'knowledge' | 'sensitive';
 
+export interface HistoryMessage { role: 'user' | 'assistant'; content: string }
+
 export interface ChatRequest {
   session_id: string;
   message: string;
   debug: boolean;
+  history?: HistoryMessage[];
 }
 
 export interface Source {

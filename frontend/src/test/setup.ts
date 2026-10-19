@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { resetStorageMemory } from '../lib/storage';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { TextDecoder, TextEncoder } from 'node:util';
@@ -8,6 +9,7 @@ beforeEach(() => {
   if (typeof globalThis.TextEncoder === 'undefined') vi.stubGlobal('TextEncoder', TextEncoder);
   if (typeof globalThis.TextDecoder === 'undefined') vi.stubGlobal('TextDecoder', TextDecoder);
   if (typeof globalThis.ReadableStream === 'undefined') vi.stubGlobal('ReadableStream', ReadableStream);
+  resetStorageMemory();
   localStorage.clear();
   sessionStorage.clear();
   window.history.replaceState({}, '', '/');

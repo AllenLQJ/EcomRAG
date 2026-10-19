@@ -5,7 +5,7 @@ import App from './App';
 import type { ChatResponse, TraceItem } from './api/types';
 import { fixtureFor } from './mocks/fixtures';
 import { mockMobile } from './test/media';
-import { MESSAGES_KEY, SESSION_KEY, TRACE_KEY } from './lib/storage';
+import { CONVERSATIONS_KEY, SESSION_KEY, TRACE_KEY } from './lib/storage';
 
 function result(question = '划痕', debug = false): ChatResponse {
   return { ...fixtureFor({ session_id: 'server-session', message: question, debug }), is_mock: false };
@@ -39,7 +39,7 @@ describe('chat flow', () => {
     const user = await ask('屏幕有划痕可以退吗？');
     expect(await screen.findByText('知识库回答')).toBeInTheDocument();
     expect(screen.getByText('7 天内').tagName).toBe('STRONG');
-    expect(screen.getByRole('list')).toBeInTheDocument();
+    expect(within(screen.getByRole('log')).getByRole('list')).toBeInTheDocument();
     const toggle = screen.getByRole('button', { name: '引用来源 3' });
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await user.click(toggle);
@@ -100,7 +100,7 @@ describe('chat flow', () => {
     const user = await ask('怎么申请退货？');
     expect(await screen.findByText('提问有点快，休息一分钟再问吧。')).toBeInTheDocument();
     expect(screen.queryByText(/请求编号|req-123/)).not.toBeInTheDocument();
-    expect(sessionStorage.getItem(MESSAGES_KEY)).toContain('req-123');
+    expect(localStorage.getItem(CONVERSATIONS_KEY)).toBeNull();
     await user.click(screen.getByRole('button', { name: '重试' }));
     await screen.findByRole('button', { name: '引用来源 1' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -120,7 +120,8 @@ describe('chat flow', () => {
     expect(localStorage.getItem(SESSION_KEY)).not.toBe(oldId);
     expect(screen.queryByText('闲聊')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /你好，我是/ })).toBeInTheDocument();
-    expect(JSON.parse(sessionStorage.getItem(MESSAGES_KEY)!).messages).toEqual([]);
+    expect(JSON.parse(localStorage.getItem(CONVERSATIONS_KEY)!)).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '打开对话：你好' })).toBeInTheDocument();
     await ask('你好');
     await screen.findByText('闲聊');
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).session_id).not.toBe(JSON.parse(fetchMock.mock.calls[0][1].body).session_id);
@@ -296,7 +297,8 @@ describe('chat flow', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(result('秒回'))));
     render(<App />);
     await ask('秒回');
-    expect(await screen.findByText('秒回', { selector: 'span' })).toBeInTheDocument();
+    // 侧边栏的会话标题也可能叫「秒回」，只在消息区内断言路由标签。
+    await waitFor(() => expect(within(screen.getByRole('log')).getByText('秒回', { selector: 'span' })).toBeInTheDocument());
   });
 
   it('hides server-supplied trace while the visible switch is off', async () => {

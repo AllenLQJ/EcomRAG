@@ -1,5 +1,6 @@
+import { turn, conversation } from '../test/conversations';
 import { describe, expect, it, vi } from 'vitest';
-import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled } from './storage';
+import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled, CONVERSATIONS_KEY, loadConversations, saveConversations } from './storage';
 
 describe('storage', () => {
   it('creates/reuses a UUID and replaces it for a new conversation', () => {
@@ -89,7 +90,8 @@ describe('storage', () => {
 describe('completed-turn snapshots', () => {
   it('never saves a trailing unfinished user message', () => {
     saveMessages('s', [{ id: 'u', kind: 'user', text: '等待中的提问' }]);
-    expect(JSON.parse(sessionStorage.getItem(MESSAGES_KEY)!).messages).toEqual([]);
+    expect(loadConversations()).toEqual([]);
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
     expect(loadMessages('s')).toEqual([]);
   });
 
@@ -100,6 +102,90 @@ describe('completed-turn snapshots', () => {
     sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 's', messages }));
     expect(loadMessages('s')).toEqual(complete);
     saveMessages('s', messages);
-    expect(JSON.parse(sessionStorage.getItem(MESSAGES_KEY)!).messages).toEqual(complete);
+    expect(loadConversations()[0].messages).toEqual(complete);
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
+  });
+});
+
+describe('versioned conversation history', () => {
+  it('round-trips multiple conversations and updates timestamps without changing the first title', () => {
+    saveMessages('one', turn('😀'.repeat(21)), 100);
+    saveMessages('two', turn('第二个'), 200);
+    saveMessages('one', [...turn('😀'.repeat(21)), ...turn('继续')], 300);
+    const stored = JSON.parse(localStorage.getItem(CONVERSATIONS_KEY)!);
+    expect(stored.map((item: { id: string }) => item.id)).toEqual(['one', 'two']);
+    expect(stored[0]).toMatchObject({ id: 'one', title: '😀'.repeat(20), createdAt: 100, updatedAt: 300 });
+    expect(loadConversations()).toEqual(stored);
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
+  });
+  it('keeps the latest 30 conversations and latest 100 messages in complete pairs', () => {
+    saveConversations(Array.from({ length: 31 }, (_, index) => conversation(String(index), index)));
+    expect(loadConversations()).toHaveLength(30);
+    expect(loadConversations().some(item => item.id === '0')).toBe(false);
+    const messages = Array.from({ length: 51 }, (_, index) => turn(String(index))).flat();
+    saveMessages('30', [...messages, { id: 'pending', kind: 'user', text: '未完成' }], 100);
+    expect(loadMessages('30')).toEqual(messages.slice(2));
+    expect(loadMessages('30')).toHaveLength(100);
+  });
+  it('migrates completed legacy turns exactly once and deletes the legacy snapshot', () => {
+    localStorage.setItem(SESSION_KEY, 'legacy');
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 'legacy', messages: [
+      ...turn('旧问题'), ...turn('失败', '', true), { id: 'pending', kind: 'user', text: '未完成' },
+    ] }));
+    expect(loadConversations(100)[0]).toMatchObject({ id: 'legacy', title: '旧问题', createdAt: 100, updatedAt: 100 });
+    expect(loadMessages('legacy')).toEqual([...turn('旧问题'), ...turn('失败', '', true)]);
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
+    expect(loadConversations(200)).toHaveLength(1);
+    expect(loadConversations()[0].updatedAt).toBe(100);
+  });
+  it('rejects malformed records and tolerates malformed JSON', () => {
+    localStorage.setItem(CONVERSATIONS_KEY, '{');
+    expect(loadConversations()).toEqual([]);
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify([null, { ...conversation('bad'), messages: [{}] }, conversation('good')]));
+    expect(loadConversations().map(item => item.id)).toEqual(['good']);
+  });
+  it.each(['quota', 'methods', 'accessors'])('keeps history operations in memory when storage fails: %s', mode => {
+    saveMessages('original', turn('已有'), 100);
+    if (mode === 'accessors') {
+      vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('blocked'); });
+      vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => { throw new Error('blocked'); });
+    } else {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+      if (mode === 'methods') vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    }
+    saveMessages('new', turn('新问题'), 200);
+    expect(loadMessages('new')).toEqual(turn('新问题'));
+    expect(loadConversations()).toHaveLength(2);
+    saveConversations(loadConversations().filter(item => item.id !== 'original'));
+    expect(loadConversations().map(item => item.id)).toEqual(['new']);
+    clearMessages();
+    expect(loadConversations()).toEqual([]);
+  });
+});
+
+describe('legacy selection and volatile session IDs', () => {
+  it('selects a migrated legacy session when the current-id key is absent', () => {
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 'legacy', messages: turn('迁移') }));
+    loadConversations(100);
+    expect(getSessionId()).toBe('legacy');
+    expect(sessionStorage.getItem(MESSAGES_KEY)).toBeNull();
+  });
+  it('retains the newest current session in memory after a failed write', () => {
+    localStorage.setItem(SESSION_KEY, 'stale');
+    expect(getSessionId()).toBe('stale');
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    const fresh = newSessionId();
+    expect(fresh).not.toBe('stale');
+    expect(getSessionId()).toBe(fresh);
+  });
+});
+
+describe('legacy migration cleanup failures', () => {
+  it('does not resurrect deleted legacy history when removeItem is blocked', () => {
+    sessionStorage.setItem(MESSAGES_KEY, JSON.stringify({ session_id: 'legacy', messages: turn('迁移') }));
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
+    expect(loadConversations(100)).toHaveLength(1);
+    clearMessages();
+    expect(loadConversations()).toEqual([]);
   });
 });

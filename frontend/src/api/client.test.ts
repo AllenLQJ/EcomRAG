@@ -3,7 +3,7 @@ import { REQUEST_TIMEOUT_MS, sendChat } from './client';
 import { errorMessage } from './errors';
 import type { ChatRequest, ChatResponse } from './types';
 
-const request: ChatRequest = { session_id: 'test-session', message: '怎么申请退货？', debug: false };
+const request: ChatRequest = { session_id: 'test-session', message: '怎么申请退货？', debug: false, history: [{ role: 'user', content: '你好' }, { role: 'assistant', content: '你好，请问有什么需要？' }] };
 const success: ChatResponse = {
   request_id: 'r-1', session_id: request.session_id, answer: '可以申请。',
   route: 'faq', strategy: null, sources: [], is_mock: false, trace: null,

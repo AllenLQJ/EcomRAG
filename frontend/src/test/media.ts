@@ -6,7 +6,7 @@ export function mockMobile(initial = true): (mobile: boolean) => void {
   const listeners = new Set<() => void>();
   vi.stubGlobal('matchMedia', vi.fn((media: string) => ({
     media,
-    get matches() { return mobile; },
+    get matches() { return media === '(min-width: 1024px)' ? !mobile : mobile; },
     addEventListener: (_type: string, listener: () => void) => { listeners.add(listener); },
     removeEventListener: (_type: string, listener: () => void) => { listeners.delete(listener); },
   })));

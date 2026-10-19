@@ -3,7 +3,7 @@ import { sendChatStream, REQUEST_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_MS } from './cl
 import type { ChatRequest, ChatResponse, ChatStreamEvent } from './types';
 import { controlledSSE, frame } from '../test/streams';
 
-const request: ChatRequest = { session_id: 's', message: '有什么商品', debug: false };
+const request: ChatRequest = { session_id: 's', message: '有什么商品', debug: false, history: [{ role: 'user', content: '你好' }, { role: 'assistant', content: '你好' }] };
 const result: ChatResponse = { request_id: 'r', session_id: 's', answer: '你好[1]', route: 'rag',
   strategy: 'direct', sources: [{ index: 1, doc_id: 'd', title: '资料', snippet: '说明', score: .9 }], is_mock: false, trace: null };
 const meta: ChatStreamEvent = { event: 'meta', data: { request_id: 'r', session_id: 's' } };
@@ -43,6 +43,7 @@ describe('POST streaming API', () => {
     expect(await sendChatStream(request, emit)).toEqual(result);
     expect(emit).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/v1/chat/stream', '/api/v1/chat']);
+    expect(fetchMock.mock.calls.map(call => JSON.parse(call[1].body).history)).toEqual([request.history, request.history]);
   });
 
   it('VITE_STREAM=0 uses only the compatibility endpoint', async () => {
@@ -157,6 +158,7 @@ describe('stream audit boundaries', () => {
     expect(await sendChatStream(request, emit)).toEqual(result);
     expect(emit).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/v1/chat/stream', '/api/v1/chat']);
+    expect(fetchMock.mock.calls.map(call => JSON.parse(call[1].body).history)).toEqual([request.history, request.history]);
   });
 
   it('ignores extension events after meta without weakening the started-stream rule', async () => {
