@@ -14,6 +14,8 @@ from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException
 
 from app import config
+from app.account_api import account_router
+from app.auth import AccountService, GUEST_COOKIE, SESSION_COOKIE, set_cookie
 from app.chat_log import ChatLog, ChatLogWriter, persist
 from app.contracts import (
     AppError,
@@ -22,10 +24,14 @@ from app.contracts import (
     INVALID_ARGUMENT,
     METHOD_NOT_ALLOWED,
     NOT_FOUND,
+    FORBIDDEN,
+    RATE_LIMITED,
+    DAILY_RATE_LIMITED,
 )
 from app.logging_config import configure_logging, log_exception, request_id as request_id_context
 from app.pipeline import run_chat
 from app.rate_limit import RateLimiter, client_ip
+from app.quota import DailyQuota
 from app.schemas import ChatRequest, ChatResponse
 from app.services import Services
 from app.streaming import SSEStreamingResponse, chat_events
@@ -57,16 +63,17 @@ async def uri_status(uri: str, default_port: int, timeout: float) -> str:
         return "down"
 
 
-def error_response(request: Request, code: int, message: str, status: int) -> JSONResponse:
+def error_response(request: Request, code: int, message: str, status: int, **details) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or str(uuid4())
     return JSONResponse(
         status_code=status,
-        content={"code": code, "message": message, "request_id": request_id},
+        content={"code": code, "message": message, "request_id": request_id, **details},
         headers={"X-Request-ID": request_id},
     )
 
 
-def create_app(settings: config.Settings | None = None, *, services=None, chat_log_writer=None) -> FastAPI:
+def create_app(settings: config.Settings | None = None, *, services=None, chat_log_writer=None,
+               account_service=None, daily_quota=None) -> FastAPI:
     settings = settings if settings is not None else config.get_settings()
     configure_logging(settings)
     logger.info("capacity_config llm=%d rerank=%d model_workers=%d model_queue=%d "
@@ -79,6 +86,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
     owned = services is None
     services = Services(settings) if owned else services
     limiter = RateLimiter(settings)
+    accounts = account_service if account_service is not None else AccountService(settings)
+    quota = daily_quota if daily_quota is not None else DailyQuota(settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -101,8 +110,11 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                 try:
                     await limiter.aclose()
                 finally:
-                    if settings.chat_log_enabled and callable(getattr(chat_logs, "aclose", None)):
-                        await chat_logs.aclose()
+                    try:
+                        await asyncio.gather(accounts.aclose(), quota.aclose())
+                    finally:
+                        if settings.chat_log_enabled and callable(getattr(chat_logs, "aclose", None)):
+                            await chat_logs.aclose()
 
     app = FastAPI(
         lifespan=lifespan,
@@ -115,38 +127,74 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
     app.state.services = services
     app.state.chat_logs = chat_logs
     app.state.rate_limiter = limiter
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
-        expose_headers=["X-Request-ID"],
-    )
-
+    app.state.accounts = accounts
+    app.state.quota = quota
     @app.middleware("http")
     async def attach_request_id(request: Request, call_next):
         request.state.request_id = str(uuid4())
         token = request_id_context.set(request.state.request_id)
         started, status = perf_counter(), 500
+        guest_token = None
         try:
-            response = await call_next(request)
+            if request.url.path.startswith("/api/v1/"):
+                old_guest = request.cookies.get(GUEST_COOKIE)
+                request.state.guest_id = accounts.guest(old_guest)
+                if request.state.guest_id != old_guest:
+                    guest_token = request.state.guest_id
+            protected = (request.url.path == "/api/v1/auth" or request.url.path.startswith("/api/v1/auth/") or
+                         request.url.path == "/api/v1/conversations" or
+                         request.url.path.startswith("/api/v1/conversations/"))
+            origin = request.headers.get("origin")
+            if protected and request.method != "OPTIONS" and (
+                (origin is not None and origin not in settings.cors_origins) or
+                (request.method in {"POST", "PATCH", "DELETE"} and
+                 request.headers.get("x-requested-with") != "ecomrag")
+            ):
+                response = error_response(request, FORBIDDEN, "请求来源校验失败", 403)
+            else:
+                response = await call_next(request)
             status = response.status_code
+            if guest_token is not None:
+                set_cookie(response, GUEST_COOKIE, guest_token, request, settings)
             response.headers["X-Request-ID"] = request.state.request_id
             return response
         except Exception as exc:
             # 不再把带原文的异常交给 ASGI 服务器重复记录。
-            return await unexpected_error_handler(request, exc)
+            response = await unexpected_error_handler(request, exc)
+            if guest_token is not None:
+                set_cookie(response, GUEST_COOKIE, guest_token, request, settings)
+            return response
         finally:
+            audit_path = request.url.path
+            if audit_path.startswith("/api/v1/conversations/"):
+                audit_path = "/api/v1/conversations/{id}"
+            elif audit_path.startswith("/api/v1/auth/") and audit_path not in {
+                "/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/logout",
+                "/api/v1/auth/me", "/api/v1/auth/account",
+            }:
+                audit_path = "/api/v1/auth/{redacted}"
             logger.info("request_done method=%s path=%s status=%d ms=%.3f",
-                        request.method, json.dumps(request.url.path), status,
+                        request.method, json.dumps(audit_path), status,
                         (perf_counter() - started) * 1000)
             request_id_context.reset(token)
 
+    # CORS 位于请求中间件外层，CSRF/认证失败响应同样带允许来源的凭据头。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-Requested-With"],
+        allow_credentials=True,
+        expose_headers=["X-Request-ID"],
+    )
+
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):
-        response = error_response(request, exc.code, exc.message, exc.http_status)
+        response = error_response(request, exc.code, exc.message, exc.http_status, **exc.details)
+        if "retry_after_seconds" in exc.details:
+            response.headers["Retry-After"] = str(exc.details["retry_after_seconds"])
         payload = getattr(request.state, "chat_payload", None)
-        if settings.chat_log_enabled and payload is not None:
+        if settings.chat_log_enabled and payload is not None and not getattr(request.state, "private_chat", False):
             row = ChatLog(request.state.request_id, payload.session_id, payload.message, "", "error",
                           (perf_counter() - request.state.chat_started) * 1000, error_code=exc.code,
                           history_count=len(payload.history))
@@ -177,7 +225,7 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             request.state.unexpected_logged = True
         response = error_response(request, INTERNAL_ERROR, "内部错误", 500)
         payload = getattr(request.state, "chat_payload", None)
-        if settings.chat_log_enabled and payload is not None:
+        if settings.chat_log_enabled and payload is not None and not getattr(request.state, "private_chat", False):
             row = ChatLog(request.state.request_id, payload.session_id, payload.message, "", "error",
                           (perf_counter() - request.state.chat_started) * 1000, error_code=INTERNAL_ERROR,
                           history_count=len(payload.history))
@@ -198,16 +246,51 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             "llm": "configured" if settings.llm_api_key.get_secret_value().strip() else "unconfigured",
         }
 
+    app.include_router(account_router(settings, accounts, quota))
+
+    async def chat_context(payload, request):
+        request.state.private_chat = bool(request.cookies.get(SESSION_COOKIE))
+        user = await accounts.current(request)
+        request.state.private_chat = request.state.private_chat or user is not None
+        conversation_id = payload.conversation_id if user else None
+        if conversation_id is not None:
+            await accounts.call("owned_conversation", user["id"], conversation_id)
+
+        async def before_chat():
+            ip = client_ip(request, settings)
+            rate_error = None
+            try:
+                await limiter.check_async(ip, payload.session_id)
+            except AppError as exc:
+                if exc.code not in {RATE_LIMITED, DAILY_RATE_LIMITED}:
+                    raise
+                rate_error = exc
+            # 两套计数均沿用入口检查时机；同时超限时优先给出角色日配额提示。
+            await quota.check(user["id"] if user else None, request.state.guest_id, ip)
+            if rate_error is not None:
+                raise rate_error
+            if conversation_id is not None:
+                await accounts.save(user["id"], conversation_id, "user", payload.message)
+
+        async def after_chat(result):
+            if conversation_id is not None:
+                await accounts.save(user["id"], conversation_id, "assistant", result.answer, result.route,
+                                    [source.model_dump() for source in result.sources])
+
+        return user, before_chat, after_chat
+
     @app.post("/api/v1/chat", response_model=ChatResponse)
     async def chat(payload: ChatRequest, request: Request, background_tasks: BackgroundTasks) -> ChatResponse:
         started = perf_counter()
         request.state.chat_payload, request.state.chat_started = payload, started
         trace, result = [], None
         try:
+            user, before_chat, after_chat = await chat_context(payload, request)
             result = await run_chat(payload, request_id=request.state.request_id,
                                     settings=settings, services=services, trace_sink=trace,
-                                    before_chat=lambda: limiter.check_async(client_ip(request, settings), payload.session_id))
-            if settings.chat_log_enabled:
+                                    before_chat=before_chat)
+            await after_chat(result)
+            if settings.chat_log_enabled and not request.state.private_chat:
                 row = ChatLog(result.request_id, result.session_id, payload.message, result.answer,
                               result.route, (perf_counter() - started) * 1000, strategy=result.strategy,
                               sources=[source.model_dump() for source in result.sources],
@@ -219,10 +302,12 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
             for item in trace:
                 stages[item.stage] = round(stages.get(item.stage, 0) + item.ms, 3)
             # 多轮不输出客户端 session，避免客户端把历史片段放入标识造成旁路泄露。
-            session = "[redacted]" if payload.history else payload.session_id
+            session = ("[redacted]" if payload.history or getattr(request.state, "private_chat", False)
+                       or accounts.valid_token(payload.session_id, "session")
+                       else payload.session_id)
             # session 是用户输入，避免意外与原文或 key 相同，并转义换行。
             for secret in (payload.message, result.answer if result else "",
-                           settings.llm_api_key.get_secret_value()):
+                           settings.llm_api_key.get_secret_value(), *request.cookies.values()):
                 if secret:
                     session = session.replace(secret, "[redacted]")
             logger.info("chat_done session_id=%s route=%s strategy=%s total_ms=%.3f stages_ms=%s documents=%d history_count=%d",
@@ -232,10 +317,12 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
 
     @app.post("/api/v1/chat/stream")
     async def chat_stream(payload: ChatRequest, request: Request):
+        user, before_chat, after_chat = await chat_context(payload, request)
         return SSEStreamingResponse(
-            chat_events(payload, request.state.request_id, settings=settings, services=services,
-                        before_chat=lambda: limiter.check_async(client_ip(request, settings), payload.session_id),
-                        chat_logs=chat_logs),
+            chat_events(payload, request.state.request_id,
+                        settings=settings.model_copy(update={"chat_log_enabled": False})
+                        if request.state.private_chat else settings,
+                        services=services, before_chat=before_chat, after_chat=after_chat, chat_logs=chat_logs),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Content-Encoding": "identity"},
         )

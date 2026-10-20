@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     rate_limit_ip_enabled: bool = True
     rate_limit_per_min: int = Field(default=50, gt=0)
     rate_limit_per_day: int = Field(default=200, gt=0)
+    guest_daily_limit: int = Field(default=5, gt=0)
+    user_daily_limit: int = Field(default=50, gt=0)
+    rate_limit_day_tz_offset_hours: int = Field(default=8, ge=-12, le=14)
+    auth_secret: SecretStr = SecretStr("")
+    auth_scrypt_n: int = Field(default=32768, ge=32768, le=262144)
+    auth_io_workers: int = Field(default=4, gt=0)
+    auth_io_max_in_flight: int = Field(default=16, gt=0)
     health_timeout_s: float = Field(default=1, gt=0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_dir: str = "logs"
@@ -117,6 +124,20 @@ class Settings(BaseSettings):
     chat_log_enabled: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     debug: bool = False
+
+    @field_validator("auth_scrypt_n")
+    @classmethod
+    def validate_scrypt_n(cls, value):
+        if value & (value - 1):
+            raise ValueError("AUTH_SCRYPT_N 必须为 2 的幂")
+        return value
+
+    @field_validator("cors_origins")
+    @classmethod
+    def explicit_cors_origins(cls, values):
+        if any("*" in value for value in values):
+            raise ValueError("CORS_ORIGINS 必须为显式来源列表，不得含 *")
+        return values
 
     @model_validator(mode="after")
     def warn_legacy_model_io_capacity(self):

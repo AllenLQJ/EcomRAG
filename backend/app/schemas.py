@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=500)
     debug: bool = False
     history: list[HistoryMessage] = Field(default_factory=list)
+    conversation_id: str | None = Field(default=None, max_length=128)
 
     @field_validator("history", mode="before")
     @classmethod

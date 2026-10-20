@@ -263,7 +263,8 @@ def test_shared_proxy_api_does_not_charge_phone_for_another_session(app_factory)
 def test_fifty_concurrent_sessions_and_phone_succeed_behind_shared_proxy(app_factory):
     import httpx
     async def run():
-        app = app_factory(rate_limit_ip_enabled=False)
+        # 本例只验证旧分钟限制，角色日配额在 test_quota_api 中单独验证。
+        app = app_factory(rate_limit_ip_enabled=False, guest_daily_limit=100)
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                 responses = await asyncio.gather(*[

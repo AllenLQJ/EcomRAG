@@ -42,6 +42,32 @@ def offline_chat_logger(monkeypatch):
     monkeypatch.setattr(main, "ChatLogWriter", factory)
 
 
+@pytest.fixture(autouse=True)
+def offline_account_io(monkeypatch):
+    # 新增存储也必须离线；显式注入的 fake Redis 不受影响。
+    main = importlib.import_module("app.main")
+    account_class, quota_class = main.AccountService, main.DailyQuota
+
+    def accounts(settings):
+        service = account_class(settings)
+        service.store.cache._client = lambda: service.store.cache.client
+        return service
+
+    def quota(settings):
+        service = quota_class(settings)
+        service.cache._client = lambda: service.cache.client
+        return service
+
+    monkeypatch.setattr(main, "AccountService", accounts)
+    monkeypatch.setattr(main, "DailyQuota", quota)
+
+
+@pytest.fixture
+def account_factory():
+    from account_fakes import build_account_app
+    return build_account_app
+
+
 @pytest.fixture
 def app_factory(monkeypatch):
     # 测试不读取 .env，也不打开任何网络连接。

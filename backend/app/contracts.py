@@ -7,6 +7,10 @@ from app.schemas import Intent, Strategy
 # 统一业务错误码。
 HTTP_ERROR = 40000
 INVALID_ARGUMENT = 40001
+UNAUTHORIZED = 40101
+FORBIDDEN = 40301
+USERNAME_CONFLICT = 40901
+AUTH_RATE_LIMITED = 42903
 NOT_FOUND = 40401
 METHOD_NOT_ALLOWED = 40501
 RATE_LIMITED = 42901  # 本服务 IP/session 分钟频率限流。
@@ -19,11 +23,12 @@ TIMEOUT = 50401
 
 
 class AppError(Exception):
-    def __init__(self, code: int, http_status: int, message: str) -> None:
+    def __init__(self, code: int, http_status: int, message: str, **details) -> None:
         super().__init__(message)
         self.code = code
         self.http_status = http_status
         self.message = message
+        self.details = details
 
 
 class RetrievedDoc(BaseModel):

@@ -29,7 +29,7 @@ def encode_event(event, data):
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
-async def chat_events(payload, request_id, *, settings, services, before_chat, chat_logs):
+async def chat_events(payload, request_id, *, settings, services, before_chat, chat_logs, after_chat=None):
     # meta 在限流、模型加载或信号量排队之前发出。
     yield encode_event("meta", dict(request_id=request_id, session_id=payload.session_id))
     queue = asyncio.Queue(maxsize=1)
@@ -80,7 +80,7 @@ async def chat_events(payload, request_id, *, settings, services, before_chat, c
                 result = await run_chat(payload, request_id=request_id, settings=settings, services=services,
                                         trace_sink=trace, before_chat=before_chat, on_status=status, on_delta=delta)
             except AppError as exc:
-                error = dict(code=exc.code, message=exc.message, request_id=request_id)
+                error = dict(code=exc.code, message=exc.message, request_id=request_id, **exc.details)
             except Exception:
                 # 不打印异常文本/栈：上游、SDK 可能把业务原文嵌入异常。
                 error = dict(code=INTERNAL_ERROR, message="内部错误", request_id=request_id)
@@ -133,6 +133,10 @@ async def chat_events(payload, request_id, *, settings, services, before_chat, c
             event, data = pending.result()
             pending = None
             yield encode_event(event, data)
+            # yield 恢复意味着 done 已成功交给 ASGI send；提前关闭/取消不保存助手消息。
+            if event == "done" and after_chat is not None:
+                from app.schemas import ChatResponse
+                await after_chat(ChatResponse.model_validate(data))
             if event in {"done", "error"}:
                 break
     finally:
