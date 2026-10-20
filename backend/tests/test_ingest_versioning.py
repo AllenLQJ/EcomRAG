@@ -45,7 +45,8 @@ class Client:
         return list(self.rows)
 
     def list_aliases(self, collection_name, **kwargs):
-        return [alias for alias, target in self.aliases.items() if target == collection_name]
+        return {"aliases": [alias for alias, target in self.aliases.items() if target == collection_name],
+                "collection_name": collection_name, "db_name": "default"}
 
     def create_schema(self, **kwargs):
         return Recorder()
@@ -75,6 +76,7 @@ class Client:
 
     def query_iterator(self, collection_name, output_fields, **kwargs):
         assert kwargs["consistency_level"] == "Strong"
+        assert kwargs["filter"] is None
         rows = [{f: r[f] for f in output_fields} for r in self.rows[self.target(collection_name)].values()]
         if self.bad_read and rows:
             rows[0]["child_text"] = ""
@@ -125,6 +127,51 @@ class VersionTests(unittest.TestCase):
     def build(self, version="kb_chunks_v1"):
         with self.manager.locked():
             return self.manager.build(self.chunks, 1, self.embedder, version=version)
+
+    def test_alias_lookup_accepts_sdk_dict_and_legacy_list(self):
+        self.client.rows = {"unrelated": {}, "kb_chunks_v1": {}}
+        self.client.aliases["kb_chunks"] = "kb_chunks_v1"
+        sdk_list_aliases = self.client.list_aliases
+        for legacy in (False, True):
+            def aliases(**kwargs):
+                result = sdk_list_aliases(**kwargs)
+                return result["aliases"] if legacy else result
+
+            with self.subTest(legacy=legacy), patch.object(self.client, "list_aliases", side_effect=aliases) as rpc:
+                self.assertEqual(self.manager.current(), "kb_chunks_v1")
+                self.assertIsNone(self.store.alias_target("missing"))
+                # dict 的元数据键不能被误认作真实 alias。
+                self.assertIsNone(self.store.alias_target("aliases"))
+                self.assertIsNone(self.store.alias_target("collection_name"))
+                self.assertIsNone(self.store.alias_target("db_name"))
+                self.assertTrue(all(call.kwargs["timeout"] == self.store.timeout_s for call in rpc.call_args_list))
+
+    def test_alias_lookup_rejects_malformed_sdk_responses(self):
+        self.client.rows["kb_chunks_v1"] = {}
+        for response in ({}, {"aliases": None}, {"aliases": "kb_chunks"}, [123], None):
+            with self.subTest(response=response), patch.object(self.client, "list_aliases", return_value=response):
+                with self.assertRaises((KeyError, ValueError)):
+                    self.manager.current()
+
+    def test_alias_lookup_propagates_rpc_errors_instead_of_reporting_missing(self):
+        self.client.rows["kb_chunks_v1"] = {}
+        for operation in ("list_collections", "list_aliases"):
+            for error in (TimeoutError("network timeout"), PermissionError("permission denied")):
+                with self.subTest(operation=operation, error=error), \
+                        patch.object(self.client, operation, side_effect=error):
+                    with self.assertRaises(type(error)) as caught:
+                        self.manager.current()
+                    self.assertIs(caught.exception, error)
+
+    def test_bind_alias_creates_missing_and_alters_existing_alias(self):
+        self.build()
+        self.build("kb_chunks_v2")
+        self.manager.switch("kb_chunks_v1", yes=True)
+        self.assertEqual(self.manager.current(), "kb_chunks_v1")
+        self.manager.switch("kb_chunks_v2", yes=True)
+        self.assertEqual(self.manager.current(), "kb_chunks_v2")
+        alias_events = [event for event in self.client.events if event[0] in ("create_alias", "alter_alias")]
+        self.assertEqual(alias_events, [("create_alias", "kb_chunks_v1"), ("alter_alias", "kb_chunks_v2")])
 
     def test_staged_build_never_switches_and_lists_stats(self):
         result = self.build()
@@ -237,13 +284,99 @@ class VersionTests(unittest.TestCase):
 
     def test_migration_can_resume_after_rename_before_alias_creation(self):
         self.store.upsert(self.chunks, self.embedder.encode([c.child_text for c in self.chunks]))
-        with patch.object(self.store, "bind_alias", side_effect=RuntimeError("interrupted")):
-            with self.assertRaises(RuntimeError):
+        with patch.object(self.client, "create_alias", side_effect=TimeoutError("interrupted")):
+            with self.assertRaises(TimeoutError):
                 self.manager.migrate(yes=True)
+            self.assertNotIn("kb_chunks", self.client.rows)
+            pending = json.loads(self.manager.path.read_text())["pending"]
+            self.assertEqual(pending["phase"], "renamed_pending_alias")
+            self.assertIsNone(pending["from"])
+            self.assertIsNone(self.manager.current())
+            # 再次失败仍须保留日志，不能因 None == None 将半成品吞掉。
+            with self.assertRaises(TimeoutError):
+                VersionManager(self.store, state_dir=self.tmp.name).recover()
+            self.assertEqual(json.loads(self.manager.path.read_text())["pending"], pending)
         resumed = VersionManager(self.store, state_dir=self.tmp.name)
         resumed.migrate(yes=True)
         self.assertEqual(resumed.current(), "kb_chunks_v0")
         self.assertEqual(sum(e[0] == "rename" for e in self.client.events), 1)
+        self.assertEqual(sum(e[0] == "create_alias" for e in self.client.events), 1)
+        self.assertIsNone(resumed.state["pending"])
+        self.assertEqual(len(resumed.state["history"]), 1)
+        self.assertTrue(resumed.state["versions"]["kb_chunks_v0"]["activated"])
+
+    def test_migration_resumes_if_process_exits_after_rename_before_saving_phase(self):
+        self.store.upsert(self.chunks, self.embedder.encode([c.child_text for c in self.chunks]))
+        rename = self.client.rename_collection
+
+        def interrupted_rename(**kwargs):
+            rename(**kwargs)
+            raise SystemExit("process exited after rename")
+
+        with patch.object(self.client, "rename_collection", side_effect=interrupted_rename):
+            with self.assertRaises(SystemExit):
+                self.manager.migrate(yes=True)
+        self.assertEqual(json.loads(self.manager.path.read_text())["pending"]["phase"], "rename_pending")
+        resumed = VersionManager(self.store, state_dir=self.tmp.name)
+        resumed.migrate(yes=True)
+        self.assertEqual(resumed.current(), "kb_chunks_v0")
+        self.assertEqual(sum(e[0] == "rename" for e in self.client.events), 1)
+
+    def test_migration_recovers_after_alias_rpc_before_recording_history(self):
+        self.store.upsert(self.chunks, self.embedder.encode([c.child_text for c in self.chunks]))
+        with patch.object(self.manager, "_record_switch", side_effect=SystemExit("crash")):
+            with self.assertRaises(SystemExit):
+                self.manager.migrate(yes=True)
+        resumed = VersionManager(self.store, state_dir=self.tmp.name)
+        resumed.migrate(yes=True)
+        self.assertIsNone(resumed.state["pending"])
+        self.assertEqual(len(resumed.state["history"]), 1)
+        self.assertEqual(resumed.current(), "kb_chunks_v0")
+        self.assertEqual(sum(e[0] == "create_alias" for e in self.client.events), 1)
+
+    def test_legacy_migration_pending_is_recovered_instead_of_cleared(self):
+        self.store.upsert(self.chunks, self.embedder.encode([c.child_text for c in self.chunks]))
+        with patch.object(self.client, "create_alias", side_effect=TimeoutError):
+            with self.assertRaises(TimeoutError):
+                self.manager.migrate(yes=True)
+        self.manager.state["pending"].pop("phase")
+        self.manager.state["pending"].pop("operation")
+        self.manager.save()
+        resumed = VersionManager(self.store, state_dir=self.tmp.name)
+        resumed.recover()
+        self.assertEqual(resumed.current(), "kb_chunks_v0")
+        self.assertEqual(len(resumed.state["history"]), 1)
+
+    def test_migration_recovery_validates_rows_and_preserves_pending_on_conflict(self):
+        self.store.upsert(self.chunks, self.embedder.encode([c.child_text for c in self.chunks]))
+        with patch.object(self.client, "create_alias", side_effect=TimeoutError):
+            with self.assertRaises(TimeoutError):
+                self.manager.migrate(yes=True)
+        pending = json.loads(self.manager.path.read_text())["pending"]
+        self.client.bad_read = True
+        with self.assertRaisesRegex(ValueError, "必填"):
+            self.manager.recover()
+        self.assertEqual(self.client.aliases, {})
+        self.assertEqual(json.loads(self.manager.path.read_text())["pending"], pending)
+        self.client.bad_read = False
+        self.client.rows["kb_chunks"] = {}
+        with self.assertRaisesRegex(ValueError, "kb_migrate --yes"):
+            self.manager.recover()
+        self.assertEqual(json.loads(self.manager.path.read_text())["pending"], pending)
+
+    def test_recovery_keeps_pending_when_alias_lookup_fails(self):
+        self.build()
+        with patch.object(self.store, "bind_alias", side_effect=TimeoutError):
+            with self.assertRaises(TimeoutError):
+                self.manager.switch("kb_chunks_v1", yes=True)
+        pending = json.loads(self.manager.path.read_text())["pending"]
+        with patch.object(self.client, "list_aliases", side_effect=TimeoutError):
+            with self.assertRaises(TimeoutError):
+                self.manager.recover()
+        self.assertEqual(json.loads(self.manager.path.read_text())["pending"], pending)
+        # 普通新部署的 create_alias 未生效仍可撤销 pending，不冒充半成品迁移。
+        self.manager.recover()
+        self.assertIsNone(self.manager.state["pending"])
 
     def test_pending_switch_recovers_after_rpc_success_before_state_save(self):
         self.build()

@@ -295,6 +295,8 @@ uv run python -m ingest.purge_chat_logs --days 30 --yes
 
 loader 支持 MD/TXT/PDF/DOCX，扫描 PDF 不做 OCR；PDF/DOCX 解析器延迟导入。Markdown 按二级标题整节切父块，介绍并入首节，超长再按字符/标点切分；子块前加文档标题。doc_id 来自源相对路径 SHA256 的前 24 位，parent_id/chunk_id 追加块序号，Milvus 按稳定 chunk_id upsert。重复导入相同内容不会增行，但**不会清理删除或切分变化留下的旧块**；变更切块或移除文档时需另行清理/重建集合，再入库验证。
 
+版本化迁移 `kb_migrate` 也不清理旧块，161→79 等历史脏数据应先单独执行 `--sync-delete --plan`、审阅后执行 `--sync-delete --yes`，再迁移。`--prune-missing` 会删除本次目录未扫描到的其他资料，属高风险操作，必须先用相同完整资料根目录执行 `--sync-delete --prune-missing --plan` 并核对删除清单。Milvus stats 的 `row_count` 可含墓碑，不能断言有效行数“应为 79”；应以 Strong iterator 的有效主键、内容与当次切块清单比对。详细流程见[知识库扩容与回滚](知识库扩容与回滚.md)。
+
 资料标题与介绍精简后，默认子块由 81 变为 79，父块仍为 41。已有库需要先按这 19 份资料的 doc_id 清理旧块，避免遗留旧标题与旧正文。在 `backend/` 下执行以下清理与导入命令；完成后重启后端以重建内存 FAQ 索引。
 
 ```bash

@@ -10,11 +10,11 @@ import json
 import math
 import re
 from contextlib import contextmanager
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ingest.loaders import PROJECT_ROOT
+from ingest.splitter import chunk_record
 
 
 def now():
@@ -27,12 +27,13 @@ def digest(value):
 
 
 def manifest(chunks, document_count):
-    rows = {chunk.chunk_id: digest(asdict(chunk)) for chunk in chunks}
+    rows = {chunk.chunk_id: digest(chunk_record(chunk)) for chunk in chunks}
     if len(rows) != len(chunks) or not chunks:
         raise ValueError("构建必须有非空且主键唯一的块")
     stats = {"documents": document_count,
              "parent_chunks": len({c.parent_id for c in chunks}), "child_chunks": len(chunks)}
-    return {"rows": rows, "stats": stats, "fingerprint": digest(rows)}
+    return {"rows": rows, "stats": stats, "fingerprint": digest(rows),
+            **({"skus_metadata": True} if any(c.skus is not None for c in chunks) else {})}
 
 
 def validate(store, expected):
@@ -40,7 +41,8 @@ def validate(store, expected):
     from app.retrieval.embedder import DENSE_DIM
 
     found, docs, parents = {}, set(), set()
-    for row in store.iter_rows():
+    options = {"fields": [*TEXT_FIELDS, "dense", "skus"]} if expected.get("skus_metadata") else {}
+    for row in store.iter_rows(**options):
         for field, limit in TEXT_FIELDS.items():
             value = row.get(field)
             if not isinstance(value, str) or not value.strip() or len(value.encode()) > limit:
@@ -51,7 +53,18 @@ def validate(store, expected):
         key = row["chunk_id"]
         if key in found:
             raise ValueError("构建校验失败：重复主键")
-        found[key] = digest({field: row[field] for field in TEXT_FIELDS})
+        content = {field: row[field] for field in TEXT_FIELDS}
+        if expected.get("skus_metadata"):
+            raw = row.get("skus")
+            if not isinstance(raw, str) or len(raw.encode("utf-8")) > 4096:
+                raise ValueError("构建校验失败：skus 必须为 JSON 字符串且不超长")
+            parsed = json.loads(raw)
+            from ingest.product_metadata import parse_skus
+            if parsed is not None and (not isinstance(parsed, list) or parse_skus(parsed) != parsed):
+                raise ValueError("构建校验失败：skus 必须为合法 SKU 数组或 null")
+            if parsed is not None:
+                content["skus"] = raw
+        found[key] = digest(content)
         docs.add(row["doc_id"])
         parents.add(row["parent_id"])
     stats = {"documents": len(docs), "parent_chunks": len(parents), "child_chunks": len(found)}
@@ -105,11 +118,45 @@ class VersionManager:
         current = self.current()
         if current == pending["to"]:
             self._record_switch(pending)
-        elif current == pending["from"]:
+        elif current is None and pending["from"] is None and (
+            pending.get("operation") == "migrate" or (
+                # 兼容旧状态文件：旧 migrate 在 rename 后才登记普通切换 pending。
+                pending["to"] == self.alias + "_v0"
+                and pending["to"] in self.store.collections()
+                and not self.state["versions"][pending["to"]].get("activated")
+            )
+        ):
+            self._recover_migration(pending)
+        elif pending.get("operation", "switch") == "switch" and current == pending["from"]:
+            # 仅普通 alias 切换可按原目标判定 RPC 未生效；迁移须按显式阶段恢复。
             self.state["pending"] = None
             self.save()
         else:
             raise ValueError("未完成切换与服务端状态冲突；需人工核对状态文件")
+
+    def _recover_migration(self, pending):
+        """rename 和 alias 创建之间没有事务；失败时保留明确阶段供下次重试。"""
+        version = pending["to"]
+        names = set(self.store.collections())
+        if pending.get("phase") in (None, "rename_pending"):
+            if self.alias in names and version not in names:
+                self.store.rename(self.alias, version)
+                names.remove(self.alias)
+                names.add(version)
+            elif self.alias in names or version not in names:
+                raise ValueError("迁移集合状态冲突；请核对旧实体及 v0 后重跑 kb_migrate --yes")
+            # 包括 rename RPC 成功、但保存阶段前进程退出的情况。
+            pending.update(operation="migrate", phase="renamed_pending_alias")
+            self.save()
+        if pending["phase"] != "renamed_pending_alias" or self.alias in names or version not in names:
+            raise ValueError("迁移集合状态冲突；请核对旧实体及 v0 后重跑 kb_migrate --yes")
+        target = self.store.for_collection(version)
+        target.flush_load()
+        validate(target, self.state["versions"][version]["manifest"])
+        self.state["versions"][version]["status"] = "ready"
+        self.save()
+        self.store.bind_alias(self.alias, version, exists=False)
+        self._record_switch(pending)
 
     def _record_switch(self, pending):
         self.state["history"].append(pending)
@@ -174,7 +221,7 @@ class VersionManager:
             return {"current": version, "unchanged": True}
         if previous is None and self.alias in self.store.collections():
             raise ValueError("存在同名旧实体集合；请先执行 kb_migrate --yes")
-        event = {"from": previous, "to": version, "at": now()}
+        event = {"from": previous, "to": version, "at": now(), "operation": "switch"}
         self.state["pending"] = event
         self.save()
         self.store.bind_alias(self.alias, version, exists=previous is not None)
@@ -248,14 +295,13 @@ class VersionManager:
             self.state["versions"][version] = {"created_at": now(), "status": "migrating",
                                                 "manifest": expected, "activated": False}
             self.save()
-        if self.alias in names:
-            self.store.rename(self.alias, version)
-        target = self.store.for_collection(version)
-        target.flush_load()
-        validate(target, self.state["versions"][version]["manifest"])
-        self.state["versions"][version]["status"] = "ready"
+        # rename 前就登记写前日志，不能以 current == from == None 判定迁移未执行。
+        event = {"from": None, "to": version, "at": now(),
+                 "operation": "migrate", "phase": "rename_pending"}
+        self.state["pending"] = event
         self.save()
-        return self.switch(version, yes=True)
+        self.recover()
+        return {"current": version, "previous": None, "switched": True}
 
 
 def deletion_plan(store, chunks, documents, *, prune_missing=False):

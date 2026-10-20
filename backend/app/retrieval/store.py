@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import importlib
 import math
-from dataclasses import asdict
 
 from app.retrieval.embedder import DENSE_DIM, EmbeddingBatch, validate_embeddings
-from ingest.splitter import Chunk
+from ingest.splitter import Chunk, chunk_record
 
 # VARCHAR 长度单位为 UTF-8 字节，不是中文字符数。
 TEXT_FIELDS = {
@@ -20,7 +19,8 @@ class MilvusStore:
     """显式写入时才加载 SDK；测试可同时注入客户端和字段类型。"""
 
     def __init__(self, uri: str = "http://127.0.0.1:19530", *,
-                 collection_name: str = DEFAULT_COLLECTION, client=None, data_type=None, timeout_s=10):
+                 collection_name: str = DEFAULT_COLLECTION, client=None, data_type=None, timeout_s=10,
+                 skus_metadata=False):
         if not math.isfinite(timeout_s) or timeout_s <= 0:
             raise ValueError("Milvus 超时必须是正的有限秒数")
         self.timeout_s = timeout_s
@@ -29,6 +29,7 @@ class MilvusStore:
         self.client = client
         self.data_type = data_type
         self._ready = False
+        self.skus_metadata = skus_metadata
 
     def _connect(self):
         if self.client is None or self.data_type is None:
@@ -55,6 +56,8 @@ class MilvusStore:
             for name, length in TEXT_FIELDS.items():
                 schema.add_field(field_name=name, datatype=self.data_type.VARCHAR,
                                  max_length=length, is_primary=name == "chunk_id")
+            if self.skus_metadata:
+                schema.add_field(field_name="skus", datatype=self.data_type.VARCHAR, max_length=4096)
             schema.add_field(field_name="dense", datatype=self.data_type.FLOAT_VECTOR, dim=DENSE_DIM)
             schema.add_field(field_name="sparse", datatype=self.data_type.SPARSE_FLOAT_VECTOR)
             indexes = client.prepare_index_params()
@@ -63,6 +66,10 @@ class MilvusStore:
             indexes.add_index(field_name="sparse", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
             client.create_collection(collection_name=self.collection_name, schema=schema,
                                      index_params=indexes, consistency_level="Bounded")
+        elif self.skus_metadata:
+            fields = client.describe_collection(collection_name=self.collection_name)["fields"]
+            if "skus" not in {field["name"] for field in fields}:
+                raise ValueError("已有集合缺少 skus 字段；请使用 --staged --with-skus 构建新版本")
         self._ready = True
 
     def upsert(self, chunks: list[Chunk], embeddings: EmbeddingBatch):
@@ -72,7 +79,13 @@ class MilvusStore:
             return {"upsert_count": 0}
         rows = []
         for chunk, dense, sparse in zip(chunks, embeddings.dense, embeddings.sparse):
-            row = asdict(chunk)
+            row = chunk_record(chunk)
+            if self.skus_metadata:
+                row.setdefault("skus", "null")
+                if len(row["skus"].encode("utf-8")) > 4096:
+                    raise ValueError("字段 skus 超出 Milvus 的 4096 字节限制")
+            elif "skus" in row:
+                raise ValueError("SKU 元数据写入需显式启用 skus_metadata，避免静默丢失")
             for name, limit in TEXT_FIELDS.items():
                 if len(row[name].encode("utf-8")) > limit:
                     raise ValueError(f"字段 {name} 超出 Milvus 的 {limit} 字节限制")
@@ -86,10 +99,17 @@ class MilvusStore:
         return self._connect().list_collections(timeout=self.timeout_s)
 
     def alias_target(self, alias: str) -> str | None:
-        # 通过已存在实体的 list_aliases 查找，避免把网络/权限错误误判为 alias 不存在。
+        # 2.5.18 的 MilvusClient.list_aliases 虽注解为 List[str]，grpc_handler
+        # 实际返回 {"aliases": [...], "collection_name": ..., "db_name": ...}。
+        # 同时兼容旧 list 返回值；只在完整枚举成功后返回 None，任何 RPC 错误均传播。
+        # 不依赖 describe_alias 的“不存在”错误码，避免将网络/权限异常当作不存在。
         client = self._connect()
         for name in self.collections():
-            if alias in client.list_aliases(collection_name=name, timeout=self.timeout_s):
+            result = client.list_aliases(collection_name=name, timeout=self.timeout_s)
+            aliases = result["aliases"] if isinstance(result, dict) else result
+            if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
+                raise ValueError("Milvus list_aliases 返回了无效的别名列表")
+            if alias in aliases:
                 return name
         return None
 
@@ -121,8 +141,9 @@ class MilvusStore:
 
     def iter_rows(self, *, fields=None):
         # 使用 iterator 而非 offset 分页，避免超过 query 的 result window 上限。
+        # None 明确表示不指定过滤条件，不依赖服务端是否接受空字符串表达式。
         iterator = self._connect().query_iterator(
-            collection_name=self.collection_name, batch_size=256, filter="",
+            collection_name=self.collection_name, batch_size=256, filter=None,
             output_fields=fields or [*TEXT_FIELDS, "dense"],
             consistency_level="Strong", timeout=self.timeout_s,
         )
@@ -143,7 +164,7 @@ class MilvusStore:
 
     def for_collection(self, name: str):
         return MilvusStore(self.uri, collection_name=name, client=self._connect(),
-                           data_type=self.data_type, timeout_s=self.timeout_s)
+                           data_type=self.data_type, timeout_s=self.timeout_s, skus_metadata=self.skus_metadata)
 
     def close(self):
         if self.client is not None:
