@@ -23,6 +23,28 @@ class FakeRetriever:
 
 
 class RetrievalCheckTests(unittest.TestCase):
+    def test_multiple_expected_sources_keep_first_matching_rank_and_top5_boundary(self):
+        rows = [dict(question=q, expected_route="rag", expected_doc=["original.md", "case.md"])
+                for q in ("命中", "不相关", "第六名")]
+        retriever = FakeRetriever({
+            "命中": [doc("other.md", 0.99), doc("data/docs/case.md", 0.9), doc("original.md", 0.8)],
+            "不相关": [doc("prefix-case.md", 0.9)],
+            "第六名": [doc("other.md", 0.9)] * 5 + [doc("case.md", 0.8)],
+        })
+        report = evaluate(rows, retriever, refuse_threshold=None)
+        self.assertEqual([row["rank"] for row in report["rag"]], [2, None, None])
+        self.assertEqual(report["hit_at_5"], 1 / 3)
+        self.assertEqual(report["hit_at_1"], 0)
+        self.assertEqual(report["rag"][0]["expected_doc"], rows[0]["expected_doc"])
+
+    def test_invalid_expected_source_fails_before_retrieval(self):
+        for expected in ([], "", " ", 0, False, {}, ["a.md", 1], [["a.md"]], None):
+            retriever = FakeRetriever({})
+            with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, "expected_doc"):
+                evaluate([dict(question="无效", expected_route="rag", expected_doc=expected)],
+                         retriever, refuse_threshold=None)
+            self.assertEqual(retriever.calls, [])
+
     def test_summary_ranks_scores_top5_boundary_and_refusal_threshold(self):
         rows = [
             dict(question="第一", expected_route="rag", expected_doc="a.md"),

@@ -51,6 +51,7 @@ class Settings(BaseSettings):
         "data/docs_new", "data/docs_staging/manifest.csv", "data/docs/manifest.csv"])
     product_skus_metadata: bool = False
     product_cards_timeout_s: float = Field(default=1, gt=0, allow_inf_nan=False)
+    product_cards_max: int = Field(default=6, ge=1, le=12)
     redis_url: str = "redis://127.0.0.1:6379/0"
     milvus_uri: str = "http://127.0.0.1:19530"
     milvus_timeout_s: float = Field(default=10, gt=0)

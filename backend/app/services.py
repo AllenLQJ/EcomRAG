@@ -171,8 +171,8 @@ class Services:
     async def generate_answer(self, question, docs, history):
         return await self.generator.generate_answer(question, docs, history)
 
-    def product_cards(self, docs):
-        return self.products.for_sources(docs)
+    def product_cards(self, docs, answer=""):
+        return self.products.for_sources(docs, answer)
 
     async def chat_general(self, question, history):
         return await self.generator.chat_general(question, history)

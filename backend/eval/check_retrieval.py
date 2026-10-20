@@ -9,6 +9,7 @@ from pathlib import Path
 from time import perf_counter
 
 from ingest.loaders import resolve_data_path
+from ingest.eval_expectations import expected_documents
 from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 
 
@@ -24,7 +25,9 @@ def evaluate(rows, retriever, *, refuse_threshold: float | None) -> dict:
 async def evaluate_async(rows, retriever, *, refuse_threshold: float | None) -> dict:
     """仅评估 RAG 和 fallback；可注入假检索器，不加载配置或模型。"""
     rag, fallback = [], []
-    for row in rows:
+    references = [(row, expected_documents(row.get("expected_doc"), required=row["expected_route"] == "rag"))
+                  for row in rows]
+    for row, expected in references:
         route = row["expected_route"]
         if route not in {"rag", "fallback"}:
             continue
@@ -52,7 +55,7 @@ async def evaluate_async(rows, retriever, *, refuse_threshold: float | None) -> 
             rerank_ms = None
         if route == "rag":
             match = next(((rank, doc) for rank, doc in enumerate(docs, 1)
-                          if Path(doc.source).name == row["expected_doc"]), None)
+                          if Path(doc.source).name in expected), None)
             rag.append({
                 "question": question, "expected_doc": row["expected_doc"],
                 "hit_at_5": match is not None,

@@ -17,6 +17,7 @@ from eval.ragas_adapter import not_applicable_category, to_sample
 from eval.ragas_backend import EvaluationConfigurationError, EvaluationDependencyError, make_scorer
 from eval.judge_diagnostics import RETRYABLE, diagnose, safe_parameters
 from eval.reports import DENOMINATOR_RULE, redact, safe_path, secret_safe_logs, summarize, write_report
+from ingest.eval_expectations import expected_documents
 
 METRICS = ("faithfulness", "response_relevancy", "context_precision", "context_recall")
 # Judge 配置允许写在 backend/.env 中，但只读取下面这些白名单名字；
@@ -116,6 +117,9 @@ async def _collect(rows, *, settings, services, eval_file=None, eval_bytes=None)
     from app.schemas import ChatRequest
 
     cases = []
+    # 在采集前校验全部标注；非法来源不能被吞成单题运行失败或静默跳过。
+    for row in rows:
+        expected_documents(row.get("expected_doc"))
     meta = build_meta(settings, row_count=len(rows), eval_file=eval_file, eval_bytes=eval_bytes,
                       label="ragas-collect")
     for i, row in enumerate(rows):

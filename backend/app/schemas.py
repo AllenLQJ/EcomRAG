@@ -78,7 +78,7 @@ class ChatResponse(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     is_mock: bool = False
     trace: list[TraceItem] | None = None
-    products: list[ProductCard] | None = Field(default=None, max_length=3)
+    products: list[ProductCard] | None = Field(default=None, max_length=12)
 
     @model_serializer(mode="wrap")
     def serialize_response(self, handler):

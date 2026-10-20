@@ -66,6 +66,51 @@ def test_expected_doc_matches_ingest_stable_id():
     assert run_eval.expected_doc_id(filename) == hashlib.sha256(filename.encode()).hexdigest()[:24]
 
 
+@pytest.mark.parametrize("answer,hit", [("案例说明[2]", True), ("原规则[1]", True),
+                                       ("不相关[3]", False),
+                                           # 无有效引用时流水线回退到最高分来源（文档化规则），此处即期望文档 original.md。
+                                           ("没有有效引用[99]", True)])
+def test_source_hit_accepts_any_expected_document_using_only_cited_sources(answer, hit):
+    expected = ["original.md", "case.md"]
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [document(1, 0.99), document(2, 0.98), document(3, 0.97)]
+    services.generate_answer.return_value = GeneratedAnswer(answer, set())
+    report = asyncio.run(run_eval.evaluate(
+        [{"question": "引用", "expected_route": "rag", "expected_doc": expected}],
+        settings=Settings(_env_file=None, rag_context_min_score=0), services=services,
+        doc_ids={"original.md": "d1", "case.md": "d2"}))
+    assert report["rag_total"] == 1
+    assert report["rag_source_hits"] == int(hit)
+    assert report["results"][0]["source_hit"] is hit
+    assert report["results"][0]["expected_doc"] == expected
+
+
+def test_multi_document_reference_errors_and_refusals_remain_in_denominator(monkeypatch):
+    async def chat(request, **kwargs):
+        if request.message == "错误":
+            raise RuntimeError("offline failure")
+        from types import SimpleNamespace
+        return SimpleNamespace(route="fallback", answer="无依据", sources=[])
+
+    monkeypatch.setattr(run_eval, "run_chat", chat)
+    report = asyncio.run(run_eval.evaluate(
+        [{"question": question, "expected_route": "rag", "expected_doc": ["a.md", "b.md"]}
+         for question in ("错误", "拒答")], settings=Settings(_env_file=None), services=FakeServices(),
+        doc_ids={"a.md": "a", "b.md": "b"}))
+    assert report["rag_total"] == 2 and report["rag_source_hits"] == 0
+    assert [row["source_hit"] for row in report["results"]] == [False, False]
+
+
+@pytest.mark.parametrize("expected", [[], "", " ", 1, False, {}, ["a.md", None], [["a.md"]]])
+def test_source_reference_validation_precedes_chat(expected):
+    with patch.object(run_eval, "run_chat", new_callable=AsyncMock) as chat, \
+            pytest.raises(ValueError, match="expected_doc"):
+        asyncio.run(run_eval.evaluate(
+            [{"question": "标注错误", "expected_route": "rag", "expected_doc": expected}],
+            settings=Settings(_env_file=None), services=FakeServices()))
+    chat.assert_not_called()
+
+
 @pytest.mark.parametrize("answer,hit,ids", [("说明[1]", False, ["d1"]),
                                           ("说明[2]", True, ["d2"]),
                                           ("没有有效引用[99]", False, ["d1"])])

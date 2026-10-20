@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,14 +35,23 @@ class Iterator:
 class Client:
     def __init__(self):
         self.rows, self.aliases, self.events = {}, {}, []
+        self.connection = {"open": True}
         self.last_iterator = None
         self.fail_upsert = False
         self.bad_read = False
+
+    def close(self):
+        self.connection["open"] = False
+
+    def require_connection(self):
+        if not self.connection["open"]:
+            raise ConnectionNotExistException("should create connection first")
 
     def has_collection(self, collection_name):
         return collection_name in self.rows  # 刻意模拟 alias 不被 has_collection 识别。
 
     def list_collections(self, **kwargs):
+        self.require_connection()
         return list(self.rows)
 
     def describe_collection(self, collection_name, **kwargs):
@@ -91,11 +101,13 @@ class Client:
         return self.last_iterator
 
     def create_alias(self, alias, collection_name, **kwargs):
+        self.require_connection()
         assert alias not in self.rows and alias not in self.aliases
         self.aliases[alias] = collection_name
         self.events.append(("create_alias", collection_name))
 
     def alter_alias(self, alias, collection_name, **kwargs):
+        self.require_connection()
         assert alias in self.aliases
         self.aliases[alias] = collection_name
         self.events.append(("alter_alias", collection_name))
@@ -115,6 +127,10 @@ class Client:
         self.events.append(("delete", list(ids)))
         for key in ids:
             self.rows[self.target(collection_name)].pop(key, None)
+
+
+class ConnectionNotExistException(RuntimeError):
+    """模拟 SDK 共享连接被任一客户端 close 后的异常。"""
 
 
 def document(name="a.md", text="第一句。第二句。第三句。"):
@@ -437,6 +453,53 @@ class VersionTests(unittest.TestCase):
                                  settings=SimpleNamespace(), store=self.store)
         self.assertEqual(result, 1)
         self.assertIsNone(self.manager.current())
+
+    def test_cli_check_yes_keeps_shared_connection_for_current_and_alias(self):
+        self.build()
+        self.build("kb_chunks_v2")
+        peer = Client()
+        peer.connection = self.client.connection
+        # 证明替身能复现故障：不同客户端对象关闭同一连接后 current() 会抛错。
+        peer.close()
+        with self.assertRaises(ConnectionNotExistException):
+            self.manager.current()
+        self.client.connection["open"] = True
+        path = Path(self.tmp.name) / "eval.jsonl"
+        path.write_text(json.dumps({"question": "发票", "answerable": True,
+                                    "expected_doc": ["original.md", "case.md"]}), encoding="utf-8")
+        settings = SimpleNamespace(bge_m3_path="unused", embed_batch_size=1,
+                                   milvus_uri=self.store.uri, milvus_timeout_s=10)
+        fail_check = False
+
+        def retriever(client, *args, **kwargs):
+            self.assertIs(client, self.client)
+            self.assertIn(kwargs["collection_name"], ("kb_chunks_v1", "kb_chunks_v2"))
+            def retrieve(*args, **kwargs):
+                client.require_connection()
+                if fail_check:
+                    raise RuntimeError("检索失败")
+                return [SimpleNamespace(source="case.md", doc_id="case-id")]
+            return SimpleNamespace(client=client, retrieve=retrieve)
+
+        with patch("app.retrieval.embedder.BgeM3Embedder", return_value=self.embedder), \
+                patch.dict(sys.modules, {"app.retrieval.retriever": SimpleNamespace(Retriever=retriever)}), \
+                patch.object(self.client, "close", wraps=self.client.close) as close, \
+                contextlib.redirect_stdout(io.StringIO()):
+            for version in ("kb_chunks_v1", "kb_chunks_v2"):
+                result = switch_main(["--to", version, "--check", "--yes", "--eval-file", str(path),
+                                      "--state-dir", self.tmp.name], settings=settings, store=self.store)
+                self.assertEqual(result, 0)
+                self.assertEqual(self.manager.current(), version)
+            fail_check = True
+            with contextlib.redirect_stderr(io.StringIO()):
+                result = switch_main(["--to", "kb_chunks_v1", "--check", "--yes", "--eval-file", str(path),
+                                      "--state-dir", self.tmp.name], settings=settings, store=self.store)
+            self.assertEqual(result, 1)
+            self.assertEqual(self.manager.current(), "kb_chunks_v2")
+            close.assert_not_called()
+        self.assertEqual(self.store.collection_name, "kb_chunks")
+        self.assertEqual([event[0] for event in self.client.events if "alias" in event[0]],
+                         ["create_alias", "alter_alias"])
 
     def test_sync_delete_only_stale_chunks_in_scanned_document(self):
         directory = Path(self.tmp.name) / "docs"

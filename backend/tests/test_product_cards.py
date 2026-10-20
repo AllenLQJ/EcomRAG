@@ -12,7 +12,8 @@ from app.config import Settings
 from app.contracts import FaqHit, RetrievedDoc, RouteDecision
 from app.faq.cache import FaqCache
 from app.llm.generator import GeneratedAnswer
-from app.products import COLUMNS, ProductCards, ProductRepo
+from app.products import COLUMNS, ProductCards, ProductNameIndex, ProductRepo
+from app.schemas import ChatResponse
 from app.retrieval.embedder import FakeEmbedder
 from app.retrieval.retriever import OUTPUT_FIELDS, Retriever
 from faq_fakes import FakeRedis
@@ -100,7 +101,7 @@ def cards(tmp_path, rows, **options):
 
 def test_batch_query_order_dedup_skip_missing_hidden_and_cap(tmp_path):
     service, repo = cards(tmp_path, [product(f"item-{i}") for i in reversed(range(6))],
-                          product_hidden_skus=["item-0"])
+                          product_hidden_skus=["item-0"], product_cards_max=3)
     result = service.for_sources([doc(["missing", "item-0", "item-2", "item-1"]),
                                   doc(["item-2", "item-3", "item-4", "item-5"], index=2)])
     assert [card.sku for card in result] == ["item-2", "item-1", "item-3"]
@@ -473,7 +474,7 @@ def test_optional_card_deadline_preserves_answer(app_factory, caplog, stream):
     app = app_factory(speculative_retrieval=False, chat_log_enabled=False, product_cards_timeout_s=0.01)
     services = app.state.services.knowledge()
 
-    async def slow_cards(docs):
+    async def slow_cards(docs, answer):
         await asyncio.Event().wait()
 
     services.product_cards = slow_cards
@@ -503,7 +504,8 @@ def test_http_and_sse_use_final_citations(app_factory, tmp_path, stream, answer,
     result = events(response.text)[-1][1] if stream else response.json()
     assert result["route"] == "rag"
     assert [card["sku"] for card in result["products"]] == [expected]
-    repo.fetch.assert_called_once_with([expected])
+    repo.fetch.assert_called_once_with(None)  # 冷名称索引与来源行在同一次查询读取。
+    assert services.product_cards.call_args.args[1] == answer
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -514,7 +516,7 @@ def test_other_paths_omit_products_and_do_not_query(app_factory, tmp_path, strea
     service, repo = cards(tmp_path, [product()])
     services.product_cards = Mock(wraps=service.for_sources)
     if route in {"faq", "cache"}:
-        hit = FaqHit(faq_id=1, question="参数", answer="FAQ", score=1)
+        hit = FaqHit(faq_id=1, question="参数", answer="灵码衡电 P1 充电宝", score=1)
         if route == "cache":
             cache = FaqCache(client=FakeRedis())
             cache.set("参数", hit)
@@ -522,6 +524,8 @@ def test_other_paths_omit_products_and_do_not_query(app_factory, tmp_path, strea
         services.faq_lookup.return_value = hit
     elif route == "sensitive":
         services.route.return_value = RouteDecision(intent="sensitive", rewritten_query="参数")
+    elif route == "general":
+        services.chat_general.return_value = "灵码衡电 P1 充电宝"
     elif route != "general":
         services.knowledge()
         services.retrieve.return_value = [doc(["qiguang-l1"])]
@@ -539,7 +543,192 @@ def test_other_paths_omit_products_and_do_not_query(app_factory, tmp_path, strea
     assert response.status_code == 200
     result = events(response.text)[-1][1] if stream else response.json()
     assert "products" not in result
-    if route != "db_error":
+    if route not in {"db_error", "no_product"}:
         repo.fetch.assert_not_called()
+    elif route == "no_product":
+        repo.fetch.assert_called_once_with(None)
     if route not in {"no_product", "db_error"}:
         services.product_cards.assert_not_called()
+
+
+def charging_products():
+    return [product(f"hengdian-{model.lower()}", name=f"灵码衡电 {model} {kind}",
+                    category="充电设备", specs={"设备类型": kind, "输出规格": "通用 C 型接口"})
+            for model, kind in [("P1", "充电宝"), ("P2", "充电宝"), ("P3", "充电宝"),
+                                ("A1", "充电器"), ("A2", "充电器"), ("A3", "充电器")]]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("omit_brand", [False, True])
+def test_catalog_answer_six_cards_in_answer_order(app_factory, tmp_path, stream, omit_brand):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    rows = charging_products()
+    # 来源是两块无 SKU 的总览；数据库行顺序与正文顺序无关。
+    services.retrieve.return_value = [doc(source="data/docs/product_catalog.md", index=i) for i in (1, 2)]
+    names = [row["name"].removeprefix("灵码") if omit_brand else row["name"] for row in rows]
+    answer = "、".join(names) + "。[1][2]"
+    services.generate_answer.return_value = GeneratedAnswer(answer, {1, 2})
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="catalog", message="介绍一下灵码的充电设备有哪些款"))
+    assert response.status_code == 200
+    result = events(response.text)[-1][1] if stream else response.json()
+    assert result["answer"] == answer
+    assert [card["sku"] for card in result["products"]] == [row["sku_id"] for row in rows]
+    assert len(result["sources"]) == 2
+    repo.fetch.assert_called_once_with(None)
+    for card in result["products"]:
+        assert set(card) == {"sku", "name", "category", "highlights", "image_url"}
+        assert not any(word in json.dumps(card) for word in ("price", "stock", "199", "99"))
+
+
+def test_names_longest_boundary_category_and_ambiguity():
+    rows = [product("short", name="听岚 S1"), product("ten", name="听岚 S10"),
+            product("long", name="听岚 S1 无线耳机"),
+            product("charger", name="灵码衡电 P1 充电器"),
+            product("powerbank", name="灵码衡电 P1 充电宝"),
+            product("duplicate-a", name="灵码同名 X1 耳机"),
+            product("duplicate-b", name="灵码同名 X1 耳机"),
+            product("brand-a", name="灵码共享 X1 耳机"),
+            product("brand-b", name="共享 X1 耳机")]
+    index = ProductNameIndex(rows)
+    assert index.match("听岚 S10；听岚 S1 无线耳机；衡电 P1 充电器；衡电 P1 充电宝") == [
+        "ten", "long", "charger", "powerbank"]
+    assert index.match("听岚 S100；听岚 XS1；衡电 P1；同名 X1 耳机；共享 X1 耳机") == []
+    assert index.match("灵码共享 X1 耳机；听岚 S1，听岚 S1") == ["brand-a", "short"]
+    assert index.match("灵码衡电\nP1  充电宝") == ["powerbank"]
+    # 子串出现在较长名称内部时，也只保留长名称。
+    assert ProductNameIndex([product("a", name="耳机"), product("b", name="听岚 S1 耳机")]).match(
+        "听岚 S1 耳机") == ["b"]
+    # 旧表名称自身不含品牌时，带品牌的答案仍可包含该完整商品名。
+    assert ProductNameIndex([product("bank", name="衡电 P1 充电宝")]).match(
+        "灵码衡电 P1 充电宝") == ["bank"]
+
+
+def test_sources_first_dedup_and_skip_invalid_hidden_missing(tmp_path):
+    rows = charging_products()
+    rows[1]["specs"] = {"输出规格": "售价 199 元"}
+    service, repo = cards(tmp_path, rows, product_cards_max=3, product_hidden_skus=[rows[2]["sku_id"]])
+    answer = "、".join(row["name"] for row in rows)
+    result = service.for_sources([doc(["missing", rows[-1]["sku_id"], rows[2]["sku_id"]])], answer)
+    assert [card.sku for card in result] == [rows[-1]["sku_id"], rows[0]["sku_id"], rows[3]["sku_id"]]
+    repo.fetch.assert_called_once_with(None)
+    repo.fetch.reset_mock()
+    assert [card.sku for card in service.for_sources([doc([rows[-1]["sku_id"]])], answer)] == [
+        rows[-1]["sku_id"], rows[0]["sku_id"], rows[3]["sku_id"]]
+    assert repo.fetch.call_count == 1
+    assert rows[2]["sku_id"] not in repo.fetch.call_args.args[0]
+
+
+def test_name_cache_ttl_only_caches_names_and_refreshes_rows(tmp_path, monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(product_cards_module, "monotonic", lambda: now[0])
+    rows = charging_products()
+    service, repo = cards(tmp_path, rows)
+    answer = rows[0]["name"]
+    assert service.for_sources([], answer)[0].highlights[0] == "设备类型：充电宝"
+    repo.fetch.assert_called_once_with(None)
+    repo.fetch.reset_mock()
+    # 同名的新鲜规格；不复用旧行。
+    repo.fetch.return_value = [{**rows[0], "specs": {"设备类型": "便携充电宝"}}]
+    now[0] = 159.999
+    assert service.for_sources([], answer)[0].highlights == ["设备类型：便携充电宝"]
+    repo.fetch.assert_called_once_with([rows[0]["sku_id"]])
+    repo.fetch.return_value = []
+    assert service.for_sources([], answer) == []  # 已删除，不等待 TTL。
+    repo.fetch.return_value = [{**rows[0], "name": "灵码新名称 P1 充电宝"}]
+    assert service.for_sources([], answer) == []  # 改名后不能沿用旧名称补卡。
+    now[0] = 160.0
+    assert service.for_sources([], "新名称 P1 充电宝")[0].sku == rows[0]["sku_id"]
+    assert repo.fetch.call_args.args == (None,)
+    assert repo.fetch.call_count == 4  # 每请求恰好一次。
+    repo.fetch.reset_mock()
+    assert service.for_sources([], "没有任何完整商品名") == []
+    repo.fetch.assert_called_once_with([])  # ProductRepo 对空列表不建连。
+
+
+@pytest.mark.parametrize("maximum", [1, 3, 6, 12])
+def test_product_cards_max_applies_to_sources_and_mentions(tmp_path, maximum):
+    rows = [product(f"lamp-{i}", name=f"灵码栖光 L{i} 台灯") for i in range(14)]
+    service, _ = cards(tmp_path, rows, product_cards_max=maximum)
+    assert len(service.for_sources([doc([row["sku_id"] for row in rows])])) == maximum
+    assert len(service.for_sources([], "、".join(row["name"] for row in rows))) == maximum
+
+
+def test_max_setting_environment_default_bounds_and_response_contract(monkeypatch):
+    assert Settings(_env_file=None).product_cards_max == 6
+    monkeypatch.setenv("PRODUCT_CARDS_MAX", "12")
+    assert Settings(_env_file=None).product_cards_max == 12
+    for invalid in (0, 13, -1, 1.5):
+        with pytest.raises(ValueError):
+            Settings(_env_file=None, product_cards_max=invalid)
+    card = dict(sku="lamp-1", name="台灯", category="桌面台灯", highlights=["额定功率：6 瓦"])
+    base = dict(request_id="r", session_id="s", answer="说明", route="rag")
+    assert len(ChatResponse(**base, products=[card] * 12).products) == 12
+    assert ChatResponse.model_json_schema()["properties"]["products"]["anyOf"][0]["maxItems"] == 12
+    with pytest.raises(ValueError):
+        ChatResponse(**base, products=[card] * 13)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_only_answer_names_not_user_question_create_cards(app_factory, tmp_path, stream):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    services.retrieve.return_value = [doc(source="product_catalog.md")]
+    service, repo = cards(tmp_path, charging_products())
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="answer-only", message="介绍灵码衡电 P1 充电宝"))
+    result = events(response.text)[-1][1] if stream else response.json()
+    assert result["answer"] == "说明[1]" and "products" not in result
+    repo.fetch.assert_called_once_with(None)
+
+
+@pytest.mark.parametrize("error", [ProgrammingError(1146, PRIVATE_ERROR), TimeoutError(PRIVATE_ERROR)])
+@pytest.mark.parametrize("stream", [False, True])
+def test_catalog_query_failure_preserves_answer(app_factory, tmp_path, caplog, error, stream):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    services.retrieve.return_value = [doc(source="product_catalog.md")]
+    answer = charging_products()[0]["name"] + "。[1]"
+    services.generate_answer.return_value = GeneratedAnswer(answer, {1})
+    service, repo = cards(tmp_path, [])
+    repo.fetch.side_effect = error
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="catalog-failure", message="充电设备有哪些款"))
+    assert response.status_code == 200
+    result = events(response.text)[-1][1] if stream else response.json()
+    assert result["answer"] == answer and "products" not in result
+    assert len(card_warnings(caplog)) == 1
+    assert "PRIVATE" not in caplog.text
+
+
+def test_full_table_refresh_only_reads_public_columns():
+    connection = FakeConnection()
+
+    class Cursor(FakeCursor):
+        def fetchall(self):
+            return [tuple(product()[key] for key in COLUMNS)]
+
+    connection.cursor = lambda: Cursor(connection)
+    repo = ProductRepo(connection_factory=lambda: connection)
+    assert repo.fetch(None)[0]["sku_id"] == "qiguang-l1"
+    assert connection.calls == [("SELECT sku_id, name, category, specs, image_main FROM products", ())]
+    assert connection.closed
+
+
+def test_concurrent_name_refresh_and_queries_stay_one_per_request(tmp_path):
+    rows = charging_products()
+    service, repo = cards(tmp_path, rows)
+    answer = "、".join(row["name"] for row in rows)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: service.for_sources([], answer), range(16)))
+    assert all([card.sku for card in result] == [row["sku_id"] for row in rows] for result in results)
+    assert repo.fetch.call_count == 16
+    assert sum(call.args == (None,) for call in repo.fetch.call_args_list) == 1

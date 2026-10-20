@@ -7,6 +7,7 @@ import sys
 from contextlib import nullcontext
 
 from ingest.loaders import resolve_data_path
+from ingest.eval_expectations import expected_documents
 
 
 def cli_settings():
@@ -15,7 +16,7 @@ def cli_settings():
 
 
 def smoke_check(version, settings, *, eval_file="data/eval_ragas_gold.jsonl", limit=20,
-                retriever=None):
+                retriever=None, client=None):
     if limit <= 0:
         raise ValueError("check-limit 必须大于零")
     rows = []
@@ -24,7 +25,8 @@ def smoke_check(version, settings, *, eval_file="data/eval_ragas_gold.jsonl", li
             if not line.strip():
                 continue
             row = json.loads(line)
-            if row.get("answerable") is True and row.get("expected_doc"):
+            expected = expected_documents(row.get("expected_doc"))
+            if row.get("answerable") is True and expected:
                 if not isinstance(row.get("question"), str) or not row["question"].strip():
                     raise ValueError("冒烟查询缺少 question")
                 rows.append(row)
@@ -33,26 +35,25 @@ def smoke_check(version, settings, *, eval_file="data/eval_ragas_gold.jsonl", li
         rows = [rows[i * len(rows) // limit] for i in range(limit)]
     if not rows:
         raise ValueError("没有 answerable=true 且有 expected_doc 的冒烟查询")
-    own = retriever is None
-    if own:
+    if retriever is None:
         from app.retrieval.embedder import BgeM3Embedder
         from app.retrieval.retriever import Retriever
-        retriever = Retriever(None, BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size),
+        retriever = Retriever(client, BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size),
                               uri=settings.milvus_uri, timeout_s=settings.milvus_timeout_s,
                               collection_name=version, rerank_enabled=False)
-    try:
-        results = []
-        for row in rows:
-            docs = retriever.retrieve([row["question"]], row["question"], top_k=5)
-            expected = row["expected_doc"]
-            hit = any(doc.source == expected or doc.doc_id == expected for doc in docs)
-            results.append({"question": row["question"], "expected_doc": expected, "hit5": hit})
-        return {"hit5": sum(row["hit5"] for row in results) / len(results),
-                "queries": len(results), "results": results}
-    finally:
-        if own and retriever.client is not None:
-            from app.retrieval.store import MilvusStore
-            MilvusStore(client=retriever.client).close()
+    # CLI 借用 manager.store 的客户端，检查只指定实体版本，不改变 Store 的集合名。
+    # 线上 pymilvus 2.5.18 已实测：相同 URI 等参数的 MilvusClient 共享连接别名；
+    # close 会断开该别名对应连接，使其他客户端随后抛 ConnectionNotExistException。
+    # 因此不能按 Python 客户端对象是否新建来判断连接所有权，也不能在检查结束时 close。
+    # 即使独立调用而未传 client，也保留可能共享的连接，由进程生命周期统一回收。
+    results = []
+    for row in rows:
+        docs = retriever.retrieve([row["question"]], row["question"], top_k=5)[:5]
+        expected = expected_documents(row["expected_doc"], required=True)
+        hit = any(doc.source in expected or doc.doc_id in expected for doc in docs)
+        results.append({"question": row["question"], "expected_doc": row["expected_doc"], "hit5": hit})
+    return {"hit5": sum(row["hit5"] for row in results) / len(results),
+            "queries": len(results), "results": results}
 
 
 def command(kind, argv=None, *, settings=None, store=None):
@@ -87,7 +88,8 @@ def command(kind, argv=None, *, settings=None, store=None):
                 if args.check:
                     # 显式 --check 允许读检索/本地编码，即使未给 --yes 也不切换。
                     def check(version):
-                        report = smoke_check(version, settings, eval_file=args.eval_file, limit=args.check_limit)
+                        report = smoke_check(version, settings, eval_file=args.eval_file, limit=args.check_limit,
+                                             client=manager.store._connect())
                         print(json.dumps({"check": report}, ensure_ascii=False), flush=True)
                         return report
                     if not args.yes:

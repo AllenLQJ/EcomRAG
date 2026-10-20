@@ -1,4 +1,4 @@
-"""RAG 引用的可选商品卡片；MySQL 单次批量查询，不持有连接或商品快照。"""
+"""RAG 引用及回答提及的可选商品卡片；每请求最多一次商品查询。"""
 from __future__ import annotations
 
 import importlib
@@ -34,6 +34,49 @@ SPEC_KEYS = {
     "香薰加湿": ("功能类型", "水箱容量", "额定功率"),
 }
 COMMERCIAL = re.compile(r"价格|售价|单价|原价|优惠|促销|折扣|库存|现货|余量|售罄|[¥￥$€£]|\d\s*元|price|stock|inventory|USD|RMB|CNY", re.I)
+NAME_INDEX_TTL_S = 60
+# 商品表没有品牌列；只省略已知品牌，不从任意名称截字推测品牌/系列。
+BRAND_PREFIXES = ("灵码",)
+
+
+class ProductNameIndex:
+    def __init__(self, rows):
+        aliases = {}
+        for row in rows:
+            sku, name = row.get("sku_id"), row.get("name")
+            if not parse_skus([sku]) or not safe_text(name, 160):
+                continue
+            name = " ".join(name.split())
+            names = {name}
+            for brand in BRAND_PREFIXES:
+                if name.startswith(brand) and name[len(brand):].strip():
+                    names.add(name[len(brand):].strip())
+            for alias in names:
+                aliases.setdefault(alias, set()).add(sku)
+        self.aliases = aliases
+
+    def match(self, answer):
+        answer = " ".join(answer.split())
+        matches = []
+        for alias, skus in self.aliases.items():
+            # ASCII 型号不能嵌在另一型号里，例如 S1 / S10、XS1 / S1。
+            pattern = ((r"(?<![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", alias) else "")
+                       + re.escape(alias)
+                       + (r"(?![A-Za-z0-9_])" if re.search(r"[A-Za-z0-9_]$", alias) else ""))
+            for match in re.finditer(pattern, answer):
+                matches.append((match.start(), match.end(), skus))
+        # 先保留最长的不重叠名称，再恢复正文顺序。歧义名称也占位，不能退成短名称。
+        selected = []
+        for start, end, skus in sorted(matches, key=lambda item: (item[0] - item[1], item[0])):
+            if not any(start < right and end > left for left, right, _ in selected):
+                selected.append((start, end, skus))
+        result = []
+        for _, _, skus in sorted(selected, key=lambda item: item[0]):
+            if len(skus) == 1:
+                sku = next(iter(skus))
+                if sku not in result:
+                    result.append(sku)
+        return result
 
 
 def log_product_cards_unavailable(exc, stage, *, log=logger):
@@ -74,8 +117,9 @@ class ProductRepo:
     def __init__(self, settings=None, *, connection=None, connection_factory=None):
         self.settings, self.connection, self.connection_factory = settings, connection, connection_factory
 
-    def fetch(self, skus):
-        if not skus:
+    def fetch(self, skus=None):
+        """None 刷新名称索引并返回本次新鲜商品行；列表仅查候选 SKU。"""
+        if skus is not None and not skus:
             return []
         connection = self.connection
         stage = _card_stage.get()
@@ -95,8 +139,10 @@ class ProductRepo:
             if stage is not None:
                 stage["stage"] = "query"
             with connection.cursor() as cursor:
-                cursor.execute("SELECT " + ", ".join(COLUMNS) + " FROM products WHERE sku_id IN ("
-                               + ", ".join(["%s"] * len(skus)) + ")", tuple(skus))
+                sql = "SELECT " + ", ".join(COLUMNS) + " FROM products"
+                if skus is not None:
+                    sql += " WHERE sku_id IN (" + ", ".join(["%s"] * len(skus)) + ")"
+                cursor.execute(sql, tuple(skus) if skus is not None else ())
                 return [dict(row) if isinstance(row, Mapping) else dict(zip(COLUMNS, row))
                         for row in cursor.fetchall()]
         finally:
@@ -110,6 +156,9 @@ class ProductCards:
         self.settings = settings
         self.index = source_index
         self.index_lock = threading.Lock()
+        self.name_lock = threading.Lock()
+        self.name_index = None
+        self.name_index_expires = 0
         self.images_root = Path(images_root) if images_root is not None else resolve_data_path("data/images")
 
     def _index(self):
@@ -148,7 +197,27 @@ class ProductCards:
         return ProductCard(sku=sku, name=name, category=category, highlights=highlights,
                            image_url=self._image_url(sku, row.get("image_main")))
 
-    def for_sources(self, docs):
+    def _rows_and_mentions(self, candidates, answer):
+        if not answer.strip():
+            return self.repo.fetch(candidates), []
+        # 锁只保护小型名称快照及刷新，防止冷缓存并发请求重复全表刷新。
+        with self.name_lock:
+            if self.name_index is None or monotonic() >= self.name_index_expires:
+                rows = self.repo.fetch(None)
+                index = ProductNameIndex(rows)
+                self.name_index = index
+                self.name_index_expires = monotonic() + NAME_INDEX_TTL_S
+                return rows, index.match(answer)
+            index = self.name_index
+        mentions = index.match(answer)
+        hidden = set(self.settings.product_hidden_skus)
+        skus = list(dict.fromkeys(candidates + [sku for sku in mentions if sku not in hidden]))
+        rows = self.repo.fetch(skus)
+        # 缓存只用于找候选；删除、改名和规格变化仍用本次查询验证。
+        fresh_mentions = set(ProductNameIndex(rows).match(answer))
+        return rows, [sku for sku in mentions if sku in fresh_mentions]
+
+    def for_sources(self, docs, answer=""):
         stage = {"stage": "source_lookup"}
         token = _card_stage.set(stage)
         try:
@@ -160,17 +229,20 @@ class ProductCards:
                     if sku not in hidden and sku not in candidates:
                         candidates.append(sku)
             candidates = candidates[:100]
-            if not candidates:
+            if not candidates and not answer.strip():
                 return []
             stage["stage"] = "query"
-            rows = {row["sku_id"]: row for row in self.repo.fetch(candidates)}
+            fetched, mentions = self._rows_and_mentions(candidates, answer)
+            rows = {row["sku_id"]: row for row in fetched}
             stage["stage"] = "build_card"
             cards = []
-            for sku in candidates:
+            for sku in dict.fromkeys(candidates + mentions):
+                if sku in hidden:
+                    continue
                 card = self._card(rows[sku]) if sku in rows else None
                 if card is not None:
                     cards.append(card)
-                if len(cards) == 3:
+                if len(cards) == self.settings.product_cards_max:
                     break
             return cards
         except Exception as exc:

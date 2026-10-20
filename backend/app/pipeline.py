@@ -323,7 +323,7 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         if remaining > 0:
             try:
                 async with asyncio.timeout(min(settings.product_cards_timeout_s, remaining)):
-                    result.products = await call(cards, cited_docs, executor=executor) or None
+                    result.products = await call(cards, cited_docs, generated.answer, executor=executor) or None
             except Exception as exc:
                 log_product_cards_unavailable(exc, "product_cards", log=logger)
     return result

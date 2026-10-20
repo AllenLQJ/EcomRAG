@@ -19,6 +19,7 @@ from app.pipeline import run_chat
 from app.schemas import ChatRequest
 from app.services import Services
 from ingest.loaders import EXTENSIONS, resolve_data_path
+from ingest.eval_expectations import expected_documents
 from eval.metrics import percentile
 
 ANSWER_ROUTES = {"faq", "cache", "rag"}
@@ -168,11 +169,12 @@ async def evaluate(rows, *, settings, services, doc_ids=None, eval_file=None, ev
     totals = []
     false_refusals, false_answers = [], []
     accepted = [expected_routes(row["expected_route"]) for row in rows]
+    references = [expected_documents(row.get("expected_doc")) for row in rows]
     meta = build_meta(settings, row_count=len(rows), eval_file=eval_file, eval_bytes=eval_bytes, label=label)
     doc_ids = {} if doc_ids is None else doc_ids
     for i, row in enumerate(rows):
         allowed = accepted[i]
-        has_reference = "rag" in allowed and bool(row.get("expected_doc"))
+        has_reference = "rag" in allowed and bool(references[i])
         trace = []
         error_result = None
         started = perf_counter()
@@ -212,12 +214,14 @@ async def evaluate(rows, *, settings, services, doc_ids=None, eval_file=None, ev
             route_errors.append({"question": row["question"], "expected_route": expected, "route": result.route})
         match = None
         if has_reference:
-            filename = row["expected_doc"]
-            if filename not in doc_ids:
-                doc_ids[filename] = expected_doc_id(filename)
+            filenames = references[i]
+            for filename in filenames:
+                if filename not in doc_ids:
+                    doc_ids[filename] = expected_doc_id(filename)
             # 仅使用在线链路过滤后的实际响应来源，不计入未引用候选。
             match = result.route == "rag" and any(source.doc_id in {filename, doc_ids[filename]}
-                        or Path(source.doc_id).name == filename for source in result.sources)
+                        or Path(source.doc_id).name == filename
+                        for source in result.sources for filename in filenames)
         results.append({"question": row["question"], "expected_route": expected, "route": result.route,
                         "route_correct": correct, "expected_doc": row.get("expected_doc"),
                         "source_hit": match, "error_code": None, "is_error": False,

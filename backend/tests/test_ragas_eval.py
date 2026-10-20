@@ -35,6 +35,34 @@ def collection(cases):
         "model_config": {"generate_model": "fake-generator"}}, "cases": cases}
 
 
+def test_collect_preserves_multiple_expected_documents(monkeypatch):
+    expected = ["payment_invoices.md", "payment_invoice_correction_case.md"]
+
+    async def chat(request, **kwargs):
+        kwargs["collector"]({"route": "rag", "answer": "说明[1]", "history": [], "sources": [],
+                             "contexts": [{"index": 1, "text": "案例中的开票事实"}]})
+
+    monkeypatch.setattr("app.pipeline.run_chat", chat)
+    report = asyncio.run(ragas_eval.collect(
+        [{"question": "发票", "expected_route": "answer", "expected_doc": expected,
+          "reference": "信息完整后一般3个工作日内开出"}],
+        settings=Settings(_env_file=None), services=FakeServices()))
+    assert report["cases"][0]["expected_doc"] == expected
+    assert report["cases"][0]["status"] != "error"
+    assert report["cases"][0]["contexts"][0]["text"] == "案例中的开票事实"
+
+
+@pytest.mark.parametrize("expected", [[], "", " ", 0, False, {}, ["a.md", None], [["a.md"]]])
+def test_collect_rejects_invalid_expected_document_before_chat(monkeypatch, expected):
+    chat = AsyncMock()
+    monkeypatch.setattr("app.pipeline.run_chat", chat)
+    with pytest.raises(ValueError, match="expected_doc"):
+        asyncio.run(ragas_eval.collect(
+            [{"question": "标注错误", "expected_route": "answer", "expected_doc": expected}],
+            settings=Settings(_env_file=None), services=FakeServices()))
+    chat.assert_not_called()
+
+
 def config(**changes):
     return ragas_eval.ScoreConfig(**{**dict(judge_model="glm-5.3-flash", judge_base_url="https://judge.test/v1",
                                            judge_key_env="TEST_JUDGE_KEY", api_key="sk-fake-test-key",
