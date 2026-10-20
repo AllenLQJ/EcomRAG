@@ -4,10 +4,10 @@
 {"question":"退款多久到账？","expected_route":"faq","expected_doc":null}
 {"question":"发货需要多久？","expected_route":"faq","expected_doc":null}
 {"question":"优惠券可以叠加吗？","expected_route":"faq","expected_doc":null}
-{"question":"听岚S1和S2关闭主动降噪时单次和含盒续航分别差多少？","expected_route":"rag","expected_doc":"product_tinglan_s2.md"}
+{"question":"听岚S1和S2关闭主动降噪时单次和含盒续航分别差多少？","expected_route":"rag","expected_doc":"product_tinglan-s2.md"}
 {"question":"签收后发现屏幕有划痕可以退吗？","expected_route":"rag","expected_doc":"after_sales_returns.md"}
-{"question":"木澈C1保温6小时的测试环境和剩余水温是什么？","expected_route":"rag","expected_doc":"product_muche_c1.md"}
-{"question":"栖光L1有哪些色温档位，需要什么输入电源？","expected_route":"rag","expected_doc":"product_qiguang_l1.md"}
+{"question":"木澈C1保温6小时的测试环境和剩余水温是什么？","expected_route":"rag","expected_doc":"product_muche-c1.md"}
+{"question":"栖光L1有哪些色温档位，需要什么输入电源？","expected_route":"rag","expected_doc":"product_qiguang-l1.md"}
 {"question":"包裹外箱破损又发现少件，我应该保留哪些证据？","expected_route":"rag","expected_doc":"logistics_tracking.md"}
 {"question":"开个人抬头和单位抬头电子发票，需要的信息有什么不同？","expected_route":"rag","expected_doc":"payment_invoices.md"}
 {"question":"会员积分在确认收货后哪天到账，有效期多久？","expected_route":"rag","expected_doc":"promotion_membership.md"}

@@ -30,11 +30,11 @@ class DryRunTests(unittest.TestCase):
                               settings=SimpleNamespace(**SPLIT_SETTINGS))
         self.assertEqual(result, 0)
         stats = json.loads(output.getvalue())
-        self.assertEqual(stats["documents"], 19)
-        # 清理资料声明后，ingest_directory(data/docs, dry_run=True) 实测 41/79；
+        self.assertEqual(stats["documents"], 156)
+        # 提升后的 156 篇语料，ingest_directory(data/docs, dry_run=True) 实测 584/995；
         # 默认参数：父块 1200、子块 300、重叠 50，按 ## 整节切分。
-        self.assertEqual(stats["parent_chunks"], 41)
-        self.assertEqual(stats["child_chunks"], 79)
+        self.assertEqual(stats["parent_chunks"], 584)
+        self.assertEqual(stats["child_chunks"], 995)
         self.assertGreaterEqual(stats["elapsed_s"], 0)
         self.assertTrue(stats["dry_run"])
 
@@ -67,7 +67,7 @@ finally:
         self.assertEqual(result.returncode, 0, result.stderr)
         stats = json.loads(result.stdout)
         # 同上：当前资料与默认切块参数的精确基准统计。
-        self.assertEqual((stats["documents"], stats["parent_chunks"], stats["child_chunks"]), (19, 41, 79))
+        self.assertEqual((stats["documents"], stats["parent_chunks"], stats["child_chunks"]), (156, 584, 995))
 
     def test_missing_directory_returns_failure(self):
         output = io.StringIO()

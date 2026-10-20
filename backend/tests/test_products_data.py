@@ -18,7 +18,7 @@ class ProductsDataTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.folder = Path(self.temporary.name)
+        self.folder = Path(self.temporary.name).resolve()
         self.rows = products.read_products()
         self.raw = copy.deepcopy(self.rows)
         for row in self.raw:
@@ -369,7 +369,10 @@ class ProductsDataTests(unittest.TestCase):
         original = (products.ROOT / "data/docs/after_sales_warranty.md").read_text(encoding="utf-8")
         text = products.render_warranty(self.rows)
         self.assertEqual(text.split("\n\n", 2)[0], original.split("\n\n", 2)[0])
-        self.assertEqual(text.split("\n\n", 2)[2], original.split("\n\n", 2)[2])
+        # 独立冻结提升前正文，避免与已覆盖的线上文件互相验证。
+        baseline = (Path(__file__).parent / "fixtures_data/after_sales_warranty_body.md").read_text(encoding="utf-8")
+        self.assertEqual(text.split("\n\n", 2)[2], baseline)
+        self.assertEqual(original.split("\n\n", 2)[2], baseline)
         scope = text.split("\n\n", 2)[1]
         for category in products.REQUIRED_SPECS:
             self.assertIn(products.POLICY_LABELS.get(category, category), scope)

@@ -199,7 +199,7 @@ print("imports OK")
         stats = ingest_directory(BACKEND.parent / "data/docs", dry_run=False,
                                  embedder=FakeEmbedder(),
                                  store=MilvusStore(client=client, data_type=FakeDataType))
-        self.assertEqual(stats["documents"], 19)
+        self.assertEqual(stats["documents"], 156)
         self.assertEqual(len(client.rows), stats["child_chunks"])
         self.assertTrue(all(size <= 16 for size in client.batches))
         self.assertIn(16, client.batches)

@@ -46,7 +46,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
             read_timeout=10, write_timeout=10,
         )
         assert importer.call_args.args[0] is connection
-        assert len(importer.call_args.args[1]) == 37
+        assert len(importer.call_args.args[1]) == 128
         assert importer.call_args.kwargs == dict(dry_run=False, prune=False, yes=False, ignored=0,
                                                  backup_dir=None)
         notifier.assert_called_once_with(settings, client=None)
@@ -61,7 +61,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         manager.locked.side_effect = nullcontext
         monkeypatch.setattr(versioning, "VersionManager", Mock(return_value=manager))
         # 这里只验证参数传递，统计值为替身；真实默认切块基准见 test_ingest_run.py。
-        ingest = Mock(return_value={"documents": 19, "parent_chunks": 41, "child_chunks": 79})
+        ingest = Mock(return_value={"documents": 156, "parent_chunks": 584, "child_chunks": 995})
         monkeypatch.setattr(run, "ingest_directory", ingest)
         args = ["--dir", "data/docs"] + (["--dry-run"] if mode == "dry_run" else ["--yes"])
         assert run.main(args, **kwargs) == 0
