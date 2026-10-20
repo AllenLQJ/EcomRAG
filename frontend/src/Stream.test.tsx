@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import App from './App';
+import { ChatHome as App } from './App';
 import type { ChatResponse, ChatStreamEvent } from './api/types';
 import { controlledSSE } from './test/streams';
 

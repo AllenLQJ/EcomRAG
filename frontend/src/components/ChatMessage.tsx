@@ -11,13 +11,15 @@ import { Trace } from './Trace';
 interface Props {
   message: Message;
   pending: boolean;
+  onLogin?: () => void;
+  quotaRole?: 'guest' | 'user';
   showTrace: boolean;
   supportUrl?: string;
   onRetry: (question: string, id: string) => void;
   onRephrase: (question: string) => void;
 }
 
-export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, onRephrase }: Props) {
+export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, onRephrase, onLogin, quotaRole }: Props) {
   const [selection, setSelection] = useState<{ index: number; sequence: number } | null>(null);
   if (message.kind === 'user') return <div className="flex justify-end">
     <p className="max-w-[85%] whitespace-pre-wrap break-words rounded-user bg-ink px-4 py-3 text-base leading-relaxed text-card sm:max-w-bubble sm:px-[18px]">{message.text}</p>
@@ -28,8 +30,10 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
     <div className={fallback ? 'hidden sm:block' : ''}><AssistantAvatar /></div>
     <div className="min-w-0 flex-1 space-y-3">
       {message.kind === 'error' ? <div className="rounded-card border border-line bg-card p-4">
-        <p className="text-sm leading-relaxed text-fallback-text">{errorMessage(message.code)}</p>
-        <button type="button" disabled={pending} onClick={() => onRetry(message.question, message.id)} className="secondary-button mt-3 disabled:opacity-50">重试</button>
+        <p className="text-sm leading-relaxed text-fallback-text">{message.code === 42902 && (message.limitScope || quotaRole) === 'guest' ? '访客今日次数已用完，登录后每天可提问 50 次。' : errorMessage(message.code)}</p>
+        {message.code === 42902 && (message.limitScope || quotaRole) === 'guest'
+          ? <button type="button" onClick={onLogin} className="secondary-button mt-3">登录/注册</button>
+          : message.code !== 42902 && <button type="button" disabled={pending} onClick={() => onRetry(message.question, message.id)} className="secondary-button mt-3 disabled:opacity-50">重试</button>}
       </div> : <>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
           <RouteBadge route={message.response.route} /><span>{formatSeconds(message.elapsedMs)}</span>

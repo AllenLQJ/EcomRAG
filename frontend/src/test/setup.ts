@@ -18,6 +18,7 @@ beforeEach(() => {
   vi.stubEnv('VITE_STREAM', '1');
   vi.stubEnv('VITE_SHOW_TRACE_TOGGLE', '0');
   vi.stubEnv('VITE_STORE_NAME', '灵码');
+  vi.stubEnv('VITE_BRAND_SLOGAN', '');
   vi.stubEnv('VITE_WELCOME_ANIMATION', '');
   vi.stubEnv('VITE_HUMAN_SUPPORT_URL', '');
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {

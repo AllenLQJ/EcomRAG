@@ -11,6 +11,10 @@ export function storeName(): string {
   return import.meta.env.VITE_STORE_NAME?.trim() || '灵码';
 }
 
+export function brandSlogan(): string {
+  return import.meta.env.VITE_BRAND_SLOGAN?.trim() || '买前问一问，买后有人管';
+}
+
 export function welcomeEnabled(): boolean {
   const value = import.meta.env.VITE_WELCOME_ANIMATION?.trim().toLowerCase();
   if (value === '0' || value === 'false' || value === 'off') return false;

@@ -1,4 +1,5 @@
 import { ChatError } from './errors';
+import { apiFetch, responseError } from './http';
 import type { ChatRequest, ChatResponse, ChatStreamEvent, StreamStage } from './types';
 import { SSEParser, type SSEFrame } from './sse';
 import { isChatResponse, isRecord } from './validate';
@@ -21,19 +22,15 @@ export async function sendChat(request: ChatRequest, signal?: AbortSignal): Prom
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, REQUEST_TIMEOUT_MS);
   try {
     if (import.meta.env.VITE_MOCK === '1') return await mockChat(request, controller.signal);
-    const base = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '');
-    const response = await fetch(`${base}/api/v1/chat`, {
+    const response = await apiFetch('/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(request),
       signal: controller.signal,
-    });
+    }, true);
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new ChatError(
-        isRecord(body) && typeof body.code === 'number' ? body.code : 50001,
-        isRecord(body) && typeof body.request_id === 'string' ? body.request_id : undefined,
-      );
+      throw responseError(body);
     }
     if (!isChatResponse(body)) throw new ChatError(50001);
     return body;
@@ -84,13 +81,18 @@ export async function sendChatStream(
         onEvent(event);
       }, controller.signal);
     }
-    const base = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '');
-    const response = await fetch(`${base}/api/v1/chat/stream`, {
+    const response = await apiFetch('/chat/stream', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(request), signal: controller.signal,
-    });
+    }, true);
     const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
-    if (!response.ok || contentType !== 'text/event-stream' || !response.body) {
+    if (!response.ok) {
+      const failure = responseError(await response.json().catch(() => null));
+      // Business rejections must not repeat a question through the JSON fallback.
+      if ([40001, 40101, 40301, 42901, 42902, 50301].includes(failure.code)) { received = true; throw failure; }
+      throw failure;
+    }
+    if (contentType !== 'text/event-stream' || !response.body) {
       await response.body?.cancel();
       throw new ChatError(50001);
     }
@@ -105,7 +107,7 @@ export async function sendChatStream(
       if (event.event === 'meta') requestId = event.data.request_id;
       if (event.event === 'error') {
         onEvent(event);
-        throw new ChatError(event.data.code, event.data.request_id ?? requestId);
+        throw new ChatError(event.data.code, event.data.request_id ?? requestId, { ...event.data });
       }
       if (event.event === 'done') result = event.data;
       onEvent(event);
@@ -158,6 +160,7 @@ function parseStreamEvent(frame: SSEFrame): ChatStreamEvent | undefined {
   if (frame.event === 'error' && typeof data.code === 'number' && typeof data.message === 'string'
     && (data.request_id === undefined || typeof data.request_id === 'string')) {
     return { event: 'error', data: { code: data.code, message: data.message,
+      ...(data.limit_scope === 'guest' || data.limit_scope === 'user' ? { limit_scope: data.limit_scope } : {}),
       ...(typeof data.request_id === 'string' ? { request_id: data.request_id } : {}) } };
   }
   throw new ChatError(50001);

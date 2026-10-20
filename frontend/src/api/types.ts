@@ -9,6 +9,7 @@ export interface ChatRequest {
   message: string;
   debug: boolean;
   history?: HistoryMessage[];
+  conversation_id?: string;
 }
 
 export interface Source {
@@ -49,12 +50,14 @@ export interface ErrorResponse {
   code: number;
   message: string;
   request_id?: string;
+  limit_scope?: 'guest' | 'user';
+  retry_after_seconds?: number;
 }
 
 export type ChatMessage =
   | { id: string; kind: 'user'; text: string }
   | { id: string; kind: 'assistant'; response: ChatResponse; elapsedMs: number; question: string }
-  | { id: string; kind: 'error'; code: number; requestId?: string; question: string };
+  | { id: string; kind: 'error'; code: number; requestId?: string; question: string; limitScope?: 'guest' | 'user' };
 
 export type StreamStage = 'faq' | 'routing' | 'retrieving' | 'generating';
 export type ChatStreamEvent =

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import App from './App';
+import { ChatHome as App } from './App';
 import { CONVERSATIONS_KEY, loadConversations, saveConversations, SESSION_KEY } from './lib/storage';
 import { conversation } from './test/conversations';
 import { mockMobile } from './test/media';

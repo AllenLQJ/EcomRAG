@@ -1,6 +1,6 @@
 # 灵码 · 电商智能客服前端
 
-React 18 + TypeScript 5 + Vite 5 + Tailwind CSS 3.4 + react-markdown 9，独立访客聊天界面，支持 SSE/JSON、引用、链路面板、多轮与浏览器历史列表。视觉使用仓库设计 token 和系统字体栈，无在线字体或图片 CDN 依赖；店名默认「灵码」，「栖光」是台灯型号。
+React 18 + TypeScript 5 + Vite 5 + Tailwind CSS 3.4 + react-markdown 9，支持访客与账号的聊天界面，含入口登录页、SSE/JSON、引用、链路面板、多轮、浏览器与服务器历史列表、配额及店铺信息。视觉使用仓库设计 token 和系统字体栈，无在线字体或图片 CDN 依赖；店名默认「灵码」，「栖光」是台灯型号。
 
 ## 安装与启动
 
@@ -18,7 +18,7 @@ npm run dev
 uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers --reload
 ```
 
-默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定响应用 `VITE_MOCK=1 npm run dev`，不需要后端。
+默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定聊天响应用 `VITE_MOCK=1 npm run dev`；账号与历史仍请求 API，未连接后端时身份查询失败会显示可用的访客入口。
 
 ```bash
 npm test             # Vitest 单次运行
@@ -39,20 +39,21 @@ VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| VITE_API_BASE | 空字符串 | API origin；自动追加 `/api/v1/chat` 或 `/api/v1/chat/stream`，不要重复写 `/api/v1`；空值同源 |
+| VITE_API_BASE | 空字符串 | API origin；自动追加 `/api/v1` 与具体接口路径，不要重复写 `/api/v1`；空值同源 |
 | VITE_PROXY_TARGET | `http://127.0.0.1:8010` | 仅 Vite 开发服务器 `/api` 代理目标 |
 | VITE_HUMAN_SUPPORT_URL | 空字符串 | 完整 http(s) 人工客服链接；空值/无效值隐藏入口 |
 | VITE_STORE_NAME | `灵码` | 店铺名、欢迎语与标题；空白回退灵码，字标保持「灵」 |
+| VITE_BRAND_SLOGAN | `买前问一问，买后有人管` | 入口品牌标语；与店名一起由 `src/lib/config.ts` 提供，空白回退默认文案 |
 | VITE_WELCOME_ANIMATION | 开启（test 模式默认关闭） | `0` / `false` / `off` 关闭欢迎动画；标签页会话内仅播一次，可点击或按 Esc / Enter / 空格跳过，减少动态效果时直接跳过 |
-| VITE_MOCK | `0` | 严格为 1 时使用本地 fixtures，不请求后端 |
+| VITE_MOCK | `0` | 严格为 1 时聊天使用本地 fixtures；账号、配额与服务器历史仍走 API |
 | VITE_STREAM | `1` | 默认 SSE；严格为 0 才只走 JSON |
 | VITE_SHOW_TRACE_TOGGLE | `0` | 严格为 1 时向所有访客显示「查看链路」入口，仅演示使用 |
 
-客户端变量构建时注入，变更后重启开发服务器或重新构建；VITE_* 不能放任何凭据。生产托管 dist，并同源反代 /api；也可构建时设置 VITE_API_BASE，此时后端 CORS_ORIGINS 必须允许实际前端源，默认仅 localhost/127.0.0.1:3000。无健康检查轮询。
+客户端变量构建时注入，变更后重启开发服务器或重新构建；VITE_* 不能放任何凭据。生产托管 dist，并同源反代 /api；VITE_API_BASE 可指定 API 基础地址，但所有请求固定使用 credentials: same-origin，跨源地址不会携带 Cookie，账号联调应使用 Vite 同源代理或生产同源反代。无健康检查轮询。
 
 ## 流式回答与兜底
 
-请求为 `{session_id,message,debug,history}`，默认 fetch + ReadableStream POST SSE，事件如下：
+请求为 `{session_id,message,debug,history,conversation_id?}`，默认 fetch + ReadableStream POST SSE，事件如下：
 
 | 事件 | 数据 |
 | --- | --- |
@@ -64,13 +65,13 @@ VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 
 解析支持 UTF-8 跨块、CRLF、多行 data，忽略注释心跳和未知事件。首合法业务事件前超时 60 秒，之后每个合法业务事件重置 30 秒空闲计时；注释/未知事件不续期。后端每 10 秒 `: ping` 是传输心跳，不增加回答内容。
 
-在首合法事件前发生网络失败、任意 HTTP 非成功（含 404/405）、Content-Type 非 SSE、空流或事件解析失败时，自动调用一次 `/api/v1/chat`；实际代码兜底范围不限于 404/405。收到合法 meta/status/delta/done/error 后失败或提前 EOF，显示错误并允许手动重试，避免重复回答；超时和主动取消不自动回退。reader 取消/释放失败不会覆盖结果或阻断兜底。
+在首合法事件前发生网络失败、未识别为业务错误的 HTTP 非成功（含 404/405）、Content-Type 非 SSE、空流或事件解析失败时，自动调用一次 `/api/v1/chat`；实际代码兜底范围不限于 404/405。HTTP 业务拒绝（40001/40101/40301/42901/42902/50301）直接展示，不重复提交；收到合法 meta/status/delta/done/error 后失败或提前 EOF，显示错误并允许手动重试，避免重复回答；超时和主动取消不自动回退。reader 取消/释放失败不会覆盖结果或阻断兜底。
 
-done 前引用 `[n]` 为普通文字，done 后以最终 answer 覆盖增量，并按 sources 显示引用、来源、路由与实际客户端耗时。status 对应「正在查找常见问题…」「正在理解问题…」「正在查阅店铺资料…」「正在生成回答…」。错误按业务码显示固定友好文案，42901 限流、50401 超时、40001 输入非法，其余统一服务繁忙；code/requestId 保留在数据里，气泡不显示编号或后端内部错误文本。
+done 前引用 `[n]` 为普通文字，done 后以最终 answer 覆盖增量，并按 sources 显示引用、来源、路由与实际客户端耗时。status 对应「正在查找常见问题…」「正在理解问题…」「正在查阅店铺资料…」「正在生成回答…」。错误按业务码显示固定友好文案，42901 限流、50401 超时、40001 输入非法，42902 区分访客引导登录与账号明天再试；其余统一服务繁忙；code/requestId 保留在数据里，气泡不显示编号或后端内部错误文本。
 
 后端总预算默认 40 秒，单次传输/首内容 12 秒、后续 content 空闲 20 秒，已有内容后不重试；前端超时设置不延长后端预算。所有事件和完成结果都核对请求 epoch；新对话、会话切换与卸载会取消旧请求，迟到结果不污染新会话。
 
-## 多轮与历史列表
+## 多轮与访客历史列表
 
 - 输入按 Unicode 码点计数，最多 500 字，空白不发送；Enter 发送，Shift+Enter 换行，IME 组合期间不发送。请求中锁定发送、快捷提问和重试，新对话与切换会话仍可用。
 - 每次发送当前会话最近 3 个已完成无错误问答对，按时间顺序最多 6 条 `{role,content}`；两种角色均截到 500 码点，assistant 先去掉 `[n]`。拒答保留，错误和未完成回合排除；当前问题不放进 history，新对话发送空数组。
@@ -131,3 +132,44 @@ frontend/
 - 固定隧道沿用 docs/演示准备.md 的 SSE 部署约定；api/client.ts 在首合法事件前提供 JSON 兜底，已开始的流不自动重发。
 - glm-5.3-flash 需后端配置 enabled/low 思考，依据后端诊断与思考参数测试；浏览器不保存或发送供应商凭据。
 - 后端 LLM 并发默认 2，来自 config.py/test_settings.py；演示建议 4 来自既有演示配置，仍需核对配额与压测，不改变前端请求契约。
+
+
+## 入口、账号与配额
+
+- 启动先 GET `/api/v1/auth/me`。已登录直接进入首页，欢迎动效仍遵循每个标签页会话一次；未登录且本会话未选择访客时显示全屏入口页，该页不挂载 WelcomeSplash，也没有入场动画。
+- 入口按确认样式呈现：直接引用现有 `/brand/lingma-b-seal.svg`，桌面 104px、手机（<641px）84px；其下为 30px 衬线店名、可配置的 15px 品牌标语及带两侧细线的「智能客服」。字体使用既有 Noto Serif SC / Songti SC / serif 字体栈，不下载字体。
+- 内容最大宽 360px，左右至少留 16px，品牌与卡片间隔 30px。白底卡片采用 0.5px 细边框、16px 圆角、22px 内边距；输入框高 44px，墨色提交与访客次要按钮均高 46px，中间显示「或」。注册提交文案为「注册并进入」，提示条含演示密码提醒；卡片下方间隔 16px 显示模拟店铺免责声明（复用 `shopInfo.ts`）。颜色使用现有设计令牌，入口专用样式不修改聊天首页或弹窗的布局。
+- 入口页登录、注册成功或点击「以访客进入」时，先清除 `sessionStorage['lingma.welcome.v1']` 再挂载首页，沿用 `VITE_WELCOME_ANIMATION` 与 prefers-reduced-motion。`sessionStorage['lingma.entry.guest.v1']='1'` 记录访客选择，刷新保留，标签页会话结束后失效；浏览器的恢复标签页功能可能恢复 sessionStorage。存储被禁用时当前页面仍可进入。
+- 访客在侧栏打开「登录/注册」弹窗，复用入口表单；弹窗支持 Esc、焦点圈定与关闭后焦点恢复，不重播欢迎动效。退出登录、注销账号成功后清除上述两键，返回没有欢迎动效的入口页；游客 localStorage 历史仍保留。
+- 用户名校验为 3–20 位字母、数字、下划线，密码为 8–64 个 Unicode 字符；密码输入使用 current-password / new-password。注册明确提示演示站点勿使用真实常用密码。提交时防重复，42903 根据 retry_after_seconds 倒计时。注销账号须在二次确认弹窗输入密码。
+- 侧栏展示服务端 quota 中的 remaining/limit；每次聊天请求结束（成功、错误）重新查询身份与配额。42902 使用 limit_scope 展示访客登录引导或账号明天再试，并阻止继续发送，仍可编辑输入内容。身份查询失败时提供可用访客入口，后续配额查询失败保留最后数据并提示；账号/历史请求有 15 秒超时。
+- 品牌标语可用新增的 `VITE_BRAND_SLOGAN` 替换；欢迎动效配置与存储键保持原有规则，测试默认关闭，涉及动效的用例显式开启并使用假定时器。身份与密码不写入浏览器存储。
+
+## 账号与历史接口约定
+
+所有接口前缀为 `/api/v1`，统一 API 层携带 `credentials: 'same-origin'`。账号与历史的 POST/PATCH/DELETE 添加 `X-Requested-With: ecomrag`；GET 与聊天 POST 不添加该头。
+
+| 接口 | 请求 / 返回摘要 |
+| --- | --- |
+| GET /auth/me | `{user: null 或 {id,username}, quota:{role,limit,used,remaining,resets_at}}` |
+| POST /auth/register、/auth/login | `{username,password}` → `{user}`，分别 201 / 200 |
+| POST /auth/logout | 200 |
+| DELETE /auth/account | `{password}` → 200 |
+| GET /conversations | `{items:[{id,title,updated_at,message_count}]}` |
+| POST /conversations | `{}`（支持约定的可选 title），201 会话摘要 |
+| GET /conversations/{id} | `{id,title,messages:[{role,content,route,sources,created_at}]}` |
+| PATCH /conversations/{id} | `{title}` |
+| DELETE /conversations/{id} | 删除会话 |
+| POST /chat、/chat/stream | 登录且已取得对话 ID 时附加 `conversation_id`；后端自行持久化消息 |
+
+错误沿用 `{code,message,request_id?}`，账号表单展示中文原因；40001 参数、40101 凭据/身份、40301 拒绝、40401 不存在、40901 重名、42901 提问限速、42902 今日配额（limit_scope）、42903 登录限速（retry_after_seconds）、50301 暂不可用。
+
+登录后只显示服务器列表，不合并、上传或覆盖游客历史；打开时按需拉取消息，支持行内改名与二次确认删除。新对话延迟到首次发送前创建，聊天完成后重新获取列表，以服务端标题为准。多轮 history 仍沿用最近三轮拼装规则。创建/打开/改名/删除失败保留输入与已有内容并显示重试提示；刷新历史列表按钮可重新加载列表。请求取消、切换与迟到响应使用 epoch 隔离。
+
+「店铺信息」为手机可滚动的大弹窗，不触发欢迎动效。所有店铺事实集中于 `src/shopInfo.ts`，注明是待确认的模拟政策；品类卡片仅填入问题草稿，不自动发送。
+
+## 本地联调与验收
+
+已有依赖的环境中，在 frontend 下运行 `npm test`、`npm run typecheck`、`npm run build`。新增 Entry / ServerHistory / AuthForm / API 用例全部用 fetch mock，不连接真实服务；原有聊天回归用例改为直接挂载同一个 ChatHome，保留原断言，入口与身份启动由 Entry 用例覆盖。入口样式回归同时核对固定墨印素材、品牌文案、卡片内访客入口、注册文案，以及 WelcomeSplash 和入场动画类名均不存在；配置测试覆盖标语替换与空值回退。不得以 mock 测试代替真实浏览器验收。
+
+获准进行真实联调后，可用 `VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev` 将浏览器同源 `/api` 代理给另一任务提供的后端；无需配置跨源 Cookie。验证登录 Cookie、配额实际扣减、服务器标题/消息持久化、跨设备历史和错误信封，再在真实手机检查软键盘、焦点与动效。真实浏览器及后端联调必须由总控验收；本次开发不运行真实后端、不联网、不安装依赖。

@@ -10,10 +10,11 @@ interface Props {
   onChange: (value: string) => void;
   onSend: (value: string) => void;
   pending: boolean;
+  blocked?: boolean;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(
-  { value, onChange, onSend, pending }, forwardedRef,
+  { value, onChange, onSend, pending, blocked = false }, forwardedRef,
 ) {
   const mobile = useMobile();
   const [quickOpen, setQuickOpen] = useState(false);
@@ -22,7 +23,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
   const id = useId();
   const count = characterCount(value);
   const invalid = count > 500;
-  const disabled = pending || !value.trim() || invalid;
+  const disabled = pending || blocked || !value.trim() || invalid;
 
   useLayoutEffect(() => {
     const textarea = localRef.current;
@@ -37,13 +38,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
 
   return <footer className="composer-footer shrink-0 bg-canvas px-4 pt-2 sm:px-10 sm:pt-3">
     <div className="mx-auto w-full max-w-chat">
-      {mobile && <button type="button" disabled={pending} aria-expanded={quickOpen} aria-controls={`${id}-quick`}
+      {mobile && <button type="button" disabled={pending || blocked} aria-expanded={quickOpen} aria-controls={`${id}-quick`}
         onClick={() => setQuickOpen(open => !open)} className="mb-1 inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted disabled:opacity-50">
         常见问题<Chevron open={quickOpen} />
       </button>}
       <div id={`${id}-quick`} aria-label="快捷问题" hidden={mobile && !quickOpen}>
         <div className="-mx-1 mb-2 flex flex-wrap gap-2 px-1">
-          {QUICK_QUESTIONS.map(question => <button key={question} type="button" disabled={pending}
+          {QUICK_QUESTIONS.map(question => <button key={question} type="button" disabled={pending || blocked}
             onClick={() => { setQuickOpen(false); onSend(question); }}
             className="group flex min-h-11 min-w-0 max-w-full items-center rounded-full disabled:opacity-50 sm:shrink-0">
             <span className="rounded-full border border-line bg-card px-3 py-1.5 text-left text-[13px] group-hover:border-outline">{question}</span>

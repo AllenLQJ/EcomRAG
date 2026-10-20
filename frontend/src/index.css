@@ -16,6 +16,37 @@
 @layer components {
   .app-shell { height: 100vh; height: 100dvh; min-height: 320px; }
   .composer-footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .entry-page {
+    @apply flex flex-col items-center justify-center bg-canvas px-4 py-10 font-sans text-ink;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .entry-brand { @apply flex flex-col items-center text-center; margin-bottom: 30px; }
+  .entry-logo { width: 104px; height: 104px; }
+  .entry-store-name { @apply mt-4 font-serif font-semibold; font-size: 30px; line-height: 1.4; letter-spacing: 6px; }
+  .entry-slogan { @apply mt-3 font-serif; font-size: 15px; line-height: 1.8; letter-spacing: 1px; }
+  .entry-service-label { @apply mt-3 flex items-center gap-3 text-xs text-general-dot; letter-spacing: 3px; }
+  .entry-service-label > span { @apply shrink-0 bg-outline; width: 18px; height: 0.5px; }
+  .entry-card { @apply border-line bg-card; border: 0.5px solid theme('colors.line'); border-radius: 16px; padding: 22px; }
+  .entry-auth-tabs { @apply flex border-line; border-bottom: 0.5px solid theme('colors.line'); margin-bottom: 18px; }
+  .entry-field-label { @apply mb-2 block text-[13px] text-muted; }
+  .entry-auth-input {
+    @apply w-full rounded-card bg-card text-base text-ink disabled:opacity-50;
+    height: 44px;
+    border: 0.5px solid theme('colors.outline');
+    padding: 0 14px;
+  }
+  .entry-auth-submit, .entry-auth-guest { @apply flex w-full items-center justify-center rounded-card text-sm font-medium; height: 46px; padding: 0 14px; }
+  .entry-auth-submit { @apply bg-ink text-canvas hover:opacity-80; }
+  .entry-auth-guest { @apply bg-card text-ink; border: 0.5px solid theme('colors.outline'); }
+  .entry-auth-divider { @apply my-4 flex items-center gap-3 text-xs text-general-dot; }
+  .entry-auth-divider > span[aria-hidden] { @apply flex-1 bg-line; height: 0.5px; }
+  .entry-auth-quota { @apply mt-3 text-center text-[13px] leading-relaxed text-muted; }
+  .entry-auth-warning { @apply mb-4 rounded-avatar bg-fallback-bg text-[13px] text-fallback-text; padding: 10px 12px; }
+  .entry-footer { @apply mt-4 text-center text-xs leading-relaxed text-general-dot; }
+  @media (max-width: 640px) {
+    .entry-logo { width: 84px; height: 84px; }
+  }
   .welcome-splash {
     @apply fixed inset-0 flex items-center justify-center bg-canvas font-sans text-ink;
     z-index: 100;
@@ -108,6 +139,7 @@
   .sidebar-resizer:focus-visible { outline-offset: -2px; }
   .primary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card bg-accent px-4 text-sm font-medium text-card hover:opacity-80; }
   .secondary-button { @apply inline-flex min-h-11 items-center justify-center rounded-card border border-outline bg-card px-4 text-sm text-ink hover:border-ink; }
+  .form-input { @apply min-h-11 w-full rounded-card border border-outline bg-card px-3 py-2 text-base text-ink disabled:opacity-50; }
   .citation-button {
     @apply inline-flex h-6 min-w-6 items-center justify-center rounded font-mono text-xs font-normal text-accent hover:bg-line;
     padding-inline: 1px;

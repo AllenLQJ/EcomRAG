@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_PROXY_TARGET?: string;
   readonly VITE_HUMAN_SUPPORT_URL?: string;
   readonly VITE_STORE_NAME?: string;
+  readonly VITE_BRAND_SLOGAN?: string;
   readonly VITE_LOGO?: string;
   readonly VITE_WELCOME_ANIMATION?: string;
   readonly VITE_MOCK?: string;

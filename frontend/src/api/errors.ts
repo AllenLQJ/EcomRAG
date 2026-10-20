@@ -10,8 +10,14 @@ export function errorMessage(code?: number): string {
 }
 
 export class ChatError extends Error {
-  constructor(public readonly code: number, public readonly requestId?: string) {
+  readonly reason?: string;
+  readonly limitScope?: 'guest' | 'user';
+  readonly retryAfterSeconds?: number;
+  constructor(public readonly code: number, public readonly requestId?: string, details?: Record<string, unknown>) {
     super(errorMessage(code));
     this.name = 'ChatError';
+    this.reason = typeof details?.message === 'string' ? details.message : undefined;
+    this.limitScope = details?.limit_scope === 'guest' || details?.limit_scope === 'user' ? details.limit_scope : undefined;
+    this.retryAfterSeconds = typeof details?.retry_after_seconds === 'number' ? details.retry_after_seconds : undefined;
   }
 }

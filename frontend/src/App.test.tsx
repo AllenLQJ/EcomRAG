@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import App from './App';
+import { ChatHome as App } from './App';
 import type { ChatResponse, TraceItem } from './api/types';
 import { fixtureFor } from './mocks/fixtures';
 import { mockMobile } from './test/media';
