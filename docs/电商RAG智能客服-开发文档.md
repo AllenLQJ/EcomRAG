@@ -2,7 +2,7 @@
 
 ## 1. 项目概述
 
-一个人开发、维护的访客客服应用，面向虚构店铺「灵码」的公开政策与商品咨询。当前已具备 FAQ、混合检索、重排、带引用生成、拒答、SSE 流式回答、多轮上下文、浏览器历史对话与手机适配；数据与回答不代表真实商家的服务承诺。「栖光」是台灯型号名称的一部分。
+一个人开发、维护的访客客服应用，面向虚构店铺「灵码」的公开政策与商品咨询。当前已具备 FAQ、混合检索、重排、带引用生成、拒答、SSE 流式回答、多轮上下文、浏览器历史对话与手机适配，以及本阶段新增的用户名密码账号与按角色日配额、登录账号的服务器端历史、商品数据层与商品卡片、Milvus 知识库版本化发布/回滚、内容一致性工具和 RAGAS 离线评估；数据与回答不代表真实商家的服务承诺。「栖光」是台灯型号名称的一部分。
 
 后端使用 Python 3.11、FastAPI、Pydantic v2、httpx，依赖由 uv 管理；LLM 客户端直接使用 httpx 的 OpenAI 兼容协议，切块使用自有 `ingest/splitter.py`，不通过 LangChain 编排。前端是 React 18、TypeScript 5、Vite 5、Tailwind CSS 3.4、react-markdown 9。依赖服务为 Milvus Standalone 2.5.10（内嵌 etcd、本地存储）、MySQL 8.0、Redis 7.4，无独立 MinIO 服务。
 
@@ -139,6 +139,28 @@ trace 仅在请求 `debug=true` 且 `ALLOW_TRACE=true` 时返回，否则为 nul
 
 依据：`backend/app/main.py`、`schemas.py`、`history.py`、`streaming.py`、`contracts.py`、`chat_log.py`、`logging_config.py`、`llm/diagnostics.py`、`backend/sql/init.sql`。
 
+### 3.5 账号、配额与服务器历史
+
+完整接口、错误码与数据表见 [账号与历史接口说明](账号与历史接口说明.md)，这里只列上线必须知道的事实。
+
+- **登录方式**：用户名 + 密码。用户名 3–20 位 ASCII 字母、数字、下划线，不区分大小写；密码 8–64 位，不能与用户名相同、不能纯数字或常见弱口令。同一账号连续失败 5 次锁定 15 分钟；登录状态 7 天。
+- **配额**：游客 `GUEST_DAILY_LIMIT=5`、账号 `USER_DAILY_LIMIT=50`，按 `RATE_LIMIT_DAY_TZ_OFFSET_HOURS=8`（北京时间）自然日零点重置；FAQ、缓存命中同样计次。旧的 `RATE_LIMIT_PER_DAY` 兜底仍按 UTC 自然日，两者独立。
+- **服务器端历史**：仅登录账号；每账号最多 100 个对话。游客历史只在本机浏览器。
+- **注销账号**：登录后在侧边栏“注销账号”并输入密码确认，立即删除账号和全部历史，不可恢复。
+- **登录失败提示**：不存在的账号返回 401/40102“账号不存在”，密码错误返回 401/40103“密码错误”。这是产品负责人明确要求的可区分反馈，**已接受账号枚举风险**；取舍与缓解（假哈希、锁定）见接口说明。
+- **来源校验**：账号/历史与聊天 POST 带 Origin 时，Origin 与请求原始 Host 的 host:port 一致（同源）即放行；跨站前端必须把实际来源写入 `CORS_ORIGINS`（JSON 数组，不允许 `*`）。账号/历史的修改请求还必须带 `X-Requested-With: ecomrag`。
+
+前置条件与命令（在 `backend/`）：
+
+```bash
+# 1. 生成密钥写入仓库根目录 .env 的 AUTH_SECRET（不要提交；所有 worker 共用同一个值）
+openssl rand -hex 32
+# 2. 建账号/历史等表（读取根目录 .env 的 MYSQL_*，幂等）
+uv run python -m ingest.migrate_db
+```
+
+`AUTH_SECRET` 在 `DEBUG=false`（默认）时为空或全空格会导致启动时报 ValueError；只有 `DEBUG=true` 时才会用进程内随机值并告警（重启后会话全部失效，不支持多 worker）。跨站部署示例：`CORS_ORIGINS='["https://前端域名"]'`。
+
 ## 4. 模型与完整配置
 
 ### 4.1 智谱部署配置
@@ -244,7 +266,9 @@ LLM_MAX_CONCURRENCY=50
 
 ### 5.1 现有数据
 
-`data/docs/` 有 19 份 Markdown，清单如下；默认父块 1200、子块 300、重叠 50 时为 41 个父块、79 个子块（`backend/tests/test_ingest_run.py` 固定该基准）。
+> **现状更新（本阶段实数）**：`data/docs/` 现有 156 篇 Markdown，`data/faq.csv` 现有 128 条（不含表头）。下方 19 份清单、41/79 块基准和 37 条 FAQ 是合并扩容前的早期基线，保留作历史参考；扩容后的块数以 `ingest.run --dry-run` 实际输出为准。
+
+早期基线：`data/docs/` 有 19 份 Markdown，清单如下；默认父块 1200、子块 300、重叠 50 时为 41 个父块、79 个子块（`backend/tests/test_ingest_run.py` 固定该基准）。
 
 | 文件 | 内容 |
 | --- | --- |
@@ -278,7 +302,7 @@ LLM_MAX_CONCURRENCY=50
 
 ### 5.2 入库与维护命令
 
-以下命令均在 `backend/` 执行，供自己在已准备好依赖的环境操作。CLI 默认会加载配置，`--dry-run` 也会加载配置，但不加载模型、不连接服务。
+以下命令均在 `backend/` 执行，供自己在已准备好依赖的环境操作。注意配置来源分两类（详见 5.4）：`migrate_db`、`load_faq`、`clear_cache`、`purge_chat_logs` 通过 `get_settings()` 读取仓库根目录 `.env`；`ingest.run`、`kb_*` 使用 `Settings(_env_file=None)`，**只读进程环境与默认值，不读 `.env`**。`--dry-run` 不加载模型、不连接服务。
 
 ```bash
 # 仅离线演示：默认即 dry-run，不加载模型、不连接服务、不入库
@@ -342,6 +366,98 @@ FAQ 导入后重启后端更新内存索引。`clear_cache` 仅 SCAN/分批删�
 ```
 
 `Services` 装配共享模型、客户端与执行器，`pipeline.py` 负责链路，`contracts.py` 定义数据契约与业务错误；提示词在 `llm/prompts/*.md`。模块导入不自动加载模型或连接数据库，应用工厂及真实 CLI 才加载运行配置。
+
+### 5.4 CLI 配置来源与上线前置步骤
+
+**哪些命令读 `.env`**（核对自代码）：
+
+| 命令 | 配置来源 |
+| --- | --- |
+| 后端应用、`ingest.migrate_db`、`ingest.load_faq`、`ingest.clear_cache`、`ingest.faq_reload`、`ingest.purge_chat_logs`、`eval.run_eval` | `get_settings()`，读**仓库根目录** `.env` + 进程环境 |
+| `ingest.run`、`ingest.kb_migrate`、`ingest.kb_switch`、`ingest.kb_list`、`ingest.kb_drop` | `Settings(_env_file=None)`，只读进程环境与默认值 |
+| `ingest.migrate_products`、`ingest.load_products` | 默认只读进程环境 `MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE`（默认 127.0.0.1/3306/ecomrag/空/ecomrag）；`main(..., settings=)` 可注入应用配置 |
+| `eval.ragas_eval collect` | `Settings(_env_file=None)`；`main(..., settings=)` 可注入 |
+| `eval.ragas_eval score` | 只从 CLI、进程环境和 **`backend/.env`** 里读取 `JUDGE_*` 白名单变量（`--no-env-file` 可跳过文件） |
+
+**两种提供配置的写法：**
+
+1. 显式注入应用配置（推荐；复用根目录 `.env` 的解析，JSON 值不受影响）：
+
+```bash
+cd backend
+uv run python -c "import sys; from app.config import get_settings; from ingest.migrate_products import main; sys.exit(main([], settings=get_settings()))"
+uv run python -c "import sys; from app.config import get_settings; from ingest.load_products import main; sys.exit(main(['data/products/products.csv', '--yes'], settings=get_settings()))"
+# ingest.run / kb_* 同理：ingest.run.main(argv, settings=...)，ingest.kb_switch.main(argv, settings=...)
+uv run python -c "import sys; from app.config import get_settings; from ingest.kb_switch import main; sys.exit(main(['--to', 'kb_chunks_v0', '--state-dir', '/固定路径/kb-state'], settings=get_settings()))"
+```
+
+2. 只 export 需要的变量，再执行原命令：
+
+```bash
+export MYSQL_HOST=127.0.0.1 MYSQL_PORT=3306 MYSQL_USER=ecomrag MYSQL_DATABASE=ecomrag
+export MYSQL_PASSWORD='你的本地密码'
+export MILVUS_URI=http://127.0.0.1:19530 BGE_M3_PATH=models/bge-m3
+# 若改过默认切块，入库与发布全程必须一致：PARENT_MAX_CHARS、CHILD_CHUNK_SIZE、CHILD_CHUNK_OVERLAP、EMBED_BATCH_SIZE
+uv run python -m ingest.migrate_products
+uv run python -m ingest.load_products data/products/products.csv --yes
+```
+
+**不要 `source .env`**：shell 会把 `LLM_EXTRA_BODY='{"thinking":{...}}'` 这类 JSON 值的引号当作 shell 语法处理（未加单引号时双引号会被直接去掉），结果不再是合法 JSON，`Settings` 校验失败或参数错误。需要 `.env` 中的值时用上面的 `get_settings()` 注入写法。
+
+**上线前置清单（按顺序）：** 依赖服务 healthy（`docker compose ps`）→ 根目录 `.env` 含 `AUTH_SECRET` → `migrate_db` → `migrate_products` + `load_products --yes` → 知识库入库/发布（5.6）→ `load_faq` → 前端 `npm run build` → `deploy/start-local.sh` + Caddy（8.5）。
+
+### 5.5 商品数据层、商品卡片与图片
+
+- **数据**：`data/products/products.csv`（字段与校验见 [商品数据与文档生成](商品数据与文档生成.md)）。`ingest.load_products` 先校验 CSV，再按 `sku_id` 幂等 upsert 到 MySQL `products` 表（缺表时自动建）；`--dry-run` 只校验不连库；`--prune --yes` 才删除表中多余 SKU。
+- **本次踩坑**：上线时漏掉建表和导入，聊天正常但**商品卡片不出现**，日志只有一行 `product_cards_unavailable`（`app/products.py`、`app/pipeline.py`）。修复：执行 5.4 的两条商品命令后重启后端。
+- **接口字段**：见 [商品卡片接口说明](商品卡片接口说明.md) 与 [frontend/PRODUCT_CARDS.md](../frontend/PRODUCT_CARDS.md)。
+- **生成图片**：原图放在 `data/images_src/<sku_id>/main.png`（也接受 jpg/jpeg/webp，优先文件名为 main 的），执行后生成 `data/images/<sku>/main.webp`（另有 thumb）；缺原图的 SKU 自动生成占位图。需要 Pillow（主环境默认不装），可用独立评估环境运行：
+
+```bash
+cd backend
+.venv-eval/bin/python -m ingest.products images-build      # 默认 --src data/images_src、--csv data/products/products.csv
+```
+
+- **图片托管**：Caddy 用 `handle_path /images/*` 托管 `data/images`，环境变量 `ECOMRAG_IMAGES_DIR` 指向 `data/images` 的**绝对路径**（见 8.5）。前端默认请求同源 `/images/<sku>/main.webp`，构建时可用 `VITE_PRODUCT_IMAGE_BASE_URL` 覆盖。
+- **后端 `IMAGE_BASE_URL` 保持为空**：它只接受完整 http(s) 基础地址（不含凭据、查询、片段），填 `/images` 这类相对路径会在启动时报“IMAGE_BASE_URL 必须为空或合法 HTTP(S) 基础地址”。
+
+### 5.6 知识库 Milvus 版本化发布与回滚
+
+正式流程以 [知识库扩容与回滚](知识库扩容与回滚.md) 为准，摘要如下。前置：CLI 不读 `.env`，需按 5.4 提供 `MILVUS_URI`、`MILVUS_TIMEOUT_S`（可选）、`BGE_M3_PATH`、切块参数；本地模型完整存在；**所有命令固定同一个 `--state-dir`**（默认仓库根 `.kb-state/`，按 URI+alias 隔离；换目录会丢失发布状态与 pending 记录）。
+
+```bash
+cd backend
+STATE=/固定持久路径/kb-state
+# 1) 旧部署一次性迁移：legacy 实体 kb_chunks → kb_chunks_v0 并建 alias。
+#    rename 与建 alias 之间 kb_chunks 会短暂不可用，必须先停入口流量和所有入库任务，并备份。
+python -m ingest.kb_migrate --state-dir "$STATE"            # 只打印计划
+python -m ingest.kb_migrate --state-dir "$STATE" --yes
+# 2) 构建新版本（不会自动切换）
+python -m ingest.run --dir data/docs --staged --state-dir "$STATE" --yes
+python -m ingest.kb_list --state-dir "$STATE"
+# 3) 检查（运行本地编码与检索，Hit@5 默认阈值 0.9，不改 alias）
+python -m ingest.kb_switch --to <版本名> --check --state-dir "$STATE"
+# 4) 切换
+python -m ingest.kb_switch --to <版本名> --check --yes --state-dir "$STATE"
+# 回滚到迁移前版本
+python -m ingest.kb_switch --to kb_chunks_v0 --yes --state-dir "$STATE"
+```
+
+- `--prune-missing` 会把本次目录未扫描到的资料全部列为删除对象，风险高；只在确认目录是集合完整资料根目录时，先单独 `--sync-delete --prune-missing --plan` 逐项审阅。
+- **`row_count` 不能用来断言行数**：Milvus stats 的 `row_count` 包含未压实的墓碑。本次实测统计显示 161，迁移后真实有效行数是 82。校验应看发布校验（Strong iterator 读取的有效主键与内容摘要）。
+- FAQ 导入、刷新与发布见 [FAQ维护与发布](FAQ维护与发布.md)。
+
+### 5.7 内容一致性检查与合并
+
+用途与规则见 [内容集成与一致性检查](内容集成与一致性检查.md)。在**仓库根目录**执行（规则唯一来源 `data/policy/policy_facts.csv`）：
+
+```bash
+PYTHONPATH=backend python -m ingest.content_check --root data/docs_new --facts data/policy/policy_facts.csv --json content-report.json
+PYTHONPATH=backend python -m ingest.content_merge --out data/docs_staging --faq-out data/faq_staging.csv --dry-run
+PYTHONPATH=backend python -m ingest.content_merge --out data/docs_staging --faq-out data/faq_staging.csv
+```
+
+`content_check` 检查来源数字、规则、结构、相似度、禁用词等；`content_merge` 把新内容合并到暂存目录和暂存 FAQ（先 `--dry-run`），审阅后再按 5.6 / FAQ 文档发布。当前语料：`data/docs` 156 篇、`data/faq.csv` 128 条（本次实数）。
 
 ## 6. 前端与本地联调
 
@@ -409,11 +525,13 @@ Enter 发送、Shift+Enter 换行，IME 组合期不发送；请求中锁定发�
 
 ```bash
 cd backend
-uv run pytest -q
+uv run --frozen pytest tests -q     # --frozen：不让 uv 自动解析/改写 uv.lock
 # 另一个终端在 frontend/
 npm test
-npm run typecheck
+npm run build                      # tsc --noEmit + vite build；只想类型检查可用 npm run typecheck
 ```
+
+macOS 的临时目录（`tmp_path`、`/var/folders/...`）是指向 `/private/var/...` 的符号链接，路径比较前必须 `Path.resolve()`，否则测试在 macOS 上会因路径字符串不同而失败。
 
 测试数量以实际运行输出为准：后端 `cd backend && uv run pytest -q`，前端 `cd frontend && npm test`（最近一次单元测试：后端 883 项、前端 181 项全部通过，随后续改动会变化）。
 
@@ -498,6 +616,28 @@ FAQ 缓存只影响 FAQ，知识库问题不会因重复发送而缓存。真实
 
 验收包括：依赖健康与实际入库可检索；FAQ 首次命中/重复缓存；知识回答事实与引用一致；资料不足、隐私/注入走拒答；多轮追问不串答；Redis 故障仍可回答；非法输入、限流、繁忙和超时有可读提示；手机输入/键盘、历史切换/删除、刷新恢复和链路开关正常。真实供应商、浏览器、读屏与隧道必须实测，源码或单元测试不能证明已通过。
 
+### 7.4 RAGAS 两阶段离线评估
+
+背景与指标口径见 [评估体系与指标解释](评估体系与指标解释.md)。`run_eval` 的三个评测集（`data/eval.jsonl`、`data/eval_colloquial.jsonl`、`data/eval_multiturn.jsonl`）命令见 7.1；RAGAS 默认使用 `data/eval_ragas_gold.jsonl`。
+
+**collect（主环境，需要依赖服务与模型）**：`ragas_eval` 的 collect 用 `Settings(_env_file=None)`，直接运行不读 `.env`。用应用自己的加载方式注入配置：
+
+```bash
+cd backend
+uv run python -c "import sys; from app.config import get_settings; from eval.ragas_eval import main; sys.exit(main(['collect', '--out', 'logs/ragas-collect.json'], settings=get_settings()))"
+```
+
+**score（评估环境，只读采集文件）**：
+
+```bash
+cd backend
+uv venv .venv-eval --python 3.11                       # 首次
+uv pip install --python .venv-eval/bin/python -r requirements-eval.txt
+.venv-eval/bin/python -m eval.ragas_eval score --in logs/ragas-collect.json --out logs/ragas-score.json
+```
+
+评审模型配置写在 **`backend/.env`**（与应用使用的根目录 `.env` 不同），score 只读取 `JUDGE_*` 白名单：`JUDGE_API_KEY`、`JUDGE_MODEL`、`JUDGE_BASE_URL`、`JUDGE_EXTRA_BODY`（另有 `JUDGE_EMBEDDING_MODEL`、`JUDGE_EMBEDDING_BASE_URL`、`JUDGE_MAX_RETRIES`、`JUDGE_RETRY_BACKOFF_S`、`JUDGE_MAX_WORKERS`、`JUDGE_MAX_TOKENS`）。也可用 `--judge-model`、`--judge-base-url`、`--judge-key-env` 覆盖。glm-5.3-flash 始终在思考，不能关闭，推荐 `JUDGE_EXTRA_BODY={"reasoning_effort":"low"}`。同样不要 `source` 这些文件，原因见 5.4。
+
 ## 8. 部署、防滥用与已知限制
 
 ### 8.1 本机与 Cloudflare 固定隧道
@@ -539,11 +679,11 @@ Cloudflare 固定隧道配置 `TRUST_PROXY_HEADERS=true`、`CLIENT_IP_HEADER=cf-
 
 ### 8.3 访客边界与功能范围
 
-当前无注册登录、JWT、`get_current_user()` 或管理员 API；session_id 是会话标识，不是身份凭证。请求模型没有可信 user_id 字段，chat_logs 的 user_id 仅预留并写 null。应用只回答公开知识，未接入个人订单、物流账户或真实人工工单；人工客服仅为配置的 http(s) 链接。
+已提供用户名密码账号与服务器端历史（见 3.5）；仍没有 JWT 或管理员 API。session_id 是会话标识，不是身份凭证。应用只回答公开知识，未接入个人订单、物流账户或真实人工工单；人工客服仅为配置的 http(s) 链接。
 
 输入校验、敏感路由、资料/历史隔离及生成拒答共同减少编造与注入风险，不保证覆盖所有攻击。应用日志脱敏不等于不保存原文，chat_logs 与评测导出应自行设定访问、备份和清理策略。
 
-SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback 只是枚举及 direct 降级；反馈接口、知识库后台、跨设备同步、语义缓存、图片问答等不属于当前可用能力。扩展时先更新契约和测试，再接入真实身份/数据服务，不以不存在的扩展点作为已交付功能。
+SSE、手机适配、多轮、浏览器历史和登录账号的服务器端历史已实现。HyDE/子问题/stepback 只是枚举及 direct 降级；反馈接口、知识库后台、语义缓存、图片问答等不属于当前可用能力。扩展时先更新契约和测试，再接入真实身份/数据服务，不以不存在的扩展点作为已交付功能。
 
 ### 8.4 已知运行限制
 
@@ -552,6 +692,26 @@ SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback
 - 16 GB 机器内存紧张或 swap 较高时，既有记录中重排会从约 2.5 秒恶化到 20 秒以上；演示时关闭无关大应用、保持接电与不休眠，先预热并留出内存。以上性能观察来自 `docs/演示准备.md` 的实测记录。
 - 降低候选数或关闭重排可减少工作量，但会改变质量与拒答语义，须重新评测；不能直接沿用 parent/fp16 的历史分数分布解释 child/fp32 阈值。
 - 知识覆盖仅为现有资料，NO_ANSWER 是第二道资料不足兜底；不把商品总览或历史回答当作完整店铺事实。
+- `deploy/start-local.sh` 临时关闭了 IP 限流（`RATE_LIMIT_IP_ENABLED=false`），因为真实访客 IP 透传还没做；接通后应恢复。
+- 并发 50 只是容量配置，**没有做过 50 并发压测**。
+- 切块参数（父块 1200、子块 300、重叠 50）没有做过对比实验。
+- 游客无法清除本地历史（后续计划）。
+- 服务器端历史不恢复商品卡片：重新打开历史对话只有文字。
+
+### 8.5 本机 Caddy 部署（当前）
+
+前置：依赖服务已启动、5.4 上线清单已完成、本机已安装 caddy、`backend/.venv` 已按 `uv sync` 建好。
+
+```bash
+# 仓库根目录
+cd frontend && npm install && npm run build && cd ..
+sh deploy/start-local.sh            # 后端 127.0.0.1:8010（关闭 trace/debug、IP 限流，见 8.4）
+# 另一个终端，仓库根目录；两个目录都必须是绝对路径
+ECOMRAG_FRONTEND_DIR="$PWD/frontend/dist" ECOMRAG_IMAGES_DIR="$PWD/data/images" \
+  caddy run --config deploy/Caddyfile --adapter caddyfile
+```
+
+Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` 到 8010（关闭缓冲以保证 SSE），并按 `handle_path /images/*` 托管商品图片。仓库目前没有 `deploy/start-caddy.sh`。FRP 隧道等步骤见 [樱花FRP本机部署](樱花FRP本机部署.md)。打开 <http://127.0.0.1:8080> 验证：能登录、提问计次、商品问题出现卡片和图片。
 
 ## 9. 变更与决策记录
 
@@ -560,3 +720,5 @@ SSE、手机适配、多轮和浏览器历史已实现。HyDE/子问题/stepback
 - **采用固定隧道**：`docs/演示准备.md` 明确临时隧道不支持流式；`app/streaming.py` 与 `frontend/src/api/client.ts` 依赖持续 SSE 事件，因此采用 named tunnel 并关闭代理缓冲，实际域名仍需端到端验收。
 - **切换 glm-5.3-flash 与 enabled/low 思考**：按当前部署约定显式覆盖地址与两个模型角色，保留 OpenAI 兼容客户端；`llm/diagnostics.py` 和 `test_llm_reasoning.py` 对 1210 给出固定 enabled/low 建议，代码不自动切换供应商或修改配置。
 - **并发容量统一为 50**：LLM、远程重排、模型工作线程及等待队列、限流检查线程及总在飞容量均默认 50；分钟频率额度提高为 50，日额度保留 200。该调整扩大接纳容量，供应商配额及本地模型锁仍独立生效，不据此宣称单机模型吞吐提升。
+- **登录失败区分“账号不存在/密码错误”**：产品负责人明确要求可区分提示，已接受账号枚举风险；两种失败都做一次 scrypt 校验以减少耗时差异，详见[账号与历史接口说明](账号与历史接口说明.md)。
+- **知识库改为 alias + 版本化发布**：就地 upsert 不清理旧块且无法回滚，改为 `--staged` 构建、`kb_switch --check` 校验后切换，保留 v0 作回滚点（5.6）。

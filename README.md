@@ -2,7 +2,7 @@
 
 面向店铺「灵码」公开政策与商品咨询的访客客服。后端 Python 3.11 / FastAPI，前端 React 18 / TypeScript / Vite / Tailwind。
 
-在线链路：限流 → Redis 缓存 → FAQ（BM25 + bge-m3）→ LLM 路由 → Milvus 混合检索 → 重排 → 带 `[n]` 引用的生成；资料不足或敏感问题拒答。支持 SSE 流式回答、多轮上下文和浏览器历史对话。
+在线链路：来源校验 → 配额/限流 → Redis 缓存 → FAQ（BM25 + bge-m3）→ LLM 路由 → Milvus 混合检索 → 重排 → 带 `[n]` 引用的生成；资料不足或敏感问题拒答。支持 SSE 流式回答、多轮上下文、用户名密码账号（游客每天 5 次、账号每天 50 次，按北京时间自然日计）、登录账号的服务器端历史、商品卡片，以及 Milvus 知识库版本化发布与回滚。
 
 完整的架构、接口、全部配置项与默认值、评测、部署说明和决策记录见 **[开发文档](docs/电商RAG智能客服-开发文档.md)**；前端见 [frontend/README.md](frontend/README.md)；演示流程与遇到的问题见 [docs/演示准备.md](docs/演示准备.md)。
 
@@ -20,7 +20,13 @@ LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 ROUTER_MODEL=glm-5.3-flash
 GENERATE_MODEL=glm-5.3-flash
 LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
+# 非调试模式（DEBUG=false，默认）必须非空，否则启动失败；用 openssl rand -hex 32 生成，不要提交
+AUTH_SECRET=粘贴生成结果
+# 保持为空；它只接受完整 http(s) 地址，填 /images 会启动失败
+IMAGE_BASE_URL=
 ```
+
+生成密钥：`openssl rand -hex 32`。后端应用（`app.config.Settings`）读取的是**仓库根目录**的 `.env`；`ingest.run`、`kb_*`、`migrate_products`、`load_products`、`ragas_eval collect` 等 CLI **不读 `.env`**，见下文“CLI 配置来源”。
 
 glm-5.3-flash 始终思考，必须按上面开启思考；用其他 OpenAI 兼容模型时按其文档设置，思考类模型的输出配额见开发文档。
 
@@ -35,10 +41,17 @@ docker compose up -d
 ```bash
 cd backend
 uv sync --python 3.11
-uv run python -m ingest.migrate_db
-uv run python -m ingest.run --dir ../data/docs
+uv run python -m ingest.migrate_db          # 账号、历史等表（读根目录 .env，幂等）
+# 商品表与商品数据：漏了这一步，商品卡片不会出现，日志只有 product_cards_unavailable
+uv run python -c "import sys; from app.config import get_settings; from ingest.migrate_products import main; sys.exit(main([], settings=get_settings()))"
+uv run python -c "import sys; from app.config import get_settings; from ingest.load_products import main; sys.exit(main(['data/products/products.csv', '--yes'], settings=get_settings()))"
+# 知识库：CLI 不读 .env，需先 export MILVUS_URI 等，见开发文档 5.4
+uv run python -m ingest.run --dir ../data/docs --dry-run
+uv run python -m ingest.run --dir ../data/docs --yes      # 首次本地入库；正式发布走 --staged，见下文
 uv run python -m ingest.load_faq ../data/faq.csv
 ```
+
+`ingest.migrate_products` 与 `ingest.load_products` 本身只读进程环境（`MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_USER`、`MYSQL_PASSWORD`、`MYSQL_DATABASE`），上面用 `python -c` 显式注入应用配置；也可以先 `export` 这些变量后直接执行 `uv run python -m ingest.migrate_products` 和 `uv run python -m ingest.load_products data/products/products.csv --yes`。不要用 `source .env`（会破坏 JSON 值，见开发文档 5.4）。
 
 **4. 启动后端**（8010）：
 
@@ -81,9 +94,11 @@ npm run dev
 平时只跑单元测试：
 
 ```bash
-cd backend && uv run pytest -q
-cd frontend && npm test && npm run typecheck
+cd backend && uv run --frozen pytest tests -q      # --frozen 避免 uv 自动改写 uv.lock
+cd frontend && npm test && npm run build           # build 含 tsc --noEmit 类型检查
 ```
+
+macOS 的临时目录是符号链接（`/var` → `/private/var`），测试中比较路径时要先 `Path.resolve()`。
 
 商品总览、品类分类与选购推荐统一由 router 判为 `knowledge`，总览问句改写为含「店铺商品品类总览」的检索问句；general 禁止陈述或列举店铺商品、品类、价格、库存和政策，并引导直接提问具体商品或售后问题。`data/eval_colloquial.jsonl` 末尾追加 8 条商品问句（`answer`，参考 `product_catalog.md`）和「你好」「谢谢」2 条 `general` 对照；「你好」作为显式对照重复保留。提示词与数据格式回归测试见 `backend/tests/test_llm_helpers.py`、`backend/tests/test_eval_colloquial.py`，离线测试仅验证规则与数据约束，提示效果必须由总控使用真实模型评测。
 
@@ -122,21 +137,33 @@ uv run python -m ingest.migrate_db                  # 数据库补列（幂等�
 
 改了文档或 FAQ 后重新入库并清缓存；标题或切块变化需先按[开发文档 5.2 节](docs/电商RAG智能客服-开发文档.md#52-入库与维护命令)清理受影响资料的旧块，再导入，避免保留旧文案。FAQ 更新需重启后端重建内存索引。
 
+## 本阶段新增能力速览
+
+详细说明与命令见开发文档 [3.5](docs/电商RAG智能客服-开发文档.md#35-账号配额与服务器历史)、[5.4](docs/电商RAG智能客服-开发文档.md#54-cli-配置来源与上线前置步骤)、[5.5](docs/电商RAG智能客服-开发文档.md#55-商品数据层商品卡片与图片)、[7.4](docs/电商RAG智能客服-开发文档.md#74-ragas-两阶段离线评估)、[8.5](docs/电商RAG智能客服-开发文档.md#85-本机-caddy-部署当前)。
+
+- **账号与历史**：用户名 + 密码登录；游客每天 5 次、账号每天 50 次（北京时间自然日，FAQ/缓存命中也计次）；登录账号的对话保存在服务器；可在侧边栏注销账号。登录失败区分“账号不存在/密码错误”是已接受账号枚举风险的产品取舍，见 [账号与历史接口说明](docs/账号与历史接口说明.md)。同源请求自动放行，跨站前端须配置 `CORS_ORIGINS`（不允许 `*`）。
+- **商品卡片**：上线前必须执行 `migrate_products` 和 `load_products`（上文第 3 步）。图片由 Caddy 在同源 `/images` 托管，接口字段见 [商品卡片接口说明](docs/商品卡片接口说明.md) 与 [frontend/PRODUCT_CARDS.md](frontend/PRODUCT_CARDS.md)。
+- **知识库版本化**：`kb_migrate`（一次性，需停流量）→ `ingest.run --staged --yes` → `kb_switch --check` → `kb_switch --yes`，回滚为 `kb_switch --to kb_chunks_v0 --yes`，所有命令固定同一个 `--state-dir`。见 [知识库扩容与回滚](docs/知识库扩容与回滚.md)；FAQ 见 [FAQ维护与发布](docs/FAQ维护与发布.md)。
+- **内容工具**：`ingest.content_check`（一致性检查）、`ingest.content_merge`（合并到暂存目录），见 [内容集成与一致性检查](docs/内容集成与一致性检查.md)。当前语料：`data/docs` 156 篇，`data/faq.csv` 128 条。
+- **离线评估**：`run_eval` 三个评测集 + RAGAS 两阶段（collect 在主环境，score 在 `backend/.venv-eval`）。
+
 ## 部署
 
 本机 + Cloudflare 固定隧道（临时隧道不支持流式输出）。后端只监听 127.0.0.1，经本机反向代理托管 `frontend/dist` 并转发 `/api`，关闭缓存、压缩和代理缓冲，并配置真实 IP 头。详见开发文档第 8 节。
 
-当前樱花 FRP/Caddy 本机部署使用 `sh deploy/start-local.sh` 启动后端（在仓库根目录执行）。脚本显式设定上述容量为 50，避免旧 `.env` 中的小值覆盖默认值；不修改 `.env`。由于现有隧道尚未透传可验证的真实 IP，该脚本暂时关闭共享 IP 桶，仅按会话限流，避免手机和压测相互占用额度。session 不是可信身份，接入可信真实 IP 后应恢复 IP 限流。操作步骤见 [本机部署说明](docs/樱花FRP本机部署.md)。
+当前樱花 FRP/Caddy 本机部署使用 `sh deploy/start-local.sh` 启动后端（在仓库根目录执行，监听 127.0.0.1:8010，使用 `backend/.venv`）；前端 `cd frontend && npm run build` 后由 Caddy（8080）托管 `frontend/dist`、反代 `/api` 并托管 `/images`，启动命令见开发文档 8.5（仓库没有 `deploy/start-caddy.sh`）。脚本显式设定上述容量为 50，避免旧 `.env` 中的小值覆盖默认值；不修改 `.env`。由于现有隧道尚未透传可验证的真实 IP，该脚本暂时关闭共享 IP 桶，仅按会话限流，避免手机和压测相互占用额度。session 不是可信身份，接入可信真实 IP 后应恢复 IP 限流。操作步骤见 [本机部署说明](docs/樱花FRP本机部署.md)。
 
 ## 常见问题
 
 - **启动失败或一直预热**：先确认 `docker compose ps` 三项都 healthy、数据已入库、模型权重完整。
+- **商品卡片不出现，日志只有 `product_cards_unavailable`**：没有建 products 表或没导入商品，执行“快速开始”第 3 步的两条商品命令后重启后端。
+- **启动报 AUTH_SECRET 错误**：非调试模式必须配置非空 `AUTH_SECRET`。启动报 `IMAGE_BASE_URL` 错误：把它清空（不要填 `/images`）。
 - **前端连不上**：后端 8010、前端 3000；检查 `VITE_MOCK` 是否关闭。
 - **看不到链路**：需要前端入口（`?debug=1` 或 `VITE_SHOW_TRACE_TOGGLE=1`）、请求 `debug=true` 与后端 `ALLOW_TRACE=true` 同时满足。
 - **返回 502/空答案**：多半是模型参数问题，先跑 `uv run python -m eval.llm_ping`。
 - **变慢或频繁超时**：本机内存不足会让重排慢 10 倍；关闭无关应用、先预热。海外访问智谱的网络抖动见演示准备第六章。
 
-当前没有登录、个人订单查询或真实人工工单。对话原文保存在 MySQL，请自行管理访问与保留期限（`ingest.purge_chat_logs`）。
+已有用户名密码账号与服务器端历史，但没有个人订单查询或真实人工工单。对话原文保存在 MySQL，请自行管理访问与保留期限（`ingest.purge_chat_logs`）。
 
 ## 远程重排（智谱 GLM Rerank）
 

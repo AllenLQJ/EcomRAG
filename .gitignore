@@ -33,3 +33,6 @@ data/images/**/*.tmp
 
 # 离线评估的独立虚拟环境
 backend/.venv-eval/
+
+# 商品图片原图（体积大，只入库 images-build 的产物 data/images）
+data/images_src/
