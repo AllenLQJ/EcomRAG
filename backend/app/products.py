@@ -7,13 +7,20 @@ import logging
 import re
 import threading
 from collections.abc import Mapping
+from contextvars import ContextVar
 from pathlib import Path
+from time import monotonic
 
 from app.schemas import ProductCard
 from ingest.loaders import resolve_data_path
 from ingest.product_metadata import ProductSourceIndex, parse_skus, source_skus
 
 logger = logging.getLogger(__name__)
+# 每次调用独立跟踪阶段，避免并发查询在共享 repo 上互相覆盖。
+_card_stage = ContextVar("product_cards_stage", default=None)
+_warning_lock = threading.Lock()
+_warning_times = {}
+_WARNING_INTERVAL_S = 60
 COLUMNS = ("sku_id", "name", "category", "specs", "image_main")
 SPEC_KEYS = {
     "无线耳机": ("佩戴方式", "关闭主动降噪单次续航", "单次音乐续航", "降噪能力", "续航说明"),
@@ -29,6 +36,36 @@ SPEC_KEYS = {
 COMMERCIAL = re.compile(r"价格|售价|单价|原价|优惠|促销|折扣|库存|现货|余量|售罄|[¥￥$€£]|\d\s*元|price|stock|inventory|USD|RMB|CNY", re.I)
 
 
+def log_product_cards_unavailable(exc, stage, *, log=logger):
+    # 不传异常对象、消息或 traceback；当前纯文本 formatter 也能显示全部安全字段。
+    exception_type = re.sub(r"[^a-zA-Z0-9_]", "_", type(exc).__name__)[:100]
+    mysql_error = any(cls.__module__.split(".")[0] in {"pymysql", "MySQLdb"}
+                      for cls in type(exc).__mro__)
+    mysql_errno = exc.args[0] if mysql_error and exc.args and type(exc.args[0]) is int else None
+    is_timeout = False
+    cause = exc
+    # PyMySQL 会把 socket.timeout 包装为 OperationalError；只检查异常链类型。
+    seen = set()
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        is_timeout = is_timeout or isinstance(cause, TimeoutError)
+        cause = cause.__cause__ if cause.__cause__ is not None else cause.__context__
+    fields = dict(exception_type=exception_type, mysql_errno=mysql_errno,
+                  is_timeout=is_timeout, stage=stage)
+    key = (exception_type, mysql_errno, is_timeout, stage)
+    with _warning_lock:
+        now = monotonic()
+        # 只保留当前窗口内的错误类别，消息与用户输入不参与限频键。
+        for old_key, last in list(_warning_times.items()):
+            if now - last >= _WARNING_INTERVAL_S:
+                del _warning_times[old_key]
+        if key in _warning_times:
+            return
+        _warning_times[key] = now
+    log.warning("product_cards_unavailable exception_type=%s mysql_errno=%s is_timeout=%s stage=%s",
+                exception_type, mysql_errno, is_timeout, stage, extra=fields)
+
+
 def safe_text(value, limit):
     return isinstance(value, str) and 0 < len(value.strip()) <= limit and not COMMERCIAL.search(value)
 
@@ -41,7 +78,10 @@ class ProductRepo:
         if not skus:
             return []
         connection = self.connection
+        stage = _card_stage.get()
         if connection is None:
+            if stage is not None:
+                stage["stage"] = "connect"
             if self.connection_factory is not None:
                 connection = self.connection_factory()
             else:
@@ -52,6 +92,8 @@ class ProductRepo:
                     password=settings.mysql_password.get_secret_value(), database=settings.mysql_database,
                     charset="utf8mb4", autocommit=True, connect_timeout=1, read_timeout=1, write_timeout=1)
         try:
+            if stage is not None:
+                stage["stage"] = "query"
             with connection.cursor() as cursor:
                 cursor.execute("SELECT " + ", ".join(COLUMNS) + " FROM products WHERE sku_id IN ("
                                + ", ".join(["%s"] * len(skus)) + ")", tuple(skus))
@@ -107,6 +149,8 @@ class ProductCards:
                            image_url=self._image_url(sku, row.get("image_main")))
 
     def for_sources(self, docs):
+        stage = {"stage": "source_lookup"}
+        token = _card_stage.set(stage)
         try:
             candidates = []
             hidden = set(self.settings.product_hidden_skus)
@@ -118,7 +162,9 @@ class ProductCards:
             candidates = candidates[:100]
             if not candidates:
                 return []
+            stage["stage"] = "query"
             rows = {row["sku_id"]: row for row in self.repo.fetch(candidates)}
+            stage["stage"] = "build_card"
             cards = []
             for sku in candidates:
                 card = self._card(rows[sku]) if sku in rows else None
@@ -127,7 +173,9 @@ class ProductCards:
                 if len(cards) == 3:
                     break
             return cards
-        except Exception:
+        except Exception as exc:
             # 卡片为可选增强；不回显数据库异常、凭据、业务文本。
-            logger.warning("product_cards_unavailable")
+            log_product_cards_unavailable(exc, stage["stage"])
             return []
+        finally:
+            _card_stage.reset(token)

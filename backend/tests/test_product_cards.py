@@ -1,9 +1,13 @@
+import asyncio
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import products as product_cards_module
 from app.config import Settings
 from app.contracts import FaqHit, RetrievedDoc, RouteDecision
 from app.faq.cache import FaqCache
@@ -21,6 +25,36 @@ from test_online_retrieval import FakeMilvus, hit
 
 # 与真实 SDK 一样由 dependency_error 识别，完全离线。
 MilvusError = type("MilvusException", (Exception,), {"__module__": "pymilvus.exceptions"})
+# 模拟驱动异常，保持测试不依赖可选 SDK 的导入。
+ProgrammingError = type("ProgrammingError", (Exception,), {"__module__": "pymysql.err"})
+OperationalError = type("OperationalError", (Exception,), {"__module__": "pymysql.err"})
+PRIVATE_ERROR = ("SELECT * FROM private_database.private_table WHERE sku='PRIVATE_INPUT'; "
+                 "host=PRIVATE_HOST user=PRIVATE_USER password=PRIVATE_PASSWORD")
+
+
+@pytest.fixture(autouse=True)
+def isolated_card_warning_limit(monkeypatch):
+    monkeypatch.setattr(product_cards_module, "_warning_times", {})
+
+
+def card_warnings(caplog):
+    return [record for record in caplog.records
+            if record.getMessage().startswith("product_cards_unavailable")]
+
+
+def assert_safe_card_warning(record, exception_type, mysql_errno, is_timeout, stage):
+    expected = dict(exception_type=exception_type, mysql_errno=mysql_errno,
+                    is_timeout=is_timeout, stage=stage)
+    assert record.levelno == logging.WARNING
+    for key, value in expected.items():
+        assert getattr(record, key) == value
+        assert f"{key}={value}" in record.getMessage()
+    assert record.exc_info is None and record.exc_text is None and record.stack_info is None
+    # 原始异常不能藏在 args、extra 或 traceback 中供其他 handler 读取。
+    captured = repr(record.__dict__)
+    for secret in ("SELECT", "private_database", "private_table", "PRIVATE_INPUT", "PRIVATE_HOST",
+                   "PRIVATE_USER", "PRIVATE_PASSWORD", "PRIVATE_OPTIONAL_ERROR"):
+        assert secret not in captured
 
 
 class SchemaMilvus(FakeMilvus):
@@ -138,6 +172,109 @@ def test_manifest_metadata_priority_and_failure_degrades(tmp_path, caplog):
     assert service.for_sources([doc(["qiguang-l1"])]) == []
     assert "product_cards_unavailable" in caplog.text
     assert "PRIVATE_DB_PASSWORD" not in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["connect", "query"])
+@pytest.mark.parametrize("error,errno,is_timeout", [
+    (ProgrammingError(1146, PRIVATE_ERROR), 1146, False),
+    (ProgrammingError("1146", PRIVATE_ERROR), None, False),
+    (ProgrammingError(True, PRIVATE_ERROR), None, False),
+    (TimeoutError(PRIVATE_ERROR), None, True),
+    (ValueError(1146, PRIVATE_ERROR), None, False),
+])
+def test_repo_failure_logs_safe_diagnostics(tmp_path, caplog, stage, error, errno, is_timeout):
+    connection = FakeConnection()
+
+    class Cursor(FakeCursor):
+        def execute(self, sql, params=None):
+            raise error
+
+    connection.cursor = lambda: Cursor(connection)
+    factory = Mock(side_effect=error) if stage == "connect" else Mock(return_value=connection)
+    service = ProductCards(Settings(_env_file=None), repo=ProductRepo(connection_factory=factory),
+                           images_root=tmp_path)
+    assert service.for_sources([doc(["qiguang-l1"])]) == []
+    assert connection.closed == (stage == "query")
+    assert len(card_warnings(caplog)) == 1
+    assert_safe_card_warning(card_warnings(caplog)[0], type(error).__name__, errno, is_timeout, stage)
+    assert product_cards_module._card_stage.get() is None
+
+
+@pytest.mark.parametrize("stage", ["source_lookup", "build_card"])
+def test_non_database_failure_stage(tmp_path, caplog, stage):
+    service, repo = cards(tmp_path, [product()])
+    if stage == "source_lookup":
+        service._index = Mock(side_effect=ValueError(PRIVATE_ERROR))
+        sources = [doc()]
+    else:
+        service._card = Mock(side_effect=ValueError(PRIVATE_ERROR))
+        sources = [doc(["qiguang-l1"])]
+    assert service.for_sources(sources) == []
+    assert len(card_warnings(caplog)) == 1
+    assert_safe_card_warning(card_warnings(caplog)[0], "ValueError", None, False, stage)
+    if stage == "source_lookup":
+        repo.fetch.assert_not_called()
+    assert product_cards_module._card_stage.get() is None
+
+
+def test_mysql_wrapped_socket_timeout(tmp_path, caplog):
+    service, repo = cards(tmp_path, [])
+
+    def fetch(skus):
+        try:
+            raise TimeoutError(PRIVATE_ERROR)
+        except TimeoutError:
+            raise OperationalError(2013, PRIVATE_ERROR) from None
+
+    repo.fetch.side_effect = fetch
+    assert service.for_sources([doc(["qiguang-l1"])]) == []
+    assert_safe_card_warning(card_warnings(caplog)[0], "OperationalError", 2013, True, "query")
+
+
+def test_card_warning_rate_limit_shared_between_instances(tmp_path, monkeypatch, caplog):
+    now = [100.0]
+    monkeypatch.setattr(product_cards_module, "monotonic", lambda: now[0])
+    first, repo1 = cards(tmp_path, [])
+    second, repo2 = cards(tmp_path, [])
+    repo1.fetch.side_effect = ProgrammingError(1146, PRIVATE_ERROR)
+    repo2.fetch.side_effect = ProgrammingError(1146, "a different private message")
+    sources = [doc(["qiguang-l1"])]
+    assert first.for_sources(sources) == second.for_sources(sources) == []
+    now[0] = 159.999
+    assert second.for_sources(sources) == []
+    assert len(card_warnings(caplog)) == 1
+    now[0] = 160.0
+    assert first.for_sources(sources) == second.for_sources(sources) == []
+    assert len(card_warnings(caplog)) == 2
+    # 限频只影响日志，每次仍尝试查询，故障恢复后可立即返回卡片。
+    repo1.fetch.side_effect = None
+    repo1.fetch.return_value = [product()]
+    assert first.for_sources(sources)[0].sku == "qiguang-l1"
+
+
+def test_card_warning_rate_limit_keeps_error_categories_separate(monkeypatch, caplog):
+    monkeypatch.setattr(product_cards_module, "monotonic", lambda: 100.0)
+    errors = [(ProgrammingError(1146, PRIVATE_ERROR), "query"),
+              (ProgrammingError(1045, PRIVATE_ERROR), "query"),
+              (ValueError(PRIVATE_ERROR), "query"),
+              (ProgrammingError(1146, PRIVATE_ERROR), "connect")]
+    wrapped = ProgrammingError(1146, PRIVATE_ERROR)
+    wrapped.__cause__ = TimeoutError(PRIVATE_ERROR)
+    errors.append((wrapped, "query"))
+    for error, stage in errors * 2:
+        product_cards_module.log_product_cards_unavailable(error, stage)
+    assert len(card_warnings(caplog)) == len(errors)
+
+
+def test_card_warning_rate_limit_is_thread_safe(monkeypatch, caplog):
+    monkeypatch.setattr(product_cards_module, "monotonic", lambda: 100.0)
+
+    def warn(_):
+        product_cards_module.log_product_cards_unavailable(ProgrammingError(1146, PRIVATE_ERROR), "query")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(warn, range(32)))
+    assert len(card_warnings(caplog)) == 1
 
 
 @pytest.mark.parametrize("mapping", [False, True])
@@ -309,14 +446,45 @@ def test_commercial_filter_remains_conservative_for_concatenated_prices(tmp_path
     assert service.for_sources([doc(["qiguang-l1"])]) == []
 
 
-def test_optional_card_callback_failure_preserves_rag_answer(app_factory, caplog):
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("error,errno,is_timeout", [
+    (TimeoutError("PRIVATE_OPTIONAL_ERROR"), None, True),
+    (ProgrammingError(1146, PRIVATE_ERROR), 1146, False),
+    (ValueError(PRIVATE_ERROR), None, False),
+])
+def test_optional_card_callback_failure_preserves_rag_answer(app_factory, caplog, stream, error, errno, is_timeout):
     app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
     services = app.state.services.knowledge()
-    services.product_cards = Mock(side_effect=TimeoutError("PRIVATE_OPTIONAL_ERROR"))
+    services.product_cards = Mock(side_effect=error)
     with TestClient(app) as api:
-        result = api.post("/api/v1/chat", json=dict(session_id="timeout", message="参数")).json()
-    assert result["route"] == "rag" and "products" not in result
-    assert "PRIVATE_OPTIONAL_ERROR" not in caplog.text
+        for i in range(2):
+            response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                                json=dict(session_id=f"callback-{i}", message="参数"))
+            assert response.status_code == 200
+            result = events(response.text)[-1][1] if stream else response.json()
+            assert result["route"] == "rag" and "products" not in result
+            assert result["answer"] == "说明[1]"
+    assert len(card_warnings(caplog)) == 1
+    assert_safe_card_warning(card_warnings(caplog)[0], type(error).__name__, errno, is_timeout, "product_cards")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_optional_card_deadline_preserves_answer(app_factory, caplog, stream):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False, product_cards_timeout_s=0.01)
+    services = app.state.services.knowledge()
+
+    async def slow_cards(docs):
+        await asyncio.Event().wait()
+
+    services.product_cards = slow_cards
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="card-deadline", message="参数"))
+    assert response.status_code == 200
+    result = events(response.text)[-1][1] if stream else response.json()
+    assert result["route"] == "rag" and result["answer"] == "说明[1]" and "products" not in result
+    assert len(card_warnings(caplog)) == 1
+    assert_safe_card_warning(card_warnings(caplog)[0], "TimeoutError", None, True, "product_cards")
 
 
 @pytest.mark.parametrize("stream", [False, True])

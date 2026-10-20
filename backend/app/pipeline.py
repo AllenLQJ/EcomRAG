@@ -11,6 +11,7 @@ from app.refusals import REFUSAL, SENSITIVE_REFUSAL
 from app.llm.strategies import build_queries
 from app.llm.answer_stream import forward_answer
 from app.llm.generator import clean_generated_answer, validate_citations
+from app.products import log_product_cards_unavailable
 from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 from app.schemas import ChatRequest, ChatResponse, Source
 from app.services import dependency_error, unavailable
@@ -323,6 +324,6 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
             try:
                 async with asyncio.timeout(min(settings.product_cards_timeout_s, remaining)):
                     result.products = await call(cards, cited_docs, executor=executor) or None
-            except Exception:
-                logger.warning("product_cards_unavailable")
+            except Exception as exc:
+                log_product_cards_unavailable(exc, "product_cards", log=logger)
     return result
