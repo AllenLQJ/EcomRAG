@@ -17,6 +17,8 @@ def isolated_log_dir(monkeypatch, tmp_path):
     config.get_settings.cache_clear()
     folder = tmp_path / "logs"
     monkeypatch.setenv("LOG_DIR", str(folder))
+    # 测试显式提供持久密钥；正式环境缺少密钥现在会拒绝启动。
+    monkeypatch.setenv("AUTH_SECRET", "offline-test-secret")
     previous_level = logging.getLogger().level
     yield folder
     # 避免处理器在下一个测试中继续向已结束测试的目录写入。

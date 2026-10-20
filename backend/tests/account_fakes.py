@@ -9,6 +9,7 @@ from app.auth import AccountService
 from app.config import Settings
 from app.contracts import AppError
 from app.main import create_app
+from app.message_limits import MAX_CONVERSATION_MESSAGES, bounded_message
 from app.quota import DailyQuota
 from chat_fakes import FakeServices
 
@@ -214,14 +215,17 @@ class MemoryRepo:
         self.messages.pop(cid, None)
 
     def append_message(self, user_id, cid, role, content, route=None, sources=None):
-        if self.save_fails:
-            raise RuntimeError("PRIVATE_QUESTION PRIVATE_ANSWER")
-        item = self.owned_conversation(user_id, cid)
-        self.messages[cid].append(dict(role=role, content=content[:4000], route=route,
-                                       sources=sources, created_at=self.stamp()))
-        if role == "user" and not item["title"]:
-            item["title"] = content[:20]
-        item["updated_at"] = self.stamp()
+        content, route, sources = bounded_message(content, route, sources)
+        with self.lock:
+            if self.save_fails:
+                raise RuntimeError("PRIVATE_QUESTION PRIVATE_ANSWER")
+            item = self.owned_conversation(user_id, cid)
+            self.messages[cid].append(dict(role=role, content=content, route=route,
+                                           sources=sources, created_at=self.stamp()))
+            del self.messages[cid][:-MAX_CONVERSATION_MESSAGES]
+            if role == "user" and not item["title"]:
+                item["title"] = content[:20]
+            item["updated_at"] = self.stamp()
 
 
 def build_account_app(**overrides):

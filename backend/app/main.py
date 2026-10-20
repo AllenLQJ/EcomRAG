@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException
 
 from app import config
 from app.account_api import account_router
-from app.auth import AccountService, GUEST_COOKIE, SESSION_COOKIE, set_cookie
+from app.auth import AccountService, GUEST_COOKIE, set_cookie
 from app.chat_log import ChatLog, ChatLogWriter, persist
 from app.contracts import (
     AppError,
@@ -82,11 +82,12 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                 settings.model_io_workers, settings.model_io_queue_size,
                 settings.rate_limit_io_workers, settings.rate_limit_io_max_in_flight,
                 settings.rate_limit_per_min, settings.rate_limit_ip_enabled)
+    # 在初始化其他资源之前拒绝缺失的正式环境签名密钥。
+    accounts = account_service if account_service is not None else AccountService(settings)
     chat_logs = ChatLogWriter(settings) if chat_log_writer is None else chat_log_writer
     owned = services is None
     services = Services(settings) if owned else services
     limiter = RateLimiter(settings)
-    accounts = account_service if account_service is not None else AccountService(settings)
     quota = daily_quota if daily_quota is not None else DailyQuota(settings)
 
     @asynccontextmanager
@@ -145,11 +146,15 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                          request.url.path == "/api/v1/conversations" or
                          request.url.path.startswith("/api/v1/conversations/"))
             origin = request.headers.get("origin")
-            if protected and request.method != "OPTIONS" and (
+            invalid_chat_origin = (
+                request.method == "POST" and request.url.path in {"/api/v1/chat", "/api/v1/chat/stream"} and
+                origin is not None and origin not in settings.cors_origins
+            )
+            if invalid_chat_origin or (protected and request.method != "OPTIONS" and (
                 (origin is not None and origin not in settings.cors_origins) or
                 (request.method in {"POST", "PATCH", "DELETE"} and
                  request.headers.get("x-requested-with") != "ecomrag")
-            ):
+            )):
                 response = error_response(request, FORBIDDEN, "请求来源校验失败", 403)
             else:
                 response = await call_next(request)
@@ -249,9 +254,8 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
     app.include_router(account_router(settings, accounts, quota))
 
     async def chat_context(payload, request):
-        request.state.private_chat = bool(request.cookies.get(SESSION_COOKIE))
         user = await accounts.current(request)
-        request.state.private_chat = request.state.private_chat or user is not None
+        request.state.private_chat = user is not None
         conversation_id = payload.conversation_id if user else None
         if conversation_id is not None:
             await accounts.call("owned_conversation", user["id"], conversation_id)
@@ -275,7 +279,7 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         async def after_chat(result):
             if conversation_id is not None:
                 await accounts.save(user["id"], conversation_id, "assistant", result.answer, result.route,
-                                    [source.model_dump() for source in result.sources])
+                                    (source.model_dump() for source in result.sources))
 
         return user, before_chat, after_chat
 

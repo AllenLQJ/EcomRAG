@@ -12,6 +12,7 @@ from app.account_repo import AccountRepo
 from app.account_store import AccountStore, SESSION_TTL, unavailable
 from app.contracts import AppError, INVALID_ARGUMENT, UNAUTHORIZED
 from app.executor import BoundedExecutor
+from app.message_limits import bounded_message
 
 logger = logging.getLogger(__name__)
 SESSION_COOKIE = "ecomrag_session"
@@ -24,7 +25,13 @@ WEAK_PASSWORDS = frozenset({
 })
 
 
+def validate_password_length(password):
+    if len(password) > 64:
+        raise AppError(INVALID_ARGUMENT, 400, "密码长度须为8–64位")
+
+
 def validate_registration(username, password):
+    validate_password_length(password)
     if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
         raise AppError(INVALID_ARGUMENT, 400, "用户名须为3–20位英文字母、数字或下划线")
     if not 8 <= len(password) <= 64:
@@ -38,6 +45,7 @@ def validate_registration(username, password):
 
 
 def hash_password(password, n=32768, *, salt=None):
+    validate_password_length(password)
     salt = secrets.token_bytes(16) if salt is None else salt
     value = hashlib.scrypt(password.encode(), salt=salt, n=n, r=8, p=1, dklen=32,
                            maxmem=max(64 * 1024 * 1024, 256 * n * 8))
@@ -45,6 +53,7 @@ def hash_password(password, n=32768, *, salt=None):
 
 
 def verify_password(password, encoded):
+    validate_password_length(password)
     try:
         scheme, n, r, p, salt, expected = encoded.split("$")
         n, r, p = int(n), int(r), int(p)
@@ -88,9 +97,11 @@ class AccountService:
         self.repo = repo if repo is not None else AccountRepo(settings)
         self.store = store if store is not None else AccountStore(settings)
         self.secret = settings.auth_secret.get_secret_value()
-        if not self.secret:
+        if not self.secret.strip():
+            if not settings.debug:
+                raise ValueError("非开发模式必须配置非空 AUTH_SECRET，所有 worker 必须共享同一密钥")
             self.secret = secrets.token_urlsafe(32)
-            logger.warning("AUTH_SECRET 未配置，重启后游客与会话将失效")
+            logger.warning("开发模式 AUTH_SECRET 未配置，重启后游客与会话将失效；随机密钥不支持多 worker")
         self.executor = BoundedExecutor(settings.auth_io_workers, settings.auth_io_max_in_flight, name="account-io")
         self._dummy, self._dummy_lock = None, threading.Lock()
 
@@ -138,6 +149,7 @@ class AccountService:
         return {"id": user["id"], "username": user["username"]} if user else None
 
     def _password_check(self, password, user):
+        validate_password_length(password)
         with self._dummy_lock:
             if self._dummy is None:
                 self._dummy = hash_password("dummy-comparison-value", self.settings.auth_scrypt_n)
@@ -146,6 +158,7 @@ class AccountService:
         return bool(user and user.get("status") == 1 and matches)
 
     def _register(self, username, password, ip, old_token):
+        validate_password_length(password)
         self.store.attempt(ip)
         validate_registration(username, password)
         try:
@@ -167,48 +180,54 @@ class AccountService:
         return self.public(user), token
 
     def _login(self, username, password, ip, old_token):
+        validate_password_length(password)
         self.store.attempt(ip)
         username = username.lower()
-        self.store.check_lock(username)
         try:
             self.store.client().ping()
         except self.store.cache._redis_errors:
             raise unavailable() from None
         user = self.repo.find_user(username)
+        if user is not None:
+            self.store.check_lock(user["id"])
         if not self._password_check(password, user):
-            self.store.login_failure(username)
+            # 不为不存在的用户名创建锁定；按不可复用的账号 id 隔离旧用户名计数。
+            if user is not None:
+                self.store.login_failure(user["id"])
             raise AppError(UNAUTHORIZED, 401, "用户名或密码错误")
         token = secrets.token_urlsafe(32)
         def issue():
             self.store.new_session(user["id"], token, old_token, signature=self.signature("session", token))
-            self.store.login_success(username)
+            self.store.login_success(user["id"])
         self.repo.issue_session(user["id"], issue)
         return self.public(user), token
 
     async def register(self, username, password, ip, old_token=None):
+        validate_password_length(password)
         return await self.executor.run(self._register, username, password, ip, old_token)
 
     async def login(self, username, password, ip, old_token=None):
+        validate_password_length(password)
         return await self.executor.run(self._login, username, password, ip, old_token)
 
     async def logout(self, token):
         await self.executor.run(self.store.remove_session, token)
 
     async def delete_account(self, user, password, ip):
+        validate_password_length(password)
         def remove():
             self.store.attempt(ip)
-            self.store.check_lock(user["username"].lower())
+            self.store.check_lock(user["id"])
             if not self._password_check(password, user):
-                self.store.login_failure(user["username"].lower())
+                self.store.login_failure(user["id"])
                 raise AppError(UNAUTHORIZED, 401, "用户名或密码错误")
             self.repo.delete_user(user["id"], lambda: self.store.revoke_all(user["id"]))
         await self.executor.run(remove)
 
     async def save(self, user_id, conversation_id, role, content, route=None, sources=None):
         try:
-            compact = ([{key: item[key] for key in ("index", "doc_id", "title", "snippet", "score")}
-                        for item in sources] if sources is not None else None)
-            await self.call("append_message", user_id, conversation_id, role, content[:4000], route, compact)
+            content, route, compact = bounded_message(content, route, sources)
+            await self.call("append_message", user_id, conversation_id, role, content, route, compact)
         except Exception:
             logger.warning("服务器端历史保存失败，已跳过")
 

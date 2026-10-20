@@ -1,18 +1,24 @@
 """账号及历史 HTTP 接口：成功体保持现有的直接 JSON 风格。"""
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from app.auth import SESSION_COOKIE, clear_cookie, set_cookie
+from app.auth import SESSION_COOKIE, clear_cookie, set_cookie, validate_password_length
 from app.rate_limit import client_ip
 
 
-class Credentials(BaseModel):
-    username: str = Field(max_length=4096)
-    password: SecretStr = Field(repr=False, max_length=4096)
-
-
 class PasswordBody(BaseModel):
-    password: SecretStr = Field(repr=False, max_length=4096)
+    password: SecretStr = Field(repr=False, max_length=64)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def limit_password(cls, value):
+        if isinstance(value, (str, SecretStr)):
+            validate_password_length(value)
+        return value
+
+
+class Credentials(PasswordBody):
+    username: str = Field(max_length=4096)
 
 
 class ConversationCreate(BaseModel):

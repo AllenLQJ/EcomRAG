@@ -72,8 +72,9 @@ class AccountStore:
             raw = client.get("auth:session:" + digest(token))
             return int(raw) if raw is not None else None
         except self.cache._redis_errors:
-            # 游客请求不依赖 Redis；已有会话不能在故障时被误当游客。
-            raise unavailable() from None
+            # 无法确认会话时不授予账号身份；游客聊天仍受游客/IP 配额约束。
+            self.cache._warn("会话 Redis 不可用，降级为游客")
+            return None
         except (ValueError, TypeError):
             return None
 
@@ -173,20 +174,20 @@ class AccountStore:
             self._failures[key] = (count, end)
         return max(1, math.ceil(end - now)) if count >= 5 and math.isfinite(end) else 0
 
-    def check_lock(self, username):
+    def check_lock(self, identity):
         with self._lock:
-            retry = self._failure_state("auth:failure:" + digest(username), increment=False)
+            retry = self._failure_state("auth:failure:user:" + digest(identity), increment=False)
             if retry:
                 raise throttled(retry)
 
-    def login_failure(self, username):
+    def login_failure(self, identity):
         with self._lock:
-            retry = self._failure_state("auth:failure:" + digest(username), increment=True)
+            retry = self._failure_state("auth:failure:user:" + digest(identity), increment=True)
             if retry:
                 raise throttled(retry)
 
-    def login_success(self, username):
-        key = "auth:failure:" + digest(username)
+    def login_success(self, identity):
+        key = "auth:failure:user:" + digest(identity)
         with self._lock:
             try:
                 self.client().delete(key)

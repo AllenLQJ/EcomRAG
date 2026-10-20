@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.chat_log import connect_mysql
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, INVALID_ARGUMENT, NOT_FOUND, UNAUTHORIZED, USERNAME_CONFLICT
+from app.message_limits import MAX_CONVERSATION_MESSAGES, bounded_message, json_bytes
 
 
 def iso(value):
@@ -158,11 +159,20 @@ class AccountRepo:
             cur.execute("DELETE FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id))
 
     def append_message(self, user_id, conversation_id, role, content, route=None, sources=None):
+        content, route, sources = bounded_message(content, route, sources)
         with self.transaction() as cur:
             item = self.require_conversation(cur, user_id, conversation_id, lock=True)
             cur.execute("INSERT INTO messages (conversation_id,role,content,route,sources) VALUES (%s,%s,%s,%s,%s)",
-                        (conversation_id, role, content[:4000], route,
-                         json.dumps(sources, ensure_ascii=False) if sources is not None else None))
+                        (conversation_id, role, content, route,
+                         json_bytes(sources).decode("utf-8") if sources is not None else None))
             title = content[:20] if role == "user" and not item["title"] else item["title"]
             cur.execute("UPDATE conversations SET title=%s, updated_at=UTC_TIMESTAMP(6) WHERE id=%s AND user_id=%s",
                         (title, conversation_id, user_id))
+            # 在同一对话行锁与事务内插入并裁剪；按时间/id 保留最新 200 条。
+            cur.execute("SELECT id, created_at FROM messages WHERE conversation_id=%s "
+                        "ORDER BY created_at DESC, id DESC LIMIT 1 OFFSET %s",
+                        (conversation_id, MAX_CONVERSATION_MESSAGES - 1))
+            boundary = self.row(cur, cur.fetchone())
+            if boundary is not None:
+                cur.execute("DELETE FROM messages WHERE conversation_id=%s AND (created_at,id)<(%s,%s)",
+                            (conversation_id, boundary["created_at"], boundary["id"]))

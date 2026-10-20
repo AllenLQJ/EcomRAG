@@ -1,0 +1,57 @@
+"""服务器历史的写入预算；在序列化前限制每个字段和引用条数。"""
+import json
+import math
+from collections.abc import Mapping
+from itertools import islice
+
+from app.contracts import AppError, INVALID_ARGUMENT
+
+MAX_CONTENT_CHARS = 4000
+MAX_SOURCES = 8
+MAX_SOURCES_BYTES = 8 * 1024
+MAX_MESSAGE_BYTES = 32 * 1024
+MAX_CONVERSATION_MESSAGES = 200
+
+
+def json_bytes(value):
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+
+
+def clipped(value, length):
+    # 无效的孤立代理字符也不能穿透到 MySQL 的 UTF-8 编码器。
+    return value[:length].encode("utf-8", errors="replace").decode("utf-8") if isinstance(value, str) else ""
+
+
+def bounded_sources(sources):
+    if sources is None:
+        return None
+    result = []
+    # 不完整遍历超长 sources，更不先把它整体序列化。
+    for item in islice(sources, MAX_SOURCES):
+        if not isinstance(item, Mapping):
+            continue
+        index, score = item.get("index"), item.get("score")
+        if type(index) is not int or not 0 <= index <= 2147483647 or type(score) not in {int, float}:
+            continue
+        try:
+            score = float(score)
+        except OverflowError:
+            continue
+        if not math.isfinite(score):
+            continue
+        compact = dict(index=index, doc_id=clipped(item.get("doc_id"), 128),
+                       title=clipped(item.get("title"), 200), snippet=clipped(item.get("snippet"), 500),
+                       score=score)
+        if len(json_bytes(result + [compact])) > MAX_SOURCES_BYTES:
+            break
+        result.append(compact)
+    return result
+
+
+def bounded_message(content, route=None, sources=None):
+    content, route = clipped(content, MAX_CONTENT_CHARS), clipped(route, 16) if route is not None else None
+    sources = bounded_sources(sources)
+    # 连 JSON 转义后的体积也受限；DB 中的原始 UTF-8 正文只会更小。
+    if len(json_bytes(dict(role="assistant", content=content, route=route, sources=sources))) > MAX_MESSAGE_BYTES:
+        raise AppError(INVALID_ARGUMENT, 400, "消息体积超出上限")
+    return content, route, sources

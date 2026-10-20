@@ -189,13 +189,18 @@ def test_sanitized_validation_failure_and_sessions_never_enter_logs(account_fact
         assert PASSWORD not in failed.text + caplog.text and token not in failed.text + caplog.text
 
 
-def test_valid_session_redis_failure_is_not_silently_guest(account_factory):
+def test_valid_session_redis_failure_falls_back_to_guest_and_history_stays_private(account_factory):
     app, _, redis, _ = account_factory()
     with TestClient(app) as api:
         register(api)
         redis.down = True
-        for response in (api.get("/api/v1/auth/me"), api.post("/api/v1/auth/logout", headers=HEADERS)):
-            assert response.status_code == 503 and response.json()["code"] == 50301
+        me = api.get("/api/v1/auth/me")
+        assert me.status_code == 200 and me.json()["user"] is None
+        assert me.json()["quota"]["role"] == "guest"
+        assert api.get("/api/v1/conversations").status_code == 401
+        # 撤销会话仍需成功写 Redis，不能假装已在服务端登出。
+        logout = api.post("/api/v1/auth/logout", headers=HEADERS)
+        assert logout.status_code == 503 and logout.json()["code"] == 50301
 
 
 def test_new_secret_invalidates_guest_and_sessions(account_factory):
@@ -223,7 +228,7 @@ def test_config_scrypt_bounds_and_missing_secret_warning(account_factory, caplog
         with pytest.raises(ValueError):
             Settings(_env_file=None, auth_scrypt_n=value)
     assert Settings(_env_file=None, auth_scrypt_n=65536).auth_scrypt_n == 65536
-    app, _, _, _ = account_factory(auth_secret="")
+    app, _, _, _ = account_factory(auth_secret="", debug=True)
     with TestClient(app):
         assert app.state.accounts.secret
     assert "重启后游客与会话将失效" in caplog.text
