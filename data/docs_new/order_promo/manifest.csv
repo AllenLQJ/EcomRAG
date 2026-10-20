@@ -1,5 +1,5 @@
 file,title,category,facts,skus
-payment_status_guide.md,灵码订单状态逐项辨认与自动确认收货,payment,PAY-01;PAY-04;ORD-02;ORD-03;ORD-04;DEL-06;DEL-08;MEM-02;PRD-01,
+payment_status_guide.md,灵码订单状态逐项辨认与自动确认收货,payment,PAY-01;ORD-02;ORD-03;ORD-04;DEL-06;DEL-08;MEM-02,
 payment_purchase_receipt_flow.md,灵码从下单到收货的交接核对流程,payment,PRD-01;DEL-01;DEL-02;DEL-03;DEL-04;DEL-05;DEL-06;DEL-08;PAY-01;PAY-02;PAY-04;ORD-03;TRK-03;RET-01;RET-07,
 payment_failure_checklist.md,灵码支付失败后的排查顺序,payment,PAY-01;PAY-02;PAY-03;PAY-04;PRD-01;SEC-01,
 payment_duplicate_charge_flow.md,灵码疑似重复扣款的账单对照方法,payment,PAY-01;PAY-03;PAY-04;SEC-01,

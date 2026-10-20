@@ -1,7 +1,7 @@
 question,source_file,facts
 注册灵码账号要绑手机号吗，用户名有什么限制？,account_register_login.md,ACC-01
 访客的提问次数用完了，还能继续问吗？,account_guest_and_quota.md,QUO-01;QUO-02;QUO-03
-答案直接命中了常见问题，也会扣提问次数吗？,account_guest_and_quota.md,QUO-02
+答案直接命中了常见问题，也会扣提问次数吗？,account_guest_and_quota.md,QUO-01;QUO-02
 换了设备还能看到之前聊过的内容吗？,account_history.md,HIS-01
 密码忘了，客服能帮我重置吗？,account_password_and_deletion.md,ACC-03;HIS-01
 我的聊天别人能看见吗，想删掉该怎么做？,account_privacy.md,PRV-01;HIS-02;ACC-04
