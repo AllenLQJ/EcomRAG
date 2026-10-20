@@ -9,6 +9,7 @@ import os
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from time import perf_counter
 
 from eval.ragas_adapter import not_applicable_category, to_sample
@@ -16,6 +17,38 @@ from eval.ragas_backend import EvaluationConfigurationError, EvaluationDependenc
 from eval.reports import DENOMINATOR_RULE, redact, safe_path, secret_safe_logs, summarize, write_report
 
 METRICS = ("faithfulness", "response_relevancy", "context_precision", "context_recall")
+# Judge 配置允许写在 backend/.env 中，但只读取下面这些白名单名字；
+# LLM_API_KEY 等线上密钥和其他任何变量一律不读取、不返回。
+JUDGE_ENV_NAMES = ("JUDGE_API_KEY", "JUDGE_MODEL", "JUDGE_BASE_URL",
+                   "JUDGE_EMBEDDING_MODEL", "JUDGE_EMBEDDING_BASE_URL", "JUDGE_EXTRA_BODY")
+# glm-* 模型默认关闭思考模式：思考内容会占用输出配额，导致 Judge 的 JSON 回答被截断、解析失败，并增加耗时与费用。
+GLM_DEFAULT_EXTRA_BODY = {"thinking": {"type": "disabled"}}
+JUDGE_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
+
+def load_judge_env(path=None):
+    """只解析 .env 里 JUDGE_* 白名单变量；文件不存在时返回空字典。"""
+    try:
+        text = Path(JUDGE_ENV_FILE if path is None else path).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if name not in JUDGE_ENV_NAMES:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        values[name] = value
+    return values
 
 
 @dataclass(frozen=True)
@@ -28,6 +61,7 @@ class ScoreConfig:
     timeout_s: float = 60
     embedding_model: str | None = None
     embedding_base_url: str | None = None
+    judge_extra_body: dict | None = None
     api_key: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self):
@@ -35,6 +69,20 @@ class ScoreConfig:
             raise ValueError("max_samples 和 timeout_s 必须为正数")
         if not self.metrics or len(set(self.metrics)) != len(self.metrics) or set(self.metrics) - set(METRICS):
             raise ValueError("metrics 必须是支持的非重复指标名")
+
+
+def resolve_extra_body(raw, model):
+    """JUDGE_EXTRA_BODY 为 JSON 对象；未设置时 glm-* 模型默认关闭思考，其他模型不附加参数。"""
+    raw = (raw or "").strip()
+    if raw:
+        try:
+            value = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        except ValueError:
+            raise ValueError("JUDGE_EXTRA_BODY 必须是合法的 JSON 对象；写 {} 表示不附加任何参数") from None
+        if not isinstance(value, dict):
+            raise ValueError("JUDGE_EXTRA_BODY 必须是 JSON 对象，不能是数组、字符串或 null")
+        return value
+    return dict(GLM_DEFAULT_EXTRA_BODY) if str(model).lower().startswith("glm-") else None
 
 
 def settings_keys(settings):
@@ -183,8 +231,9 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
     score_parser = commands.add_parser("score")
     score_parser.add_argument("--in", dest="input_file", required=True)
     score_parser.add_argument("--out", required=True)
+    # 三项都可省略：依次回落到环境变量、backend/.env 中的 JUDGE_MODEL / JUDGE_BASE_URL / JUDGE_API_KEY。
     for option in ("judge-model", "judge-base-url", "judge-key-env"):
-        score_parser.add_argument("--" + option, required=True)
+        score_parser.add_argument("--" + option)
     score_parser.add_argument("--max-samples", type=int, default=50)
     score_parser.add_argument("--metrics", default="faithfulness,response_relevancy")
     score_parser.add_argument("--timeout-s", type=float, default=60)
@@ -195,7 +244,18 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
     try:
         # 在路径/配置校验前取得指定 key，确保这些错误的原因也可脱敏。
         if args.command == "score":
-            key = os.environ.get(args.judge_key_env, "")
+            file_values = load_judge_env()
+
+            def pick(name, cli_value=None):
+                return (cli_value or os.environ.get(name) or file_values.get(name) or "").strip()
+
+            key_env = args.judge_key_env or "JUDGE_API_KEY"
+            # 自定义变量名只读环境变量；只有白名单名字才允许回落到 .env 文件。
+            key = os.environ.get(key_env, "") or (file_values.get(key_env, "") if key_env in JUDGE_ENV_NAMES else "")
+            judge_model, judge_base_url = pick("JUDGE_MODEL", args.judge_model), pick("JUDGE_BASE_URL", args.judge_base_url)
+            embedding_model = pick("JUDGE_EMBEDDING_MODEL", args.embedding_model) or None
+            embedding_base_url = pick("JUDGE_EMBEDDING_BASE_URL", args.embedding_base_url) or None
+            extra_body = resolve_extra_body(pick("JUDGE_EXTRA_BODY"), judge_model)
             secrets = (key,)
         elif settings is not None:
             secrets = settings_keys(settings)
@@ -224,11 +284,15 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
             write_report(asyncio.run(run()), out, secrets=settings_keys(settings))
         else:
             if not key.strip():
-                raise ValueError("指定的 Judge key 环境变量为空；不会读取 .env 文件")
-            config = ScoreConfig(args.judge_model, args.judge_base_url, args.judge_key_env,
+                raise ValueError("Judge key 环境变量为空：请设置该环境变量，或在 backend/.env 中写入 JUDGE_API_KEY")
+            if not judge_model or not judge_base_url:
+                raise ValueError("缺少 Judge 模型或地址：请传 --judge-model / --judge-base-url，"
+                                 "或设置 JUDGE_MODEL / JUDGE_BASE_URL（环境变量或 backend/.env）")
+            config = ScoreConfig(judge_model, judge_base_url, key_env,
                                  max_samples=args.max_samples, metrics=tuple(args.metrics.split(",")),
-                                 timeout_s=args.timeout_s, embedding_model=args.embedding_model,
-                                 embedding_base_url=args.embedding_base_url, api_key=key)
+                                 timeout_s=args.timeout_s, embedding_model=embedding_model,
+                                 embedding_base_url=embedding_base_url, judge_extra_body=extra_body,
+                                 api_key=key)
             collection = json.loads(safe_path(args.input_file).read_text(encoding="utf-8"))
             if collection.get("phase") != "collect" or collection.get("schema_version") != 1:
                 raise ValueError("score 需要 schema_version=1 的 collect 文件")

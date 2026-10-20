@@ -323,3 +323,94 @@ def test_empty_report_null_statistics_and_environment_paths_blocked(tmp_path):
     for name in (".env", ".env.example", ".env.local"):
         with pytest.raises(ValueError, match="禁止读写"):
             safe_path(tmp_path / name)
+
+
+def test_load_judge_env_reads_only_whitelisted_names(tmp_path):
+    env = tmp_path / "env-sample"
+    env.write_text("\n".join([
+        "# 注释行", "LLM_API_KEY=sk-llm-must-not-leak", "export JUDGE_API_KEY=\"sk-judge-quoted\"",
+        "JUDGE_MODEL=glm-5.3-flash  # 行尾注释", "JUDGE_BASE_URL='https://judge.test/v1'",
+        "OTHER_SECRET=abc", "JUDGE_UNKNOWN=x", "没有等号的行",
+    ]), encoding="utf-8")
+    values = ragas_eval.load_judge_env(env)
+    assert values == {"JUDGE_API_KEY": "sk-judge-quoted", "JUDGE_MODEL": "glm-5.3-flash",
+                      "JUDGE_BASE_URL": "https://judge.test/v1"}
+    assert "sk-llm-must-not-leak" not in json.dumps(values)
+    assert ragas_eval.load_judge_env(tmp_path / "missing") == {}
+
+
+def test_score_cli_takes_judge_settings_from_env_file(tmp_path, monkeypatch, capsys):
+    env = tmp_path / "env-sample"
+    env.write_text("LLM_API_KEY=sk-llm-must-not-leak\nJUDGE_API_KEY=sk-judge-from-file\n"
+                   "JUDGE_MODEL=glm-5.3-flash\nJUDGE_BASE_URL=https://judge.test/v1\n", encoding="utf-8")
+    monkeypatch.setattr(ragas_eval, "JUDGE_ENV_FILE", env)
+    for name in ragas_eval.JUDGE_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    path, out = tmp_path / "collect.json", tmp_path / "score.json"
+    path.write_text(json.dumps(collection([rag_case()])), encoding="utf-8")
+    assert ragas_eval.main(["score", "--in", str(path), "--out", str(out), "--metrics", "faithfulness"],
+                           scorer=Mock(return_value=0.9)) == 0
+    report = out.read_text(encoding="utf-8")
+    assert "sk-judge-from-file" not in report and "sk-llm-must-not-leak" not in report
+    assert "sk-judge-from-file" not in capsys.readouterr().out
+
+
+def test_custom_key_env_never_falls_back_to_non_judge_names_in_env_file(tmp_path, monkeypatch, capsys):
+    env = tmp_path / "env-sample"
+    env.write_text("LLM_API_KEY=sk-llm-must-not-leak\n", encoding="utf-8")
+    monkeypatch.setattr(ragas_eval, "JUDGE_ENV_FILE", env)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    path, out = tmp_path / "collect.json", tmp_path / "score.json"
+    path.write_text(json.dumps(collection([rag_case()])), encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        ragas_eval.main(["score", "--in", str(path), "--out", str(out), "--judge-model", "m",
+                         "--judge-base-url", "https://judge.test/v1", "--judge-key-env", "LLM_API_KEY"])
+    text = capsys.readouterr().err
+    assert caught.value.code == 2 and "Judge key 环境变量为空" in text and "sk-llm-must-not-leak" not in text
+
+
+def _score_config_seen(tmp_path, monkeypatch, model, extra_env=None):
+    seen = {}
+    original = ragas_eval.score
+
+    def spy(coll, cfg, **kwargs):
+        seen["config"] = cfg
+        return original(coll, cfg, **kwargs)
+
+    monkeypatch.setattr(ragas_eval, "score", spy)
+    monkeypatch.setattr(ragas_eval, "JUDGE_ENV_FILE", tmp_path / "missing-env-file")
+    monkeypatch.setenv("TEST_JUDGE_KEY", "sk-fake-extra-body-key")
+    monkeypatch.delenv("JUDGE_EXTRA_BODY", raising=False)
+    for name, value in (extra_env or {}).items():
+        monkeypatch.setenv(name, value)
+    path, out = tmp_path / "collect.json", tmp_path / "score.json"
+    path.write_text(json.dumps(collection([rag_case()])), encoding="utf-8")
+    code = ragas_eval.main(["score", "--in", str(path), "--out", str(out), "--judge-model", model,
+                            "--judge-base-url", "https://judge.test/v1", "--judge-key-env", "TEST_JUDGE_KEY",
+                            "--metrics", "faithfulness"], scorer=Mock(return_value=0.9))
+    return code, seen["config"]
+
+
+def test_glm_judge_defaults_to_thinking_disabled(tmp_path, monkeypatch):
+    code, cfg = _score_config_seen(tmp_path, monkeypatch, "glm-5.3-flash")
+    assert code == 0 and cfg.judge_extra_body == {"thinking": {"type": "disabled"}}
+
+
+def test_non_glm_judge_adds_no_extra_body_by_default(tmp_path, monkeypatch):
+    code, cfg = _score_config_seen(tmp_path, monkeypatch, "other-judge-model")
+    assert code == 0 and cfg.judge_extra_body is None
+
+
+def test_explicit_extra_body_overrides_glm_default(tmp_path, monkeypatch):
+    code, cfg = _score_config_seen(tmp_path, monkeypatch, "glm-5.3-flash",
+                                   {"JUDGE_EXTRA_BODY": '{"thinking": {"type": "enabled"}}'})
+    assert code == 0 and cfg.judge_extra_body == {"thinking": {"type": "enabled"}}
+    code, cfg = _score_config_seen(tmp_path, monkeypatch, "glm-5.3-flash", {"JUDGE_EXTRA_BODY": "{}"})
+    assert code == 0 and cfg.judge_extra_body == {}
+
+
+@pytest.mark.parametrize("raw", ["not json", "[1]", '"text"', "null", '{"x": NaN}'])
+def test_invalid_extra_body_is_rejected_with_reason(tmp_path, monkeypatch, capsys, raw):
+    with pytest.raises(SystemExit) as caught:
+        _score_config_seen(tmp_path, monkeypatch, "glm-5.3-flash", {"JUDGE_EXTRA_BODY": raw})
+    assert caught.value.code == 2 and "JUDGE_EXTRA_BODY" in capsys.readouterr().err

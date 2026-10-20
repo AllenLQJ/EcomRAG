@@ -32,7 +32,8 @@ def make_scorer(config, *, judge=None, embeddings=None):
     if judge is None:
         judge = LangchainLLMWrapper(ChatOpenAI(
             model=config.judge_model, base_url=config.judge_base_url, api_key=config.api_key,
-            temperature=0, timeout=config.timeout_s, max_retries=0))
+            temperature=0, timeout=config.timeout_s, max_retries=0,
+            extra_body=getattr(config, "judge_extra_body", None) or None))
     if "response_relevancy" in config.metrics and embeddings is None:
         if not config.embedding_model or not config.embedding_base_url:
             raise EvaluationConfigurationError(
