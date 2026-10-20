@@ -1,4 +1,42 @@
 """唯一 RAGAS 版本适配点：只使用公开 API，安装真实版本后需核对这里。"""
+from dataclasses import replace
+
+from eval.judge_diagnostics import (
+    EmptyJudgeResponseError, JudgeCallError, TruncatedJudgeResponseError, diagnose,
+)
+
+
+class ResponseDiagnostics:
+    """每次 evaluate 独享的回调状态；从不保存输出文本或 SDK 对象。"""
+    def __init__(self):
+        self.truncated = False
+        self.empty = False
+
+    def on_llm_end(self, response, **kwargs):
+        self.empty |= not response.generations or not any(response.generations)
+        for generations in response.generations:
+            for generation in generations:
+                message = getattr(generation, "message", None)
+                metadata = getattr(message, "response_metadata", {}) or {}
+                info = getattr(generation, "generation_info", {}) or {}
+                self.truncated |= (info.get("finish_reason") or metadata.get("finish_reason")) == "length"
+                self.empty |= (not getattr(generation, "text", "").strip()
+                               and not getattr(message, "tool_calls", None))
+
+    def failure(self, exc=None):
+        if self.truncated:
+            result = diagnose(TruncatedJudgeResponseError())
+        elif self.empty:
+            result = diagnose(EmptyJudgeResponseError())
+        else:
+            return diagnose(exc) if exc is not None else None
+        result["is_empty_response"] = self.empty
+        if exc is not None:
+            original = diagnose(exc)
+            result.update(exception_type=original["exception_type"], http_status=original["http_status"],
+                          provider_error_code=original["provider_error_code"],
+                          is_parse_error=original["is_parse_error"], is_timeout=original["is_timeout"])
+        return result
 
 
 class EvaluationDependencyError(RuntimeError):
@@ -25,15 +63,18 @@ def make_scorer(config, *, judge=None, embeddings=None):
         )
         from ragas.run_config import RunConfig
         from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+        from langchain_core.callbacks import BaseCallbackHandler
     except ImportError:
         raise EvaluationDependencyError("需先安装评估依赖（独立评估环境，见 backend/requirements-eval.txt 与 docs/评估体系与指标解释.md）；"
                                         "再核对 eval/ragas_backend.py 与已安装 RAGAS 的公开 API。") from None
 
-    if judge is None:
+    automatic_judge = judge is None
+    if automatic_judge:
         judge = LangchainLLMWrapper(ChatOpenAI(
             model=config.judge_model, base_url=config.judge_base_url, api_key=config.api_key,
             temperature=0, timeout=config.timeout_s, max_retries=0,
-            extra_body=getattr(config, "judge_extra_body", None) or None))
+            max_tokens=config.max_tokens,
+            extra_body=getattr(config, "judge_extra_body", None)))
     if "response_relevancy" in config.metrics and embeddings is None:
         if not config.embedding_model or not config.embedding_base_url:
             raise EvaluationConfigurationError(
@@ -45,13 +86,23 @@ def make_scorer(config, *, judge=None, embeddings=None):
                "context_precision": LLMContextPrecisionWithReference, "context_recall": LLMContextRecall}
 
     def score(sample, metric):
+        class Observer(ResponseDiagnostics, BaseCallbackHandler):
+            pass
+
+        observer = Observer()
         options = {"llm": judge}
         if metric == "response_relevancy":
             options["embeddings"] = embeddings
-        result = evaluate(
-            EvaluationDataset.from_list([sample]), metrics=[classes[metric](**options)],
-            raise_exceptions=True, show_progress=False,
-            run_config=RunConfig(timeout=config.timeout_s, max_retries=0))
+        try:
+            result = evaluate(
+                EvaluationDataset.from_list([sample]), metrics=[classes[metric](**options)],
+                callbacks=[observer], raise_exceptions=True, show_progress=False,
+                run_config=RunConfig(timeout=config.timeout_s, max_retries=0, max_workers=1))
+        except Exception as exc:
+            raise JudgeCallError(observer.failure(exc)) from None
+        failure = observer.failure()
+        if failure:
+            raise JudgeCallError(failure)
         # 单样本、单指标，避免依赖版本之间变化的结果列名。
         values = list(result.scores[0].values())
         usage = {}
@@ -67,4 +118,8 @@ def make_scorer(config, *, judge=None, embeddings=None):
         return {"value": values[0] if len(values) == 1 else None,
                 "reason": "ragas_metric_result", "usage": usage}
 
+    # 每个评分任务独立切换配置，避免并发下修改共享 Judge 的请求参数。
+    if automatic_judge:
+        score.with_extra_body = lambda body: make_scorer(replace(config, judge_extra_body=body),
+                                                        embeddings=embeddings)
     return score

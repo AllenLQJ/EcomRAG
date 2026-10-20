@@ -16,6 +16,12 @@ from eval.ragas_backend import EvaluationConfigurationError, EvaluationDependenc
 from eval.reports import safe_path, secret_safe_logs, write_report
 
 
+@pytest.fixture(autouse=True)
+def no_real_judge_env_file(monkeypatch, tmp_path):
+    # CLI 测试只用进程环境或下文显式创建的 env-sample，绝不读取真实 .env*。
+    monkeypatch.setattr(ragas_eval, "JUDGE_ENV_FILE", tmp_path / "missing-judge-config")
+
+
 def rag_case(index=0, **changes):
     case = {"id": index, "question": f"问题{index}", "answer": "回答", "reference": "参考",
             "route": "rag", "scenario": "product", "risk": "normal",
@@ -32,6 +38,7 @@ def collection(cases):
 def config(**changes):
     return ragas_eval.ScoreConfig(**{**dict(judge_model="glm-5.3-flash", judge_base_url="https://judge.test/v1",
                                            judge_key_env="TEST_JUDGE_KEY", api_key="sk-fake-test-key",
+                                           max_retries=0, max_workers=1,
                                            metrics=("faithfulness",)), **changes})
 
 
@@ -211,6 +218,10 @@ def test_log_filters_removed_on_exception():
     ([], "", "Judge key 环境变量为空"),
     (["--max-samples", "0"], "sk-fake-error-key", "max_samples 和 timeout_s 必须为正数"),
     (["--timeout-s", "nan"], "sk-fake-error-key", "max_samples 和 timeout_s 必须为正数"),
+    (["--max-workers", "0"], "sk-fake-error-key", "max_workers 和 max_tokens 必须为正整数"),
+    (["--max-tokens", "0"], "sk-fake-error-key", "max_workers 和 max_tokens 必须为正整数"),
+    (["--max-retries", "-1"], "sk-fake-error-key", "max_retries 必须非负"),
+    (["--retry-backoff-s", "nan"], "sk-fake-error-key", "retry_backoff_s 必须是"),
     (["--metrics", "unknown"], "sk-fake-error-key", "metrics 必须是支持的非重复指标名"),
     (["--out", ".env.report"], "sk-fake-error-key", "评估禁止读写 .env* 文件"),
     (["--in", ".env.input"], "sk-fake-error-key", "评估禁止读写 .env* 文件"),
@@ -391,9 +402,9 @@ def _score_config_seen(tmp_path, monkeypatch, model, extra_env=None):
     return code, seen["config"]
 
 
-def test_glm_judge_defaults_to_thinking_disabled(tmp_path, monkeypatch):
+def test_glm_judge_defaults_to_no_extra_parameters(tmp_path, monkeypatch):
     code, cfg = _score_config_seen(tmp_path, monkeypatch, "glm-5.3-flash")
-    assert code == 0 and cfg.judge_extra_body == {"thinking": {"type": "disabled"}}
+    assert code == 0 and cfg.judge_extra_body is None
 
 
 def test_non_glm_judge_adds_no_extra_body_by_default(tmp_path, monkeypatch):

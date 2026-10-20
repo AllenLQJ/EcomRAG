@@ -133,11 +133,22 @@ def summarize(cases, metrics):
         "not_applicable_by_category": dict(Counter(not_applicable_category(case) for case in cases
                                                   if case["status"] == "not_applicable")),
         "metrics": metric_statistics(cases, metrics), "groups": groups,
+        "failure_categories": dict(Counter(
+            entry.get("diagnostics", {}).get("category", entry["reason"])
+            for case in cases for entry in case["scores"].values() if entry["status"] in {"error", "invalid"})),
+        "failure_categories_by_metric": {
+            metric: dict(Counter(case["scores"][metric].get("diagnostics", {}).get(
+                "category", case["scores"][metric]["reason"])
+                for case in cases if case["scores"][metric]["status"] in {"error", "invalid"}))
+            for metric in metrics},
+        "attempt_failure_categories": dict(Counter(
+            failure["category"] for entry in usage_entries for failure in entry.get("attempt_failures", []))),
         "judge_usage": {**tokens, "metric_calls": len(usage_entries),
+                        "retries": sum(entry.get("retries", 0) for entry in usage_entries),
                         "token_usage_available_calls": sum(bool(entry["usage"]) for entry in usage_entries),
                         "token_usage_missing_calls": sum(not entry["usage"] for entry in usage_entries),
                         "elapsed_ms": sum(entry["elapsed_ms"] for entry in usage_entries),
-                        "note": "逐指标调用墙钟耗时；token 仅累加已知用量，全不可得为 null，可能含嵌入调用，不推算。"},
+                        "note": "逐指标调用墙钟耗时含重试和退避；token 仅含最终尝试可得用量，不含失败尝试，可能含嵌入调用，不推算。"},
         "lowest_samples": {
             metric: sorted((case for case in cases if case["scores"][metric]["status"] == "valid"),
                            key=lambda case: case["scores"][metric]["value"])[:10]
@@ -158,7 +169,8 @@ def markdown_report(report):
         lines.append("| " + " | ".join("—" if cell is None else str(cell) for cell in cells) + " |")
     # 转义反引号以免样本正文提前结束报告代码块。
     detail = json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False).replace("`", "\\u0060")
-    lines.extend(["", "## 元数据、分组、低分样本与逐行详情", "", "```json", detail, "```", ""])
+    lines.extend(["", "失败类别：" + json.dumps(summary.get("failure_categories", {}), ensure_ascii=False),
+                  "", "## 元数据、分组、低分样本与逐行详情", "", "```json", detail, "```", ""])
     return "\n".join(lines)
 
 

@@ -7,22 +7,23 @@ import json
 import math
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 
 from eval.ragas_adapter import not_applicable_category, to_sample
 from eval.ragas_backend import EvaluationConfigurationError, EvaluationDependencyError, make_scorer
+from eval.judge_diagnostics import RETRYABLE, diagnose, safe_parameters
 from eval.reports import DENOMINATOR_RULE, redact, safe_path, secret_safe_logs, summarize, write_report
 
 METRICS = ("faithfulness", "response_relevancy", "context_precision", "context_recall")
 # Judge 配置允许写在 backend/.env 中，但只读取下面这些白名单名字；
 # LLM_API_KEY 等线上密钥和其他任何变量一律不读取、不返回。
 JUDGE_ENV_NAMES = ("JUDGE_API_KEY", "JUDGE_MODEL", "JUDGE_BASE_URL",
-                   "JUDGE_EMBEDDING_MODEL", "JUDGE_EMBEDDING_BASE_URL", "JUDGE_EXTRA_BODY")
-# glm-* 模型默认关闭思考模式：思考内容会占用输出配额，导致 Judge 的 JSON 回答被截断、解析失败，并增加耗时与费用。
-GLM_DEFAULT_EXTRA_BODY = {"thinking": {"type": "disabled"}}
+                   "JUDGE_EMBEDDING_MODEL", "JUDGE_EMBEDDING_BASE_URL", "JUDGE_EXTRA_BODY",
+                   "JUDGE_MAX_RETRIES", "JUDGE_RETRY_BACKOFF_S", "JUDGE_MAX_WORKERS", "JUDGE_MAX_TOKENS")
 JUDGE_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 
@@ -62,6 +63,10 @@ class ScoreConfig:
     embedding_model: str | None = None
     embedding_base_url: str | None = None
     judge_extra_body: dict | None = None
+    max_retries: int = 2
+    retry_backoff_s: float = 1
+    max_workers: int = 4
+    max_tokens: int = 4096
     api_key: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self):
@@ -69,10 +74,17 @@ class ScoreConfig:
             raise ValueError("max_samples 和 timeout_s 必须为正数")
         if not self.metrics or len(set(self.metrics)) != len(self.metrics) or set(self.metrics) - set(METRICS):
             raise ValueError("metrics 必须是支持的非重复指标名")
+        if any(not isinstance(value, int) or isinstance(value, bool)
+               for value in (self.max_retries, self.max_workers, self.max_tokens)):
+            raise ValueError("max_retries、max_workers 和 max_tokens 必须为整数")
+        if self.max_retries < 0 or not 0 <= self.retry_backoff_s <= 60 or not math.isfinite(self.retry_backoff_s):
+            raise ValueError("max_retries 必须非负，retry_backoff_s 必须是 0–60 的有限数")
+        if self.max_workers < 1 or self.max_tokens < 1:
+            raise ValueError("max_workers 和 max_tokens 必须为正整数")
 
 
 def resolve_extra_body(raw, model):
-    """JUDGE_EXTRA_BODY 为 JSON 对象；未设置时 glm-* 模型默认关闭思考，其他模型不附加参数。"""
+    """显式 JUDGE_EXTRA_BODY 优先；所有模型默认不附加参数。"""
     raw = (raw or "").strip()
     if raw:
         try:
@@ -82,7 +94,7 @@ def resolve_extra_body(raw, model):
         if not isinstance(value, dict):
             raise ValueError("JUDGE_EXTRA_BODY 必须是 JSON 对象，不能是数组、字符串或 null")
         return value
-    return dict(GLM_DEFAULT_EXTRA_BODY) if str(model).lower().startswith("glm-") else None
+    return None
 
 
 def settings_keys(settings):
@@ -141,8 +153,37 @@ def _entry(status, reason, *, eligible=False, attempted=False, value=None, elaps
             "value": value, "elapsed_ms": elapsed_ms, "usage": usage or {}}
 
 
-def _judge_score(scorer, sample, metric):
+def _judge_score(scorer, sample, metric, config):
     started = perf_counter()
+    failures, retries, transient_retries = [], 0, 0
+    actual_body = config.judge_extra_body
+    fallback_used = False
+    while True:
+        result = _judge_attempt(scorer, sample, metric)
+        diagnostics = result.get("diagnostics")
+        if diagnostics is None:
+            break
+        failures.append(diagnostics)
+        fallback = (diagnostics["provider_error_code"] == "1210" and not fallback_used
+                    and config.judge_extra_body is None and config.judge_model.lower().startswith("glm-")
+                    and callable(getattr(scorer, "with_extra_body", None)))
+        if fallback:
+            actual_body = {"reasoning_effort": "low"}
+            scorer = scorer.with_extra_body(actual_body)
+            fallback_used = True
+        elif diagnostics["category"] in RETRYABLE and transient_retries < config.max_retries:
+            # 限制单次等待，避免配置较大重试次数时指数溢出。
+            sleep(min(60, config.retry_backoff_s * 2 ** min(transient_retries, 16)))
+            transient_retries += 1
+        else:
+            break
+        retries += 1
+    result.update(eligible=True, attempted=True, elapsed_ms=(perf_counter() - started) * 1000,
+                  retries=retries, attempt_failures=failures, judge_parameters=safe_parameters(actual_body))
+    return result
+
+
+def _judge_attempt(scorer, sample, metric):
     try:
         raw = scorer(sample, metric)
         raw = raw if isinstance(raw, dict) else {"value": raw}
@@ -160,13 +201,14 @@ def _judge_score(scorer, sample, metric):
             reason = raw.get("reason")
             result = _entry("valid", reason if isinstance(reason, str) else "metric_result",
                             value=float(value), usage=usage)
-    except TimeoutError:
-        result = _entry("error", "judge_timeout")
-    except (ValueError, TypeError, KeyError):
-        result = _entry("error", "judge_parse_error")
-    except Exception:
-        result = _entry("error", "judge_error")
-    result.update(eligible=True, attempted=True, elapsed_ms=(perf_counter() - started) * 1000)
+        if result["status"] != "valid":
+            result["diagnostics"] = {**diagnose(RuntimeError()), "exception_type": None,
+                                     "category": "invalid_score" if result["status"] == "invalid" else "reported_error"}
+    except Exception as exc:
+        diagnostics = diagnose(exc)
+        category = diagnostics["category"]
+        result = _entry("error", "judge_error" if category == "unknown" else "judge_" + category)
+        result["diagnostics"] = diagnostics
     return result
 
 
@@ -180,7 +222,7 @@ def _score(collection, config, *, scorer=None, judge=None, embeddings=None):
     # 默认后端在任何评分前初始化；缺依赖必须清楚失败，不能伪装为每行 Judge 错误。
     if scorer is None:
         scorer = make_scorer(config, judge=judge, embeddings=embeddings)
-    cases, selected = [], 0
+    cases, selected, jobs = [], 0, []
     for i, collected in enumerate(collection["cases"]):
         mapped = to_sample(collected)
         sample = mapped["sample"]
@@ -203,18 +245,33 @@ def _score(collection, config, *, scorer=None, judge=None, embeddings=None):
             elif not within_limit:
                 entry = _entry("skipped_limit", "max_samples", eligible=True)
             else:
-                entry = _judge_score(scorer, sample, metric)
+                entry = None
+                jobs.append((case, metric, sample))
             case["scores"][metric] = entry
+        cases.append(case)
+    # 先按原文件顺序确定预算，再并发执行；报告顺序不受完成先后影响。
+    with ThreadPoolExecutor(max_workers=config.max_workers) as executor:
+        futures = [(case, metric, executor.submit(_judge_score, scorer, sample, metric, config))
+                   for case, metric, sample in jobs]
+        for case, metric, future in futures:
+            case["scores"][metric] = future.result()
+    for case in cases:
         statuses = {entry["status"] for entry in case["scores"].values()}
         case["status"] = next(status for status in
                               ("error", "invalid", "not_applicable", "skipped_limit", "valid") if status in statuses)
-        cases.append(case)
     # 不复制采集正文或任意 meta 字段，只复制 run_eval 的安全元数据白名单。
     original = collection.get("meta", {})
     meta = {key: original.get(key) for key in ("git_commit", "eval_file", "model_config", "prompt_hashes")}
     meta.update(generated_at=datetime.now(timezone.utc).isoformat(), judge_model=config.judge_model,
                 metrics=list(config.metrics), max_samples=config.max_samples,
+                max_retries=config.max_retries, retry_backoff_s=config.retry_backoff_s,
+                max_workers=config.max_workers, max_tokens=config.max_tokens, timeout_s=config.timeout_s,
+                judge_extra_body_configured=config.judge_extra_body is not None,
+                judge_parameters=safe_parameters(config.judge_extra_body),
                 embedding_model=config.embedding_model, denominator_rule=DENOMINATOR_RULE)
+    meta["actual_judge_parameters"] = [json.loads(body) for body in sorted({
+        json.dumps(entry["judge_parameters"], sort_keys=True)
+        for case in cases for entry in case["scores"].values() if entry["attempted"]})]
     report = {"phase": "score", "schema_version": 1, "meta": meta, "cases": cases,
               "failures": [case for case in cases if case["status"] in {"error", "invalid"}],
               "route_stats": dict(Counter(case["route"] for case in cases)),
@@ -239,6 +296,10 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
     score_parser.add_argument("--timeout-s", type=float, default=60)
     score_parser.add_argument("--embedding-model")
     score_parser.add_argument("--embedding-base-url")
+    score_parser.add_argument("--max-retries", type=int, help="临时失败的额外重试次数，默认 2")
+    score_parser.add_argument("--retry-backoff-s", type=float, help="指数退避起始秒数，默认 1")
+    score_parser.add_argument("--max-workers", type=int, help="并发评分任务数，默认 4")
+    score_parser.add_argument("--max-tokens", type=int, help="Judge 单次输出上限，默认 4096")
     args = parser.parse_args(argv)
     secrets = ()
     try:
@@ -248,6 +309,9 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
 
             def pick(name, cli_value=None):
                 return (cli_value or os.environ.get(name) or file_values.get(name) or "").strip()
+
+            def number(name, cli_value, default, convert):
+                return convert(cli_value if cli_value is not None else pick(name) or default)
 
             key_env = args.judge_key_env or "JUDGE_API_KEY"
             # 自定义变量名只读环境变量；只有白名单名字才允许回落到 .env 文件。
@@ -292,6 +356,10 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
                                  max_samples=args.max_samples, metrics=tuple(args.metrics.split(",")),
                                  timeout_s=args.timeout_s, embedding_model=embedding_model,
                                  embedding_base_url=embedding_base_url, judge_extra_body=extra_body,
+                                 max_retries=number("JUDGE_MAX_RETRIES", args.max_retries, 2, int),
+                                 retry_backoff_s=number("JUDGE_RETRY_BACKOFF_S", args.retry_backoff_s, 1, float),
+                                 max_workers=number("JUDGE_MAX_WORKERS", args.max_workers, 4, int),
+                                 max_tokens=number("JUDGE_MAX_TOKENS", args.max_tokens, 4096, int),
                                  api_key=key)
             collection = json.loads(safe_path(args.input_file).read_text(encoding="utf-8"))
             if collection.get("phase") != "collect" or collection.get("schema_version") != 1:
