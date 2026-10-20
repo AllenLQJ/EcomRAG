@@ -3,6 +3,7 @@ import { apiFetch, responseError } from './http';
 import type { ChatRequest, ChatResponse, ChatStreamEvent, StreamStage } from './types';
 import { SSEParser, type SSEFrame } from './sse';
 import { isChatResponse, isRecord } from './validate';
+import { withProductCards } from './products';
 import { mockChat, mockChatStream } from '../mocks/fixtures';
 import { characterCount } from '../lib/format';
 
@@ -33,7 +34,7 @@ export async function sendChat(request: ChatRequest, signal?: AbortSignal): Prom
       throw responseError(body);
     }
     if (!isChatResponse(body)) throw new ChatError(50001);
-    return body;
+    return withProductCards(body);
   } catch (error) {
     if (timedOut) throw new ChatError(50401);
     if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
@@ -156,7 +157,7 @@ function parseStreamEvent(frame: SSEFrame): ChatStreamEvent | undefined {
     return { event: 'status', data: { stage: data.stage as StreamStage } };
   }
   if (frame.event === 'delta' && typeof data.text === 'string') return { event: 'delta', data: { text: data.text } };
-  if (frame.event === 'done' && isChatResponse(data)) return { event: 'done', data };
+  if (frame.event === 'done' && isChatResponse(data)) return { event: 'done', data: withProductCards(data) };
   if (frame.event === 'error' && typeof data.code === 'number' && typeof data.message === 'string'
     && (data.request_id === undefined || typeof data.request_id === 'string')) {
     return { event: 'error', data: { code: data.code, message: data.message,

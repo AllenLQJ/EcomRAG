@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accountAPI, conversationsAPI } from './account';
+import { accountAPI, accountError, conversationsAPI } from './account';
+import { ChatError } from './errors';
 import { sendChat, sendChatStream } from './client';
 import { accountMock, json, userIdentity } from '../test/account';
 import { controlledSSE } from '../test/streams';
@@ -40,10 +41,33 @@ describe('shared account/history transport policy', () => {
       'https://api.example.test/api/v1/auth/me', 'https://api.example.test/api/v1/conversations',
     ]);
   });
-  it.each([40001, 40101, 40301, 40401, 40901, 42903, 50301])('preserves envelope fields for business error %s', async code => {
+  it.each([40001, 40002, 40003, 40101, 40102, 40103, 40301, 40401, 40901, 42903, 50301])('preserves envelope fields for business error %s', async code => {
     const mock = accountMock();
     mock.overrides['POST /auth/login'] = () => json({ code, message: '可展示的中文原因', retry_after_seconds: 7 }, 400);
     await expect(accountAPI.authenticate('login', 'demo_123', 'demo_pass_123')).rejects.toMatchObject({ code, reason: '可展示的中文原因', retryAfterSeconds: 7 });
+  });
+  it.each([
+    [40002, '用户名须为 3–20 位字母、数字或下划线。'],
+    [40003, '密码须为 8–64 位，不能与用户名相同、为纯数字或常见弱口令。'],
+    [40102, '账号不存在。'], [40103, '密码错误。'], [40901, '用户名已被使用。'],
+    [42903, '请求过多或账号暂时锁定，请稍后再试。'],
+    [40301, '访问来源未被允许，请使用正确的访问地址。'],
+  ])('maps code %s to a Chinese account error without a server message', (code, message) => {
+    expect(accountError(new ChatError(Number(code)))).toBe(message);
+  });
+  it.each(['json', 'http-sse', 'event-sse'])('explains forbidden origin through %s', async transport => {
+    const mock = accountMock();
+    const body = { code: 40301, message: '请求来源校验失败' };
+    mock.overrides['POST /chat'] = () => json(body, 403);
+    mock.overrides['POST /chat/stream'] = () => json(body, 403);
+    if (transport === 'event-sse') {
+      const stream = controlledSSE(); stream.event({ event: 'error', data: body });
+      mock.overrides['POST /chat/stream'] = () => stream.response;
+    }
+    await expect(transport === 'json' ? sendChat(request) : sendChatStream(request, vi.fn())).rejects.toMatchObject({
+      code: 40301, message: '访问来源未被允许，请使用正确的访问地址。',
+    });
+    expect(mock.fetchMock).toHaveBeenCalledOnce();
   });
   it.each(['json', 'http-sse', 'event-sse'])('retains quota scope through %s and never retries a business rejection', async transport => {
     const mock = accountMock();

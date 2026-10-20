@@ -241,6 +241,6 @@ describe('WelcomeSplash', () => {
     expect(input).toHaveValue('想了解商品');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText('历史仅保存在本浏览器')).toBeInTheDocument();
+    expect(screen.queryByText('历史仅保存在本浏览器')).not.toBeInTheDocument();
   });
 });

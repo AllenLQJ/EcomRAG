@@ -9,14 +9,12 @@ interface Props {
   onNew: () => void;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
-  onClear: () => void;
-  remote?: boolean;
   onRename?: (id: string, title: string) => Promise<boolean>;
   footer?: ReactNode;
 }
 
-export function ConversationHistory({ conversations, currentId, onNew, onSelect, onDelete, onClear, remote = false, onRename, footer }: Props) {
-  const [confirmation, setConfirmation] = useState<{ type: 'delete' | 'clear'; id?: string } | null>(null);
+export function ConversationHistory({ conversations, currentId, onNew, onSelect, onDelete, onRename, footer }: Props) {
+  const [confirmation, setConfirmation] = useState<{ id: string } | null>(null);
   const [editing, setEditing] = useState<{ id: string; title: string } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const renamePending = useRef(false);
@@ -53,7 +51,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
               </button>
               {onRename && <button type="button" aria-label={`重命名对话：${item.title}`} className="min-h-11 min-w-11 rounded-card text-xs text-muted"
                 onClick={() => { setConfirmation(null); setEditing({ id: item.id, title: item.title }); }}>改名</button>}
-              <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation({ type: 'delete', id: item.id })}
+              <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation({ id: item.id })}
                 className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
                 <svg aria-hidden="true" viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
               </button>
@@ -72,7 +70,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
               <div className="flex flex-wrap gap-2"><button type="submit" className="secondary-button" disabled={renaming || !editing.title.trim()}>保存标题</button>
                 <button type="button" className="min-h-11 px-2 text-sm" onClick={() => setEditing(null)}>取消改名</button></div>
             </form>}
-            {confirmation?.type === 'delete' && confirmation.id === item.id && <div role="group" aria-label={`确认删除：${item.title}`} className="rounded-card border border-outline bg-card p-2 text-xs">
+            {confirmation?.id === item.id && <div role="group" aria-label={`确认删除：${item.title}`} className="rounded-card border border-outline bg-card p-2 text-xs">
               <p>删除这段对话？</p>
               <div className="flex gap-1">
                 <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
@@ -83,18 +81,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
         </ul>
       </section>)}
     </div>
-    <div className="shrink-0 border-t border-line pt-3">
-      {!remote && (confirmation?.type === 'clear' ? <div role="group" aria-label="确认清空全部历史" className="text-xs">
-        <p>清空所有历史对话？此操作无法恢复。</p>
-        <div className="flex gap-1">
-          <button type="button" aria-label="取消" autoFocus className="min-h-11 rounded-card px-3" onClick={() => { setConfirmation(null); focusNew(); }}>取消</button>
-          <button type="button" aria-label="确认清空" className="min-h-11 rounded-card px-3 font-medium" onClick={() => { setConfirmation(null); onClear(); focusNew(); }}>确认清空</button>
-        </div>
-      </div> : <button type="button" aria-label="清空全部历史" className="min-h-11 w-full rounded-card text-left text-sm text-muted hover:text-ink disabled:opacity-50"
-        disabled={!conversations.length} onClick={() => setConfirmation({ type: 'clear' })}>清空全部历史</button>)}
-      <p className="mt-2 text-xs text-muted">{remote ? '历史保存在账号中' : '历史仅保存在本浏览器'}</p>
-      {footer}
-    </div>
+    {footer && <div className="shrink-0">{footer}</div>}
   </nav>;
 }
 

@@ -30,8 +30,8 @@ export function AuthForm({ onSuccess, onGuest }: { onSuccess: (user: User) => vo
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [retryAt]);
-  return <div className={entry ? 'entry-auth' : 'mx-auto w-full max-w-md'}>
-    <div role="tablist" aria-label="登录或注册" className={entry ? 'entry-auth-tabs' : 'mb-6 flex border-b border-line'}>
+  return <div className="entry-auth">
+    <div role="tablist" aria-label="登录或注册" className="entry-auth-tabs">
       {(['login', 'register'] as const).map(tab => <button type="button" role="tab" id={`${id}-${tab}`} aria-controls={`${id}-panel`}
         aria-selected={mode === tab} disabled={pending} key={tab} tabIndex={mode === tab ? 0 : -1}
         onKeyDown={event => {
@@ -43,7 +43,6 @@ export function AuthForm({ onSuccess, onGuest }: { onSuccess: (user: User) => vo
         className={`min-h-11 flex-1 border-b-2 text-sm ${mode === tab ? 'border-ink font-medium' : 'border-transparent text-muted'}`}>{tab === 'login' ? '登录' : '注册'}</button>)}
     </div>
     <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${mode}`}>
-      {mode === 'register' && <p className={entry ? 'entry-auth-warning' : 'mb-4 rounded-card border border-outline bg-card p-3 text-sm font-medium text-fallback-text'}>演示站点，请勿使用你常用的真实密码。</p>}
       <form noValidate className="space-y-4" onSubmit={async event => {
         event.preventDefault();
         if (submitting.current || seconds > 0) return;
@@ -59,18 +58,19 @@ export function AuthForm({ onSuccess, onGuest }: { onSuccess: (user: User) => vo
           }
         } finally { submitting.current = false; setPending(false); }
       }}>
-        <div><label htmlFor={`${id}-username`} className={entry ? 'entry-field-label' : 'mb-2 block text-sm'}>用户名</label>
+        <div><label htmlFor={`${id}-username`} className="entry-field-label">用户名</label>
           <input id={`${id}-username`} name="username" autoComplete="username" value={username} disabled={pending}
-            aria-describedby={`${id}-hint ${id}-error`} className={entry ? 'entry-auth-input' : 'form-input'} onChange={event => setUsername(event.target.value)} />
-          <p id={`${id}-hint`} className={entry ? 'sr-only' : 'mt-2 text-xs text-muted'}>3–20 位字母、数字或下划线；密码 8–64 位。</p></div>
-        <div><label htmlFor={`${id}-password`} className={entry ? 'entry-field-label' : 'mb-2 block text-sm'}>密码</label>
+            aria-describedby={`${id}-username-hint ${id}-error`} className="entry-auth-input" onChange={event => setUsername(event.target.value)} />
+          <p id={`${id}-username-hint`} className="mt-2 text-xs text-muted">3–20 位字母、数字或下划线。</p></div>
+        <div><label htmlFor={`${id}-password`} className="entry-field-label">密码</label>
           <input id={`${id}-password`} name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            value={password} disabled={pending} aria-describedby={`${id}-hint ${id}-error`} className={entry ? 'entry-auth-input' : 'form-input'} onChange={event => setPassword(event.target.value)} /></div>
-        <div id={`${id}-error`} aria-live="polite" hidden={entry && !error && seconds === 0}>
+            value={password} disabled={pending} aria-describedby={`${id}-password-hint ${id}-error`} className="entry-auth-input" onChange={event => setPassword(event.target.value)} />
+          <p id={`${id}-password-hint`} className="mt-2 text-xs text-muted">8–64 位。</p></div>
+        <div id={`${id}-error`} aria-live="polite" hidden={!error && seconds === 0}>
           {error && <p role="alert" className="text-sm text-fallback-text">{error}</p>}
           {seconds > 0 && <p role="status" className="mt-2 text-sm text-muted">请 {seconds} 秒后再试。</p>}
         </div>
-        <button className={entry ? 'entry-auth-submit disabled:opacity-50' : 'primary-button w-full disabled:opacity-50'} type="submit" disabled={pending || seconds > 0}>{pending ? '正在提交…' : label}</button>
+        <button className="entry-auth-submit disabled:opacity-50" type="submit" disabled={pending || seconds > 0}>{pending ? '正在提交…' : label}</button>
       </form>
     </div>
     {onGuest && <>

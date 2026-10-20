@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../api/types';
 import { isChatResponse, isRecord } from '../api/validate';
+import { withProductCards } from '../api/products';
 
 export const SESSION_KEY = 'ecomrag.session_id';
 export const MESSAGES_KEY = 'ecomrag.messages';
@@ -129,12 +130,22 @@ function limitMessage(message: ChatMessage): ChatMessage {
   if (message.kind === 'user') return { ...message, text: truncate(message.text, 4000) };
   const question = truncate(message.question, 4000);
   if (message.kind === 'error') return { ...message, question };
-  return { ...message, question, response: { ...message.response,
+  const response = { ...withProductCards(message.response),
     answer: truncate(message.response.answer, 8000),
     sources: message.response.sources.map(source => ({ ...source,
       title: truncate(source.title, 40), snippet: truncate(source.snippet, 500),
     })),
-  } };
+  };
+  const limited = { ...message, question, response };
+  if (response.products) {
+    // Optional cards may use only the space left in a 32 KiB local message.
+    // Preserve existing text/history behavior if the message already exceeds it.
+    try {
+      while (response.products.length && new TextEncoder().encode(JSON.stringify(limited)).byteLength > 32 * 1024) response.products.pop();
+    } catch { response.products = []; }
+    if (!response.products.length) delete response.products;
+  }
+  return limited;
 }
 
 function normalize(conversations: unknown[]): Conversation[] {

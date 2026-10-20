@@ -81,7 +81,8 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
       if (remote) setMessages(previous => !current() ? previous : retryId
         ? previous.filter(message => message.id !== retryId) : [...previous, userMessage]);
       chatStarted = true;
-      const response = await sendChatStream({ ...(remote && remoteId.current ? { conversation_id: remoteId.current } : {}), session_id: remoteId.current || sessionId, message: question, debug: traceEnabled, history: buildHistory(messages) }, event => {
+      const history = buildHistory(retryId ? messages.filter(message => message.id !== retryId) : messages);
+      const response = await sendChatStream({ ...(remote && remoteId.current ? { conversation_id: remoteId.current } : {}), session_id: remoteId.current || sessionId, message: question, debug: traceEnabled, history }, event => {
         if (!current() || active.current !== controller) return;
         if (event.event === 'done') completedAt = performance.now();
         if (event.event === 'status') setProgress(previous => !current() ? previous

@@ -49,7 +49,7 @@ describe('entry and welcome lifecycle', () => {
     expect(sessionStorage.getItem(WELCOME_KEY)).toBeNull();
     fireEvent.click(within(entry).getByRole('tab', { name: '注册' }));
     expect(within(entry).getByRole('button', { name: '注册并进入' })).toBeInTheDocument();
-    expect(within(entry).getByText('演示站点，请勿使用你常用的真实密码。')).toHaveClass('entry-auth-warning');
+    expect(within(entry).queryByText('演示站点，请勿使用你常用的真实密码。')).not.toBeInTheDocument();
     expect(document.querySelector('.welcome-splash')).toBeNull();
   });
   it('never mounts the splash on entry; guest entry resets it and remount stays at home without replay', async () => {
@@ -113,7 +113,15 @@ describe('entry and welcome lifecycle', () => {
     accountMock(); await mount();
     fireEvent.click(screen.getByRole('button', { name: '以访客进入' })); skipSplash();
     fireEvent.click(screen.getByRole('button', { name: '登录/注册' }));
-    expect(screen.getByRole('dialog', { name: '登录/注册' })).toBeInTheDocument();
+    const modal = screen.getByRole('dialog', { name: '登录/注册' });
+    expect(within(modal).getByRole('heading', { name: '灵码' })).toBeInTheDocument();
+    expect(within(modal).getByText(brandSlogan())).toBeInTheDocument();
+    expect(modal.querySelector('.entry-logo')).toHaveAttribute('src', '/brand/lingma-b-seal.svg');
+    expect(modal.querySelector('.entry-card .entry-auth-tabs')).toBeInTheDocument();
+    expect(within(modal).getByRole('button', { name: '登录' })).toHaveClass('entry-auth-submit');
+    expect(within(modal).queryByRole('button', { name: '以访客进入' })).not.toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole('tab', { name: '注册' }));
+    expect(within(modal).queryByText('演示站点，请勿使用你常用的真实密码。')).not.toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '登录/注册' })); credentials();
@@ -130,6 +138,24 @@ describe('entry and welcome lifecycle', () => {
 
 describe('quota, account and shop integration', () => {
   beforeEach(() => { vi.stubEnv('VITE_STREAM', '0'); });
+  it.each(['0', '1'])('shows an origin-specific chat error (stream=%s)', async stream => {
+    vi.stubEnv('VITE_STREAM', stream);
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
+    const mock = accountMock();
+    mock.overrides[`POST /chat${stream === '1' ? '/stream' : ''}`] = () => json({ code: 40301, message: '请求来源校验失败' }, 403);
+    await mount(); ask();
+    await screen.findByText('访问来源未被允许，请使用正确的访问地址。');
+    expect(screen.queryByText('服务有点忙，请稍后再试。')).not.toBeInTheDocument();
+  });
+  it('shows shop information only on an empty conversation and restores it for a new conversation', async () => {
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock();
+    await mount();
+    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
+    ask(); await screen.findByText('闲聊');
+    expect(screen.queryByRole('button', { name: /店铺信息/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '新对话' }));
+    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
+  });
   it.each([false, true])('shows and refreshes quota after successful and failed questions (user=%s)', async signedIn => {
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
     const mock = accountMock(signedIn ? userIdentity() : undefined);
@@ -178,8 +204,12 @@ describe('quota, account and shop integration', () => {
   it.each([false, true])('shop facts render and a category fills the draft without sending (mobile=%s)', async mobile => {
     mockMobile(mobile);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); const mock = accountMock(); await mount();
-    if (mobile) fireEvent.click(screen.getByRole('button', { name: '历史' }));
-    fireEvent.click(screen.getByRole('button', { name: '店铺信息' }));
+    const main = screen.getByRole('main', { name: '客服对话' });
+    const entry = within(main).getByRole('button', { name: /店铺信息/ });
+    expect(entry).toHaveClass('shop-entry');
+    expect(entry.compareDocumentPosition(within(main).getByRole('heading', { name: /你好，我是/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (!mobile) expect(within(screen.getByRole('navigation', { name: '历史对话' })).queryByRole('button', { name: /店铺信息/ })).not.toBeInTheDocument();
+    fireEvent.click(entry);
     const shop = screen.getByRole('dialog', { name: '店铺信息' });
     expect(within(shop).getByText(shopInfo.disclaimer)).toBeInTheDocument();
     for (const fact of [...shopInfo.support, ...shopInfo.promises]) expect(within(shop).getByText(fact)).toBeInTheDocument();

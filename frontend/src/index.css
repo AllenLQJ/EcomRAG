@@ -42,7 +42,12 @@
   .entry-auth-divider { @apply my-4 flex items-center gap-3 text-xs text-general-dot; }
   .entry-auth-divider > span[aria-hidden] { @apply flex-1 bg-line; height: 0.5px; }
   .entry-auth-quota { @apply mt-3 text-center text-[13px] leading-relaxed text-muted; }
-  .entry-auth-warning { @apply mb-4 rounded-avatar bg-fallback-bg text-[13px] text-fallback-text; padding: 10px 12px; }
+  .shop-entry { @apply mb-8 flex min-h-11 w-full items-center justify-between gap-4 rounded-card border border-outline bg-card p-5 text-left text-ink hover:border-ink; }
+  @media (prefers-color-scheme: dark) {
+    .shop-entry { @apply bg-ink text-canvas border-muted; }
+    .shop-entry .text-muted { @apply text-outline; }
+    .shop-entry:hover { @apply border-canvas; }
+  }
   .entry-footer { @apply mt-4 text-center text-xs leading-relaxed text-general-dot; }
   @media (max-width: 640px) {
     .entry-logo { width: 84px; height: 84px; }

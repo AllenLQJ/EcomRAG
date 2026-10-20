@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatHome as App } from './App';
-import { CONVERSATIONS_KEY, loadConversations, saveConversations, SESSION_KEY } from './lib/storage';
+import { loadConversations, saveConversations, SESSION_KEY } from './lib/storage';
 import { conversation } from './test/conversations';
 import { mockMobile } from './test/media';
 import { controlledSSE } from './test/streams';
@@ -66,11 +66,7 @@ describe('conversation history integration', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认删除' }));
     expect(localStorage.getItem(SESSION_KEY)).toBe('较早');
     expect(within(screen.getByRole('log')).getByText('回答：较早')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '清空全部历史' }));
     expect(loadConversations()).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: '确认清空' }));
-    expect(JSON.parse(localStorage.getItem(CONVERSATIONS_KEY)!)).toEqual([]);
-    expect(screen.getByRole('heading', { name: /你好，我是/ })).toBeInTheDocument();
   });
   it('deleting the last current conversation enters a fresh empty session', () => {
     saveConversations([conversation('唯一')]);
@@ -101,7 +97,7 @@ describe('history drawer', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(document.body.style.overflow).toBe('hidden');
     await user.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(within(dialog).getByRole('button', { name: '清空全部历史' })).toHaveFocus();
+    expect(within(dialog).getByRole('button', { name: '删除对话：较早' })).toHaveFocus();
     await user.tab();
     expect(close).toHaveFocus();
     await user.keyboard('{Escape}');
@@ -160,7 +156,6 @@ describe('history drawer', () => {
     expect(localStorage.getItem(SIDEBAR_WIDTH_KEY)).toBe('340');
     fireEvent.click(screen.getByRole('button', { name: '历史' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('历史仅保存在本浏览器')).toBeInTheDocument();
     act(() => resize(false));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('complementary')).toHaveStyle({ width: '340px' });
@@ -185,15 +180,15 @@ describe('drawer accessibility during confirmation', () => {
     expect(main).not.toHaveAttribute('inert');
     expect(trigger).toHaveFocus();
   });
-  it.each(['delete', 'clear'])('uses the first Escape to cancel %s and the second to close the drawer', async type => {
+  it('uses the first Escape to cancel deletion and the second to close the drawer', async () => {
     mockMobile(); seed();
     render(<App />);
     const user = userEvent.setup();
     const trigger = screen.getByRole('button', { name: '历史' });
     await user.click(trigger);
     const nav = screen.getByRole('navigation', { name: '历史对话' });
-    await user.click(within(nav).getByRole('button', { name: type === 'delete' ? '删除对话：最新' : '清空全部历史' }));
-    expect(screen.getByRole('group', { name: type === 'delete' ? '确认删除：最新' : '确认清空全部历史' })).toBeInTheDocument();
+    await user.click(within(nav).getByRole('button', { name: '删除对话：最新' }));
+    expect(screen.getByRole('group', { name: '确认删除：最新' })).toBeInTheDocument();
     // Escape must cancel even with focus outside the navigation subtree.
     screen.getByRole('button', { name: '关闭历史' }).focus();
     await user.keyboard('{Escape}');

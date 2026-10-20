@@ -31,9 +31,15 @@ export function guestIdentity(): Identity {
 export function accountError(error: unknown): string {
   if (!(error instanceof Error)) return '服务暂不可用，请稍后再试。';
   const code = 'code' in error ? error.code : undefined;
-  if (error instanceof Object && 'reason' in error && typeof error.reason === 'string' && error.reason) return error.reason;
-  return ({ 40001: '请检查用户名和密码。', 40101: '用户名或密码错误，或登录已失效。',
-    40301: '请求被拒绝，请刷新后重试。', 40401: '对话不存在，请刷新历史列表。',
-    40901: '用户名已被使用。', 42903: '登录尝试过多，请稍后再试。',
-    50301: '服务暂不可用，请稍后再试。' } as Record<number, string>)[Number(code)] || '服务暂不可用，请稍后再试。';
+  const messages: Record<number, string> = {
+    40001: '请检查用户名和密码。', 40002: '用户名须为 3–20 位字母、数字或下划线。',
+    40003: '密码须为 8–64 位，不能与用户名相同、为纯数字或常见弱口令。',
+    40101: '登录已失效，请重新登录。', 40102: '账号不存在。', 40103: '密码错误。',
+    40301: '访问来源未被允许，请使用正确的访问地址。', 40401: '对话不存在，请刷新历史列表。',
+    40901: '用户名已被使用。', 42903: '请求过多或账号暂时锁定，请稍后再试。',
+    50301: '服务暂不可用，请稍后再试。',
+  };
+  // Keep precise password-strength and lockout reasons supplied by the server.
+  if (Number(code) !== 40301 && 'reason' in error && typeof error.reason === 'string' && error.reason) return error.reason;
+  return messages[Number(code)] || '服务暂不可用，请稍后再试。';
 }

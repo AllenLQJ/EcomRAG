@@ -22,13 +22,15 @@ describe('shared login/register form', () => {
   it.each([['Ab_', 'x'.repeat(8)], ['A'.repeat(20), 'x'.repeat(64)], ['abc', '😀'.repeat(8)]])('accepts boundary credentials for %s', (username, password) => {
     expect(validateCredentials(username, password)).toBeUndefined();
   });
-  it('uses password inputs/autocomplete and exposes the demo warning on registration', () => {
+  it('uses password inputs/autocomplete and keeps format hints without a registration warning', () => {
     render(<AuthForm onSuccess={vi.fn()} />);
     expect(screen.getByLabelText('用户名')).toHaveAttribute('autocomplete', 'username');
     expect(screen.getByLabelText('密码')).toHaveAttribute('type', 'password');
     expect(screen.getByLabelText('密码')).toHaveAttribute('autocomplete', 'current-password');
     fireEvent.click(screen.getByRole('tab', { name: '注册' }));
-    expect(screen.getByText('演示站点，请勿使用你常用的真实密码。')).toBeInTheDocument();
+    expect(screen.queryByText('演示站点，请勿使用你常用的真实密码。')).not.toBeInTheDocument();
+    expect(screen.getByText('3–20 位字母、数字或下划线。')).toBeVisible();
+    expect(screen.getByText('8–64 位。')).toBeVisible();
     expect(screen.getByLabelText('密码')).toHaveAttribute('autocomplete', 'new-password');
     fireEvent.keyDown(screen.getByRole('tab', { name: '注册' }), { key: 'ArrowLeft' });
     expect(screen.getByRole('tab', { name: '登录' })).toHaveAttribute('aria-selected', 'true');
@@ -49,7 +51,8 @@ describe('shared login/register form', () => {
   });
   for (const mode of ['login', 'register'] as const) {
     it.each([
-      [40001, '用户名格式不符合要求'], [40101, '用户名或密码错误'], [40901, '用户名已被使用'],
+      [40001, '请求参数非法'], [40002, '用户名须为3–20位英文字母、数字或下划线'],
+      [40003, '密码长度须为8–64位'], [40102, '账号不存在'], [40103, '密码错误'], [40901, '用户名已被使用'],
       [42903, '登录尝试过多'], [50301, '服务暂不可用'],
     ])(`${mode} displays business code %i and its Chinese reason`, async (code, message) => {
       const mock = accountMock();
@@ -83,7 +86,7 @@ describe('shared login/register form', () => {
     fireEvent.submit(form); fireEvent.submit(form);
     expect(screen.getByRole('button', { name: '正在提交…' })).toBeDisabled();
     expect(mock.fetchMock).toHaveBeenCalledOnce();
-    await act(async () => { resolve(json({ code: 40101, message: '用户名或密码错误' }, 401)); });
+    await act(async () => { resolve(json({ code: 40103, message: '密码错误' }, 401)); });
     expect(screen.getByLabelText('用户名')).toHaveValue('demo_123');
     expect(screen.getByRole('button', { name: '登录' })).toBeEnabled();
   });

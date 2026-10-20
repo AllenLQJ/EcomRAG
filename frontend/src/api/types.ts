@@ -20,6 +20,14 @@ export interface Source {
   score: number;
 }
 
+export interface ProductCard {
+  sku: string;
+  name: string;
+  category: string;
+  highlights: string[];
+  image_url: string | null;
+}
+
 export interface TraceItem {
   stage: string;
   ms: number;
@@ -44,6 +52,7 @@ export interface ChatResponse {
   sources: Source[];
   is_mock: boolean;
   trace: TraceItem[] | null;
+  products?: ProductCard[];
 }
 
 export interface ErrorResponse {

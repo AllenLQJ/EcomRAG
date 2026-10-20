@@ -3,7 +3,7 @@ import { ChatMessage, LoadingMessage, StreamingMessage } from './components/Chat
 import { Composer } from './components/Composer';
 import { ConversationHistory, HistoryDrawer } from './components/ConversationHistory';
 import { ResizableSidebar } from './components/ResizableSidebar';
-import { AuthForm } from './components/AuthForm';
+import { AuthPanel } from './components/AuthPanel';
 import { Modal } from './components/Modal';
 import { DeleteAccount } from './components/DeleteAccount';
 import { ShopInfo } from './components/ShopInfo';
@@ -11,13 +11,12 @@ import { accountAPI, accountError, guestIdentity, type Identity, type User } fro
 import { WELCOME_KEY, WelcomeSplash } from './components/WelcomeSplash';
 import { useDesktop } from './hooks/useDesktop';
 import { Header } from './components/Header';
-import { LogoLockup, LogoMark } from './components/Brand';
+import { LogoLockup } from './components/Brand';
 import { useAutoScroll } from './hooks/useAutoScroll';
 import { useMobile } from './hooks/useMobile';
 import { useChat } from './hooks/useChat';
 import { loadTraceEnabled, saveTraceEnabled, traceToggleVisible } from './lib/storage';
-import { brandSlogan, humanSupportUrl, storeName } from './lib/config';
-import { shopInfo } from './shopInfo';
+import { humanSupportUrl, storeName } from './lib/config';
 
 export const GUEST_ENTRY_KEY = 'lingma.entry.guest.v1';
 function guestSelected(): boolean {
@@ -86,14 +85,7 @@ export default function App() {
   if (!identity) return <main className="app-shell flex items-center justify-center bg-canvas text-sm text-muted" aria-label="正在获取身份">正在连接客服中心…</main>;
   if (entry) return <main aria-label="入口登录页" className="entry-page">
     <div className="w-full max-w-[360px]">
-      <header className="entry-brand">
-        <LogoMark variant="b-seal" className="entry-logo" />
-        <h1 className="entry-store-name">{name}</h1>
-        <p className="entry-slogan">{brandSlogan()}</p>
-        <p className="entry-service-label"><span aria-hidden="true" />智能客服<span aria-hidden="true" /></p>
-      </header>
-      <div className="entry-card"><AuthForm onSuccess={authenticated} onGuest={enterGuest} /></div>
-      <p className="entry-footer">{shopInfo.disclaimer}</p>
+      <AuthPanel onSuccess={authenticated} onGuest={enterGuest} />
       {notice && <p role="status" className="mt-4 text-sm text-muted">{notice}</p>}
     </div>
   </main>;
@@ -101,7 +93,7 @@ export default function App() {
     <ChatHome key={identity.user ? `user-${identity.user.id}` : 'guest'} identity={identity} onQuotaRefresh={refreshQuota}
       playWelcome={playWelcome} notice={notice} loggingOut={loggingOut} onLogin={() => setAuthOpen(true)}
       onLogout={() => { void logout(); }} onDeleteAccount={() => setDeleteOpen(true)} />
-    {authOpen && <Modal title="登录/注册" onClose={() => setAuthOpen(false)}><AuthForm onSuccess={authenticated} /></Modal>}
+    {authOpen && <Modal title="登录/注册" auth onClose={() => setAuthOpen(false)}><AuthPanel onSuccess={authenticated} /></Modal>}
     {deleteOpen && <DeleteAccount onClose={() => setDeleteOpen(false)} onDelete={async password => { await accountAPI.remove(password); signedOut(); }} />}
   </>;
 }
@@ -134,7 +126,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   const traceVisible = traceToggleVisible();
   const [traceEnabled, setTraceEnabled] = useState(() => traceVisible && loadTraceEnabled());
   const showTrace = traceVisible && traceEnabled;
-  const { sessionId, conversations, messages, pending, progress, send, reset, selectConversation, deleteConversation, clearConversations, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded });
+  const { sessionId, conversations, messages, pending, progress, send, reset, selectConversation, deleteConversation, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded });
   useEffect(() => { saveTraceEnabled(showTrace); }, [showTrace]);
   const [draft, setDraft] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
@@ -188,18 +180,20 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
       if (id === sessionId) { draftEpoch.current += 1; if (!identity.user) setDraft(''); }
       void deleteConversation(id);
     },
-    remote: Boolean(identity.user), onRename: identity.user ? renameConversation : undefined,
+    onRename: identity.user ? renameConversation : undefined,
     footer: onLogin && <div className="mt-3 border-t border-line pt-3 text-sm">
-      <button type="button" className="min-h-11 w-full rounded-card text-left" onClick={() => { closeHistory(); setShopOpen(true); }}>店铺信息</button>
       <p className="break-words font-medium">{identity.user?.username || '游客'}{!identity.user && ' ·'}<span className="text-muted">{!identity.user && ` 今日剩余 ${identity.quota.remaining}/${identity.quota.limit} 次`}</span></p>
       {identity.user ? <><p className="mt-1 text-xs text-muted">今日剩余 {identity.quota.remaining}/{identity.quota.limit} 次</p>
         <div className="flex flex-wrap gap-2"><button type="button" className="min-h-11 text-muted" disabled={loggingOut} onClick={onLogout}>{loggingOut ? '正在退出…' : '退出登录'}</button>
           <button type="button" className="min-h-11 text-muted" onClick={() => { closeHistory(); onDeleteAccount?.(); }}>注销账号</button></div></>
         : <button type="button" className="secondary-button mt-3 w-full" onClick={() => { closeHistory(); onLogin(); }}>登录/注册</button>}
-    </div>,
-    onClear: () => { draftEpoch.current += 1; scroll.resetFollowing(); clearConversations(); setDraft(''); } };
+    </div> };
 
   const welcome = <section className={mobile ? 'shrink-0 px-4 pt-6' : 'pb-8 pt-2 sm:py-16'}>
+    <button type="button" aria-label="店铺信息" className="shop-entry" onClick={() => setShopOpen(true)}>
+      <span><span className="block text-title font-semibold">店铺信息</span><span className="mt-1 block text-sm text-muted">了解店铺、服务承诺与商品分类</span></span>
+      <span aria-hidden="true" className="text-title">↗</span>
+    </button>
     <LogoLockup className="mb-5 hidden h-14 sm:block" />
     <h1 className="font-serif text-title">你好，我是{name}的智能客服</h1>
     <p className="mt-2 text-sm leading-relaxed text-muted">售后、配送、发票、商品参数，都可以问我。</p>

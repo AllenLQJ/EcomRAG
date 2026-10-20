@@ -5,6 +5,7 @@ import { formatSeconds } from '../lib/format';
 import { AnswerMarkdown } from './AnswerMarkdown';
 import { AssistantAvatar } from './Brand';
 import { RouteBadge } from './RouteBadge';
+import { ProductCards } from './ProductCards';
 import { Sources } from './Sources';
 import { Trace } from './Trace';
 
@@ -40,6 +41,7 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
         </div>
         <AnswerMarkdown answer={message.response.answer} sources={message.response.sources}
           onCitation={index => setSelection(previous => ({ index, sequence: (previous?.sequence || 0) + 1 }))} />
+        <ProductCards products={message.response.products} />
         {fallback && <div className="flex flex-wrap gap-2">
           {supportUrl && <a href={supportUrl} target="_blank" rel="noopener noreferrer" className="primary-button flex-1 sm:flex-none">联系人工客服</a>}
           <button type="button" disabled={pending} onClick={() => onRephrase(message.question)} className="secondary-button flex-1 disabled:opacity-50 sm:flex-none">换个问法</button>

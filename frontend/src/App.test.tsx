@@ -33,7 +33,7 @@ describe('chat flow', () => {
     expect(screen.queryByText('样例数据')).not.toBeInTheDocument();
     expect(screen.queryByText('对话内容会被记录，用于改进服务')).not.toBeInTheDocument();
     expect(screen.queryByText('Enter 发送 · Shift + Enter 换行')).not.toBeInTheDocument();
-    expect(screen.getByText('历史仅保存在本浏览器')).toBeInTheDocument();
+    expect(screen.queryByText('历史仅保存在本浏览器')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '联系人工客服' })).not.toBeInTheDocument();
   });
 
