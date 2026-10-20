@@ -22,6 +22,8 @@ from app.contracts import (
     HTTP_ERROR,
     INTERNAL_ERROR,
     INVALID_ARGUMENT,
+    INVALID_USERNAME,
+    INVALID_PASSWORD,
     METHOD_NOT_ALLOWED,
     NOT_FOUND,
     FORBIDDEN,
@@ -70,6 +72,36 @@ def error_response(request: Request, code: int, message: str, status: int, **det
         content={"code": code, "message": message, "request_id": request_id, **details},
         headers={"X-Request-ID": request_id},
     )
+
+
+def allowed_origin(request: Request, origin: str, whitelist: list[str]) -> bool:
+    if len(request.headers.getlist("origin")) != 1:
+        return False
+    if origin in whitelist:
+        return True
+    # Caddy preserves Host, but its upstream scheme can be HTTP after TLS termination.
+    # Compare the raw Host authority, never X-Forwarded-Host/Proto (even if supplied).
+    # Using the Origin scheme to resolve implicit ports also supports that deployment.
+    try:
+        hosts = request.headers.getlist("host")
+        if len(hosts) != 1:
+            return False
+        host = hosts[0]
+        if (not host or host.endswith(":") or origin.endswith(":") or
+                any(char.isspace() for char in origin + host) or
+                any(char in host for char in "/?#@\\") or any(char in origin for char in "?#")):
+            return False
+        source = urlsplit(origin)
+        target = urlsplit(f"{source.scheme}://{host}")
+        if (source.scheme not in {"http", "https"} or not source.hostname or
+                source.username is not None or source.password is not None or
+                source.path or source.query or source.fragment or "\\" in origin):
+            return False
+        default_port = 443 if source.scheme == "https" else 80
+        return (source.hostname.lower(), source.port if source.port is not None else default_port) == (
+            target.hostname.lower(), target.port if target.port is not None else default_port)
+    except (ValueError, AttributeError):
+        return False
 
 
 def create_app(settings: config.Settings | None = None, *, services=None, chat_log_writer=None,
@@ -146,12 +178,13 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
                          request.url.path == "/api/v1/conversations" or
                          request.url.path.startswith("/api/v1/conversations/"))
             origin = request.headers.get("origin")
+            invalid_origin = origin is not None and not allowed_origin(request, origin, settings.cors_origins)
             invalid_chat_origin = (
                 request.method == "POST" and request.url.path in {"/api/v1/chat", "/api/v1/chat/stream"} and
-                origin is not None and origin not in settings.cors_origins
+                invalid_origin
             )
             if invalid_chat_origin or (protected and request.method != "OPTIONS" and (
-                (origin is not None and origin not in settings.cors_origins) or
+                invalid_origin or
                 (request.method in {"POST", "PATCH", "DELETE"} and
                  request.headers.get("x-requested-with") != "ecomrag")
             )):
@@ -208,6 +241,12 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/v1/auth/register":
+            fields = {error["loc"][-1] for error in exc.errors()}
+            if "username" in fields:
+                return error_response(request, INVALID_USERNAME, "用户名须为3–20位英文字母、数字或下划线", 400)
+            if "password" in fields:
+                return error_response(request, INVALID_PASSWORD, "密码长度须为8–64位", 400)
         return error_response(request, INVALID_ARGUMENT, "请求参数非法", 400)
 
     @app.exception_handler(HTTPException)

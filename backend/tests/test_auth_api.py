@@ -52,7 +52,7 @@ def test_registration_rules_return_displayable_chinese(account_factory, username
     app, repo, _, _ = account_factory()
     with TestClient(app) as api:
         result = register(api, username, password)
-        assert result.status_code == 400 and result.json()["code"] == 40001
+        assert result.status_code == 400 and result.json()["code"] == (40002 if reason == "用户名" else 40003)
         assert reason in result.json()["message"]
         assert not repo.users and password not in result.text
 
@@ -67,7 +67,23 @@ def test_case_insensitive_unique_preserves_display(account_factory):
         assert len(repo.users) == 1
 
 
-def test_failures_are_indistinguishable_and_both_hash(account_factory):
+@pytest.mark.parametrize("field,value,code", [
+    ("username", None, 40002), ("username", "a" * 4097, 40002),
+    ("password", None, 40003), ("password", 12345678, 40003),
+])
+def test_registration_http_field_errors_have_specific_codes(account_factory, field, value, code):
+    app, repo, _, _ = account_factory()
+    with TestClient(app) as api:
+        body = {"username": "Alice_01", "password": PASSWORD, field: value}
+        with patch("app.auth.hash_password") as hash_call:
+            response = api.post("/api/v1/auth/register", headers=HEADERS, json=body)
+        assert response.status_code == 400 and response.json()["code"] == code
+        assert ("用户名" if field == "username" else "密码") in response.json()["message"]
+        assert not repo.users
+        hash_call.assert_not_called()
+
+
+def test_failures_are_distinguishable_and_both_hash(account_factory):
     app, _, _, _ = account_factory()
     with TestClient(app) as api:
         register(api)
@@ -76,9 +92,9 @@ def test_failures_are_indistinguishable_and_both_hash(account_factory):
             wrong = login(api, "Alice_01", "incorrect")
         assert verify.call_count == 2
         assert all(call.args[1].startswith("scrypt$") for call in verify.call_args_list)
-        for result in (missing, wrong):
+        for result, code, message in ((missing, 40102, "账号不存在"), (wrong, 40103, "密码错误")):
             assert result.status_code == 401
-            assert result.json() == {"code": 40101, "message": "用户名或密码错误",
+            assert result.json() == {"code": code, "message": message,
                                      "request_id": result.headers["X-Request-ID"]}
 
 

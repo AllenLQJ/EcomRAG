@@ -26,7 +26,7 @@ def test_overlong_password_rejected_at_http_entry_before_any_hash(account_factor
         with patch("app.auth.hash_password") as hash_call, patch("app.auth.verify_password") as verify_call:
             result = api.request(method, path, headers=HEADERS,
                                  json={"username": "Alice_01", "password": password})
-        assert result.status_code == 400 and result.json()["code"] == 40001
+        assert result.status_code == 400 and result.json()["code"] == 40003
         assert "64" in result.json()["message"]
         hash_call.assert_not_called()
         verify_call.assert_not_called()
@@ -58,7 +58,7 @@ def test_service_and_hash_helpers_cannot_bypass_length_guard(account_factory):
             ):
                 with pytest.raises(AppError) as caught:
                     invoke()
-                assert caught.value.code == 40001
+                assert caught.value.code == 40003
             for function, args in (
                 (service.register, ("Alice_01", password, "ip")),
                 (service.login, ("Alice_01", password, "ip")),
@@ -66,7 +66,7 @@ def test_service_and_hash_helpers_cannot_bypass_length_guard(account_factory):
             ):
                 with pytest.raises(AppError) as caught:
                     await function(*args)
-                assert caught.value.code == 40001
+                assert caught.value.code == 40003
             scrypt.assert_not_called()
         await service.aclose()
         await app.state.quota.aclose()
@@ -141,6 +141,64 @@ def test_chat_origin_rejected_before_quota_model_or_history(account_factory, pat
                 assert sse_events(response)[-1][0] == "done"
 
 
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream", "/auth/login", "/auth/register"])
+@pytest.mark.parametrize("origin,host,allowed", [
+    ("http://127.0.0.1:8080", "127.0.0.1:8080", True),
+    ("https://rag.example:8443", "rag.example:8443", True),  # TLS terminated at proxy
+    ("https://rag.example", "rag.example:443", True),
+    ("http://LOCALHOST:8080", "localhost:8080", True),
+    ("http://[::1]:8080", "[::1]:8080", True),
+    (None, "127.0.0.1:8080", True),
+    ("http://localhost:3000", "127.0.0.1:8010", True),  # explicit whitelist
+    ("https://evil.example", "127.0.0.1:8080", False),
+    ("http://127.0.0.1:8080", "evil.example:8080", False),  # forged Host mismatch
+    ("http://127.0.0.1:8080", "127.0.0.1:8010", False),
+    ("http://127.0.0.1:8080.evil.example", "127.0.0.1:8080", False),
+    ("http://127.0.0.1:8080/path", "127.0.0.1:8080", False),
+    ("http://user@127.0.0.1:8080", "127.0.0.1:8080", False),
+    ("http://127.0.0.1:8080", "127.0.0.1:8080@evil.example", False),
+    ("null", "127.0.0.1:8080", False),
+])
+def test_proxy_authority_origin_policy(account_factory, path, origin, host, allowed):
+    app, repo, _, _ = account_factory(trust_proxy_headers=False)
+    headers = {**HEADERS, "Host": host}
+    if origin is not None:
+        headers["Origin"] = origin
+    with TestClient(app) as api:
+        response = api.post("/api/v1" + path, headers=headers, json={
+            "session_id": "s", "message": "你好", "username": "Alice_01", "password": "A-unique-password!"})
+        if allowed:
+            assert response.status_code == (201 if path.endswith("register") else 401 if path.endswith("login") else 200)
+        else:
+            assert response.status_code == 403 and response.json()["code"] == 40301
+            assert not repo.users
+            app.state.services.faq_lookup.assert_not_called()
+
+
+@pytest.mark.parametrize("trust", [False, True])
+def test_forwarded_headers_cannot_override_raw_host_for_origin(account_factory, trust):
+    app, _, _, _ = account_factory(trust_proxy_headers=trust)
+    with TestClient(app, client=("127.0.0.1", 50000)) as api:
+        response = api.post("/api/v1/auth/register", headers={
+            **HEADERS, "Host": "127.0.0.1:8080", "Origin": "https://evil.example",
+            "X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "https",
+            "Forwarded": "host=evil.example;proto=https",
+        }, json={"username": "Alice_01", "password": "A-unique-password!"})
+        assert response.status_code == 403
+        cookie = response.headers["set-cookie"]
+        assert ("Secure" in cookie) == trust
+
+
+def test_ambiguous_host_and_origin_headers_rejected(account_factory):
+    app, _, _, _ = account_factory()
+    with TestClient(app) as api:
+        for headers in (
+            [("Host", "testserver"), ("Host", "evil.example"), ("Origin", "http://testserver")],
+            [("Origin", "http://testserver"), ("Origin", "https://evil.example")],
+        ):
+            assert api.post("/api/v1/chat", headers=headers, json={"session_id": "s", "message": "你好"}).status_code == 403
+
+
 def test_missing_username_never_accumulates_locks_but_still_checks_dummy_hash(account_factory):
     app, _, redis, _ = account_factory()
     store = app.state.accounts.store
@@ -150,7 +208,7 @@ def test_missing_username_never_accumulates_locks_but_still_checks_dummy_hash(ac
                 patch.object(store, "login_failure", wraps=store.login_failure) as failure:
             for _ in range(6):
                 response = login(api, "Future_01", "incorrect")
-                assert response.status_code == 401 and response.json()["message"] == "用户名或密码错误"
+                assert response.status_code == 401 and response.json()["message"] == "账号不存在" and response.json()["code"] == 40102
             assert verify.call_count == 6
             check_lock.assert_not_called()
             failure.assert_not_called()

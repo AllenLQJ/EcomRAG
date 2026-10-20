@@ -10,7 +10,8 @@ from ipaddress import ip_address, ip_network
 
 from app.account_repo import AccountRepo
 from app.account_store import AccountStore, SESSION_TTL, unavailable
-from app.contracts import AppError, INVALID_ARGUMENT, UNAUTHORIZED
+from app.contracts import (AppError, INVALID_USERNAME, INVALID_PASSWORD, UNAUTHORIZED,
+                           ACCOUNT_NOT_FOUND, INCORRECT_PASSWORD)
 from app.executor import BoundedExecutor
 from app.message_limits import bounded_message
 
@@ -27,21 +28,21 @@ WEAK_PASSWORDS = frozenset({
 
 def validate_password_length(password):
     if len(password) > 64:
-        raise AppError(INVALID_ARGUMENT, 400, "密码长度须为8–64位")
+        raise AppError(INVALID_PASSWORD, 400, "密码长度须为8–64位")
 
 
 def validate_registration(username, password):
     validate_password_length(password)
     if not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
-        raise AppError(INVALID_ARGUMENT, 400, "用户名须为3–20位英文字母、数字或下划线")
+        raise AppError(INVALID_USERNAME, 400, "用户名须为3–20位英文字母、数字或下划线")
     if not 8 <= len(password) <= 64:
-        raise AppError(INVALID_ARGUMENT, 400, "密码长度须为8–64位")
+        raise AppError(INVALID_PASSWORD, 400, "密码长度须为8–64位")
     if password.lower() == username.lower():
-        raise AppError(INVALID_ARGUMENT, 400, "密码不能与用户名相同")
+        raise AppError(INVALID_PASSWORD, 400, "密码不能与用户名相同")
     if password.isdigit():
-        raise AppError(INVALID_ARGUMENT, 400, "密码不能为纯数字")
+        raise AppError(INVALID_PASSWORD, 400, "密码不能为纯数字")
     if password.lower() in WEAK_PASSWORDS:
-        raise AppError(INVALID_ARGUMENT, 400, "密码过于常见，请使用更安全的密码")
+        raise AppError(INVALID_PASSWORD, 400, "密码过于常见，请使用更安全的密码")
 
 
 def hash_password(password, n=32768, *, salt=None):
@@ -194,7 +195,9 @@ class AccountService:
             # 不为不存在的用户名创建锁定；按不可复用的账号 id 隔离旧用户名计数。
             if user is not None:
                 self.store.login_failure(user["id"])
-            raise AppError(UNAUTHORIZED, 401, "用户名或密码错误")
+            if user is None:
+                raise AppError(ACCOUNT_NOT_FOUND, 401, "账号不存在")
+            raise AppError(INCORRECT_PASSWORD, 401, "密码错误")
         token = secrets.token_urlsafe(32)
         def issue():
             self.store.new_session(user["id"], token, old_token, signature=self.signature("session", token))
@@ -220,7 +223,7 @@ class AccountService:
             self.store.check_lock(user["id"])
             if not self._password_check(password, user):
                 self.store.login_failure(user["id"])
-                raise AppError(UNAUTHORIZED, 401, "用户名或密码错误")
+                raise AppError(INCORRECT_PASSWORD, 401, "密码错误")
             self.repo.delete_user(user["id"], lambda: self.store.revoke_all(user["id"]))
         await self.executor.run(remove)
 
