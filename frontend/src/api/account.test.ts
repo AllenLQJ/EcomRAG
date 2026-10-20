@@ -65,7 +65,8 @@ describe('shared account/history transport policy', () => {
     expect(mock.calls('/chat/stream')).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('adds X-Requested-With only to account/history writes and includes Cookie policy everywhere', async () => {
+  it.each(['', '/gateway', window.location.origin, 'https://api.example.test/'])('shares Cookie and X-Requested-With policy across all transports (base=%s)', async base => {
+    vi.stubEnv('VITE_API_BASE', base);
     const mock = accountMock(userIdentity());
     await accountAPI.me();
     await accountAPI.authenticate('register', 'demo_123', 'demo_pass_123');
@@ -84,7 +85,7 @@ describe('shared account/history transport policy', () => {
     mock.overrides['POST /chat/stream'] = () => stream.response;
     await sendChatStream(request, vi.fn());
     for (const [url, init] of mock.fetchMock.mock.calls) {
-      expect(init?.credentials).toBe('same-origin');
+      expect(init?.credentials).toBe(base.startsWith('https://api.') ? 'include' : 'same-origin');
       const mutation = ['POST', 'PATCH', 'DELETE'].includes(init?.method || 'GET');
       expect(new Headers(init?.headers).get('X-Requested-With')).toBe(mutation && !url.includes('/chat') ? 'ecomrag' : null);
     }
@@ -106,12 +107,21 @@ describe('shared account/history transport policy', () => {
     if (elapsedMs === 6000) expect(body.elapsed_ms).toBe(6000);
     else expect(body).not.toHaveProperty('elapsed_ms');
   });
-  it('joins the configured API base for auth and history without changing Cookie policy', async () => {
+  it('joins the cross-origin API base for auth and history and includes credentials', async () => {
     vi.stubEnv('VITE_API_BASE', 'https://api.example.test/');
     const mock = accountMock(userIdentity()); await accountAPI.me(); await conversationsAPI.list();
     expect(mock.fetchMock.mock.calls.map(([url]) => url)).toEqual([
       'https://api.example.test/api/v1/auth/me', 'https://api.example.test/api/v1/conversations',
     ]);
+    for (const [, init] of mock.fetchMock.mock.calls) expect(init?.credentials).toBe('include');
+  });
+  it.each([[404, 40401], [503, 50302], [429, 42903], [500, 59999]])('does not replay a streaming HTTP business rejection (%s/%s)', async (status, code) => {
+    const mock = accountMock(userIdentity());
+    mock.overrides['POST /chat/stream'] = () => json({ code, message: '业务拒绝', request_id: 'rejected' }, status);
+    await expect(sendChatStream(request, vi.fn())).rejects.toMatchObject({ code, status, requestId: 'rejected' });
+    expect(mock.calls('/chat/stream')).toHaveLength(1);
+    expect(mock.calls('/chat')).toHaveLength(0);
+    expect(mock.fetchMock).toHaveBeenCalledOnce();
   });
   it.each([40001, 40002, 40003, 40101, 40102, 40103, 40301, 40401, 40901, 42903, 50301])('preserves envelope fields for business error %s', async code => {
     const mock = accountMock();
@@ -153,7 +163,7 @@ describe('shared account/history transport policy', () => {
     await expect(transport === 'json' ? sendChat(request) : sendChatStream(request, vi.fn())).rejects.toMatchObject({ code: 42902, limitScope: 'guest' });
     expect(mock.fetchMock).toHaveBeenCalledOnce();
   });
-  it('aborts an unresponsive identity lookup so entry can offer guest access', async () => {
+  it('aborts an unresponsive identity lookup after 15 seconds', async () => {
     vi.useFakeTimers();
     const mock = accountMock();
     mock.overrides['GET /auth/me'] = init => new Promise<Response>((_resolve, reject) => {

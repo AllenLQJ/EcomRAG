@@ -24,5 +24,5 @@ export function validateCredentials(username: string, password: string, mode: 'l
   if (mode === 'register' && length > 64) return '密码须为 8–64 位。';
   if (username.length < 3 || username.length > 20 || /[^A-Za-z0-9_]/.test(username)) return '用户名须为 3–20 位，仅含字母、数字或下划线。';
   if (mode === 'register') return registrationPasswordRules(username, password).find(rule => !rule.satisfied)?.error;
-  if (length < 8 || length > 64) return '密码须为 8–64 位。';
+  if (length > 64) return '密码最多 64 位。';
 }

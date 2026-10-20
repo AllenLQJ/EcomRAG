@@ -7,7 +7,8 @@ export function apiFetch(path: string, init: RequestInit = {}, chat = false): Pr
   const headers = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries())
     : Array.isArray(init.headers) ? Object.fromEntries(init.headers) : { ...init.headers };
   if (!chat && ['POST', 'PATCH', 'DELETE'].includes(init.method || 'GET')) headers['X-Requested-With'] = 'ecomrag';
-  return fetch(`${base}/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
+  const crossOrigin = Boolean(base) && new URL(base, window.location.href).origin !== window.location.origin;
+  return fetch(`${base}/api/v1${path}`, { ...init, headers, credentials: crossOrigin ? 'include' : 'same-origin' });
 }
 
 export function responseError(body: unknown, status?: number): ChatError {

@@ -24,10 +24,16 @@ describe('conversation history navigation', () => {
     expect(button).not.toHaveAttribute('aria-hidden');
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
     const hoverOnly = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/)?.[1];
-    expect(hoverOnly).toContain('.history-rename { opacity: 0; }');
+    expect(hoverOnly).toContain('.history-rename, .history-delete { opacity: 0; }');
     expect(hoverOnly).toContain('.group:hover .history-rename');
     expect(hoverOnly).toContain('.group:focus-within .history-rename');
     expect(button.className).not.toMatch(/hidden|opacity-0|invisible/);
+    const deletion = screen.getByRole('button', { name: '删除对话：当前' });
+    expect(deletion).toHaveClass('history-delete', 'min-h-11', 'min-w-11');
+    expect(deletion.className).not.toMatch(/hidden|opacity-0|invisible|lg:/);
+    expect(hoverOnly).toContain('.group:hover .history-delete');
+    expect(hoverOnly).toContain('.group:focus-within .history-delete');
+    expect(deletion).not.toHaveAttribute('tabindex', '-1');
     button.focus();
     await userEvent.setup().keyboard('{Enter}');
     expect(screen.getByLabelText('对话标题')).toHaveFocus();

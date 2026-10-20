@@ -96,14 +96,59 @@ describe('entry and welcome lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: '以访客进入' }));
     expect(screen.getByRole('dialog', { name: '欢迎来到灵码' })).toBeInTheDocument();
   });
-  it.each(['offline', '50301'])('me failure (%s) leaves guest entry usable', async kind => {
+  it.each(['offline', '50301', 'timeout'])('keeps identity unknown after bounded me retries (%s), then allows manual recovery', async kind => {
     const mock = accountMock();
-    mock.overrides['GET /auth/me'] = () => { if (kind === 'offline') throw new TypeError('offline'); return json({ code: 50301, message: '服务暂不可用' }, 503); };
+    mock.overrides['GET /auth/me'] = init => {
+      if (kind === 'timeout') return new Promise<Response>((_resolve, reject) => {
+        init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      });
+      if (kind === 'offline') throw new TypeError('offline');
+      return json({ code: 50301, message: '服务暂不可用' }, 503);
+    };
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
     await mount();
+    expect(screen.getByRole('main', { name: '正在获取身份' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '输入问题' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '以访客进入' })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(48_000); });
+    expect(mock.calls('/auth/me')).toHaveLength(3);
+    expect(screen.getByText('暂时无法确认身份，请稍后重试。')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mock.calls('/auth/me')).toHaveLength(3);
     expect(document.querySelector('.welcome-splash')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '以访客进入' }));
+    mock.state.identity = userIdentity();
+    delete mock.overrides['GET /auth/me'];
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重新确认身份' })); });
     expect(screen.getByRole('main', { name: '客服对话' })).toBeInTheDocument();
-    expect(screen.getByRole('dialog', { name: '欢迎来到灵码' })).toBeInTheDocument();
+    expect(screen.getByText(testUser.username)).toBeInTheDocument();
+    expect(screen.getByText('今日剩余 50/50 次')).toBeInTheDocument();
+    expect(mock.calls('/auth/me')).toHaveLength(4);
+  });
+  it('recovers an authenticated Cookie on automatic me retry without ever mounting guest chat', async () => {
+    const mock = accountMock(userIdentity());
+    let attempts = 0;
+    mock.overrides['GET /auth/me'] = () => {
+      if (++attempts === 1) throw new TypeError('offline');
+      return json(mock.state.identity);
+    };
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
+    await mount();
+    expect(mock.calls('/conversations')).toHaveLength(0);
+    expect(screen.queryByRole('main', { name: '客服对话' })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(screen.getByText(testUser.username)).toBeInTheDocument();
+    expect(screen.queryByText(/5\/5/)).not.toBeInTheDocument();
+    expect(mock.calls('/conversations')).toHaveLength(1);
+    expect(mock.calls('/auth/me')).toHaveLength(2);
+  });
+  it('clears a scheduled identity retry on unmount', async () => {
+    const mock = accountMock();
+    mock.overrides['GET /auth/me'] = () => { throw new TypeError('offline'); };
+    const view = await mount();
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(mock.calls('/auth/me')).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it.each(['off', 'reduced'])('entry transition respects %s', async mode => {
     accountMock();

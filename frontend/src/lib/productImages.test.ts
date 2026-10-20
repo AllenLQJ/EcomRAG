@@ -2,6 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { productImageUrl } from './productImages';
 
 describe('product image URLs', () => {
+  it('defaults an unset image root to same-origin /images, independent of API base and page path', () => {
+    vi.stubEnv('VITE_PRODUCT_IMAGE_BASE_URL', undefined);
+    vi.stubEnv('VITE_API_BASE', 'https://api.example.test');
+    window.history.replaceState({}, '', '/chat/session');
+    expect(productImageUrl('lamp/main.webp', 'lamp')).toBe('/images/lamp/main.webp');
+  });
   it.each(['https://images.example.com/products/lamp/main.webp', 'http://images.example.com/lamp/main.svg'])('preserves a complete HTTP(S) URL: %s', url => {
     vi.stubEnv('VITE_PRODUCT_IMAGE_BASE_URL', '');
     expect(productImageUrl(url, 'lamp')).toBe(url);

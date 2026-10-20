@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatHome as App } from './App';
 import type { ChatResponse, TraceItem } from './api/types';
 import { fixtureFor } from './mocks/fixtures';
-import { mockMobile } from './test/media';
+import { mockMobile, mockViewportWidth } from './test/media';
 import { CONVERSATIONS_KEY, SESSION_KEY, TRACE_KEY } from './lib/storage';
 
 function result(question = '划痕', debug = false): ChatResponse {
@@ -305,11 +305,8 @@ describe('chat flow', () => {
     expect(screen.getByText('售后、配送、发票、商品参数，都可以问我。')).toBeInTheDocument();
   });
 
-  it.each([640, 641, 1024])('keeps the welcome limited to empty conversations at %ipx', async width => {
-    vi.stubGlobal('matchMedia', vi.fn((media: string) => ({
-      matches: media === '(min-width: 1024px)' ? width >= 1024 : width < 641,
-      addEventListener: vi.fn(), removeEventListener: vi.fn(),
-    })));
+  it.each([639, 640, 641, 1024])('keeps the welcome limited to empty conversations at %ipx', async width => {
+    mockViewportWidth(width);
     const response = result('火星');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(response)));
     const view = render(<App />);

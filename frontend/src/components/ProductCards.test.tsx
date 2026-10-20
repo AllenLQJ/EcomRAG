@@ -10,7 +10,7 @@ describe('product cards', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it.each([1, 2, 3])('renders %i cards in server order with names, categories and up to two highlights', count => {
+  it.each([1, 2, 3, 6, 12])('renders %i cards in server order with names, categories and up to two highlights', count => {
     const products = Array.from({ length: count }, (_, index) => product(`lamp-${index}`));
     render(<ProductCards products={products} />);
     const section = screen.getByRole('region', { name: '资料关联商品' });
@@ -22,12 +22,12 @@ describe('product cards', () => {
     expect(section).not.toHaveTextContent(/价格|库存/);
   });
 
-  it('caps at three cards and two highlights, and renders highlight HTML as plain text', () => {
-    const products = Array.from({ length: 4 }, (_, index) => ({ ...product(`lamp-${index}`),
+  it('bounds cards by the response contract and highlights to two, and renders highlight HTML as plain text', () => {
+    const products = Array.from({ length: 13 }, (_, index) => ({ ...product(`lamp-${index}`),
       highlights: ['<b>额定功率：6 瓦</b>', '连接方式：USB', '不应显示的第三条规格'], price: 199, stock: 10 }));
     const { container } = render(<ProductCards products={products} />);
-    expect(screen.getAllByRole('heading')).toHaveLength(3);
-    expect(screen.getAllByText('<b>额定功率：6 瓦</b>')).toHaveLength(3);
+    expect(screen.getAllByRole('heading')).toHaveLength(12);
+    expect(screen.getAllByText('<b>额定功率：6 瓦</b>')).toHaveLength(12);
     expect(screen.queryByText('不应显示的第三条规格')).not.toBeInTheDocument();
     expect(container.querySelector('b')).toBeNull();
     expect(container).not.toHaveTextContent('199');
@@ -42,8 +42,22 @@ describe('product cards', () => {
   it('uses a single column on narrow screens and semantic tokens for both color schemes', () => {
     render(<ProductCards products={[product()]} />);
     const grid = screen.getAllByRole('list')[0];
-    expect(grid).toHaveClass('grid', 'grid-cols-1', 'sm:grid-cols-2', 'md:grid-cols-3');
+    expect(grid).toHaveClass('grid', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
     expect(grid.firstElementChild).toHaveClass('bg-card', 'text-ink', 'dark:bg-ink', 'dark:text-card');
+  });
+
+  it('keeps six equal-size cards inside the chat width across multiple rows', () => {
+    render(<ProductCards products={Array.from({ length: 6 }, (_, index) => product(`lamp-${index}`))} />);
+    const section = screen.getByRole('region', { name: '资料关联商品' });
+    expect(section).toHaveClass('min-w-0', 'max-w-full');
+    const grid = within(section).getAllByRole('list')[0];
+    expect(grid).toHaveClass('grid', 'auto-rows-fr', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
+    expect(grid.children).toHaveLength(6);
+    Array.from(grid.children).forEach(card => {
+      expect(card).toHaveClass('flex', 'h-full', 'min-w-0', 'flex-col', 'overflow-hidden');
+      expect(card.firstElementChild).toHaveClass('aspect-[4/3]', 'w-full', 'shrink-0');
+      expect(card).toHaveClass('bg-card', 'text-ink', 'dark:bg-ink', 'dark:text-card');
+    });
   });
 
   it('reserves image space, supplies product alt text and lazy loading, then replaces failed images', () => {

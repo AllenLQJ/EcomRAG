@@ -42,5 +42,9 @@ describe('registration rules matching backend/app/auth.py', () => {
   it('keeps registration strength rules out of login', () => {
     expect(validateCredentials('password', 'password', 'login')).toBeUndefined();
     expect(validateCredentials('abc', '12345678', 'login')).toBeUndefined();
+    for (const password of ['', '1', '1234567', '😀'.repeat(64)]) {
+      expect(validateCredentials('abc', password, 'login')).toBeUndefined();
+    }
+    expect(validateCredentials('abc', '😀'.repeat(65), 'login')).toBe('密码最多 64 位。');
   });
 });

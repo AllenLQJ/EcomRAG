@@ -18,7 +18,7 @@ npm run dev
 uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-proxy-headers --reload
 ```
 
-默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。仅看本地固定聊天响应用 `VITE_MOCK=1 npm run dev`；账号与历史仍请求 API，未连接后端时身份查询失败会显示可用的访客入口。
+默认浏览器向同源 `/api/v1/chat/stream` 请求，Vite 把 `/api` 转到 `http://127.0.0.1:8010`；不代理 `/health`。后端依赖、入库及启动准备见[根 README](../README.md)。聊天 fixtures 可用 `VITE_MOCK=1 npm run dev`；账号与历史仍请求 API，未连接后端时保持身份未知并有限重试，不直接开放访客聊天。
 
 ```bash
 npm test             # Vitest 单次运行
@@ -49,7 +49,7 @@ VITE_STORE_NAME=灵码 VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev
 | VITE_STREAM | `1` | 默认 SSE；严格为 0 才只走 JSON |
 | VITE_SHOW_TRACE_TOGGLE | `0` | 严格为 1 时向所有访客显示「查看链路」入口，仅演示使用 |
 
-客户端变量构建时注入，变更后重启开发服务器或重新构建；VITE_* 不能放任何凭据。生产托管 dist，并同源反代 /api；VITE_API_BASE 可指定 API 基础地址，但所有请求固定使用 credentials: same-origin，跨源地址不会携带 Cookie，账号联调应使用 Vite 同源代理或生产同源反代。无健康检查轮询。
+客户端变量构建时注入，变更后重启开发服务器或重新构建；VITE_* 不能放任何凭据。生产托管 dist，并同源反代 /api；VITE_API_BASE 可指定 API 基础地址，同源请求使用 credentials: same-origin，跨源绝对基址使用 include，覆盖账号、历史、JSON 与 SSE。跨源仍需服务端允许凭据的 CORS，跨站 Cookie 受 SameSite 限制，建议同站部署。无健康检查轮询。
 
 ## 流式回答与兜底
 
@@ -91,7 +91,7 @@ VITE_SHOW_TRACE_TOGGLE=1、URL `?debug=1` 或 `localStorage['ecomrag.debug']='1'
 
 `VITE_MOCK=1 npm run dev` 使用固定关键词响应：秒回→cache、划痕→带三条引用 RAG、火星→拒答、你好→闲聊、退货→FAQ、限流/超时→42901/50401，其余→预设 RAG。错误关键词优先，划痕优先于退货；Mock 不生成新政策，接收 history 但不据此推理。JSON 模拟等待 600–1500ms；流式先发阶段，再按 Unicode 字符每 30–60ms 增量输出，is_mock=true。Mock trace 标注本地模拟耗时，不代表实际性能。
 
-手机宽度 <641px 时欢迎标题与说明仅在当前会话无消息时显示，首条消息发出后隐藏，新建空会话后恢复；桌面行为不变。输入框下方仅保留字数。上滑阅读时保留位置，接近底部才自动跟随；手机快捷问题默认收起。生成中 aria-busy 抑制逐字播报，终态显示完整答案或错误。浏览器软键盘、真实 IME、读屏和实际代理传输需实测。
+手机宽度 ≤639px 时欢迎标题与说明仅在当前会话无消息时显示，首条消息发出后隐藏，新建空会话后恢复；桌面行为不变。Tailwind sm 从 640px 开始，与 useMobile 的 max-width: 639px 对齐。输入框下方仅保留字数。上滑阅读时保留位置，接近底部才自动跟随；手机快捷问题默认收起。生成中 aria-busy 抑制逐字播报，终态显示完整答案或错误。浏览器软键盘、真实 IME、读屏和实际代理传输需实测。
 
 ## 目录
 
@@ -137,17 +137,17 @@ frontend/
 ## 入口、账号与配额
 
 - 启动先 GET `/api/v1/auth/me`。已登录直接进入首页，欢迎动效仍遵循每个标签页会话一次；未登录且本会话未选择访客时显示全屏入口页，该页不挂载 WelcomeSplash，也没有入场动画。
-- 入口按确认样式呈现：直接引用现有 `/brand/lingma-b-seal.svg`，桌面 104px、手机（<641px）84px；其下为 30px 衬线店名、可配置的 15px 品牌标语及带两侧细线的「智能客服」。字体使用既有 Noto Serif SC / Songti SC / serif 字体栈，不下载字体。
+- 入口按确认样式呈现：直接引用现有 `/brand/lingma-b-seal.svg`，桌面 104px、手机（≤639px）84px；其下为 30px 衬线店名、可配置的 15px 品牌标语及带两侧细线的「智能客服」。字体使用既有 Noto Serif SC / Songti SC / serif 字体栈，不下载字体。
 - 内容最大宽 360px，左右至少留 16px，品牌与卡片间隔 30px。白底卡片采用 0.5px 细边框、16px 圆角、22px 内边距；输入框高 44px，墨色提交与访客次要按钮均高 46px，中间显示「或」。注册提交文案为「注册并进入」，提示条含演示密码提醒；卡片下方间隔 16px 显示模拟店铺免责声明（复用 `shopInfo.ts`）。颜色使用现有设计令牌，入口专用样式不修改聊天首页或弹窗的布局。
 - 入口页登录、注册成功或点击「以访客进入」时，先清除 `sessionStorage['lingma.welcome.v1']` 再挂载首页，沿用 `VITE_WELCOME_ANIMATION` 与 prefers-reduced-motion。`sessionStorage['lingma.entry.guest.v1']='1'` 记录访客选择，刷新保留，标签页会话结束后失效；浏览器的恢复标签页功能可能恢复 sessionStorage。存储被禁用时当前页面仍可进入。
-- 访客在侧栏打开「登录/注册」弹窗，复用入口表单；弹窗支持 Esc、焦点圈定与关闭后焦点恢复，不重播欢迎动效。退出登录、注销账号成功后清除上述两键，返回没有欢迎动效的入口页；游客 localStorage 历史仍保留。
-- 用户名校验为 3–20 位字母、数字、下划线，密码为 8–64 个 Unicode 字符；密码输入使用 current-password / new-password。注册明确提示演示站点勿使用真实常用密码。提交时防重复，42903 根据 retry_after_seconds 倒计时。注销账号须在二次确认弹窗输入密码。
-- 侧栏展示服务端 quota 中的 remaining/limit；每次聊天请求结束（成功、错误）重新查询身份与配额。42902 使用 limit_scope 展示访客登录引导或账号明天再试，并阻止继续发送，仍可编辑输入内容。身份查询失败时提供可用访客入口，后续配额查询失败保留最后数据并提示；账号/历史请求有 15 秒超时。
+- 访客在侧栏打开「登录/注册」弹窗，复用入口表单；弹窗支持 Esc、焦点圈定与关闭后焦点恢复，不重播欢迎动效。开始退出登录时立即中止流式并禁用 Composer；退出登录、注销账号成功后清除上述两键，返回没有欢迎动效的入口页；游客 localStorage 历史仍保留。访客流式中登录成功也会中止旧流式，账号聊天使用独立历史。
+- 用户名校验为 3–20 位字母、数字、下划线；注册密码为 8–64 个 Unicode 字符，并校验强度。登录密码仅拦截超过 64 字符的输入，短口令交给服务端认证，不展示注册规则；密码输入使用 current-password / new-password。提交时防重复，42903 根据 retry_after_seconds 倒计时。注销账号须在二次确认弹窗输入密码。
+- 侧栏展示服务端 quota 中的 remaining/limit；每次聊天请求结束（成功、错误）重新查询身份与配额，主动取消不触发旧请求的配额刷新。42902 使用 limit_scope 展示访客登录引导或账号明天再试，并阻止继续发送，仍可编辑输入内容。启动身份查询失败时保留身份未知，不挂载聊天；分别等待 1 秒、2 秒重试，最多请求 3 次，再提供手动重试。仅成功返回 user:null 才按游客展示。后续配额查询失败保留最后数据并提示；账号/历史请求有 15 秒超时。
 - 品牌标语可用新增的 `VITE_BRAND_SLOGAN` 替换；欢迎动效配置与存储键保持原有规则，测试默认关闭，涉及动效的用例显式开启并使用假定时器。身份与密码不写入浏览器存储。
 
 ## 账号与历史接口约定
 
-所有接口前缀为 `/api/v1`，统一 API 层携带 `credentials: 'same-origin'`。账号与历史的 POST/PATCH/DELETE 添加 `X-Requested-With: ecomrag`；GET 与聊天 POST 不添加该头。
+所有接口前缀为 `/api/v1`，统一 API 层按 API 地址来源选择 credentials：同源为 `'same-origin'`，跨源为 `'include'`。账号与历史的 POST/PATCH/DELETE 添加 `X-Requested-With: ecomrag`；GET 与聊天 POST 不添加该头。SSE 的非 2xx 响应只要包含数值业务 code 就直接抛出，不通过 JSON 重发问题。
 
 | 接口 | 请求 / 返回摘要 |
 | --- | --- |
@@ -171,5 +171,7 @@ frontend/
 ## 本地联调与验收
 
 已有依赖的环境中，在 frontend 下运行 `npm test`、`npm run typecheck`、`npm run build`。新增 Entry / ServerHistory / AuthForm / API 用例全部用 fetch mock，不连接真实服务；原有聊天回归用例改为直接挂载同一个 ChatHome，保留原断言，入口与身份启动由 Entry 用例覆盖。入口样式回归同时核对固定墨印素材、品牌文案、卡片内访客入口、注册文案，以及 WelcomeSplash 和入场动画类名均不存在；配置测试覆盖标语替换与空值回退。不得以 mock 测试代替真实浏览器验收。
+
+无需读取 `.env*` 时使用 `VITE_SKIP_ENV_FILES=1 npm test` 与 `VITE_SKIP_ENV_FILES=1 npm run build`；配置跳过显式 loadEnv，并将 Vite 5 的自动环境文件搜索目录改为默认不存在的 `.vite-no-env`（请勿在其中放置配置文件）。ShopBreakpoint 用真实 Tailwind 配置生成 CSS，再按模拟视口展开媒体规则，覆盖 639/640/641px 的 CSS 可见性和 JS 行为；AuthStream 覆盖流式中登出、重新登录和游客流式中登录。
 
 获准进行真实联调后，可用 `VITE_PROXY_TARGET=http://127.0.0.1:8010 npm run dev` 将浏览器同源 `/api` 代理给另一任务提供的后端；无需配置跨源 Cookie。验证登录 Cookie、配额实际扣减、服务器标题/消息持久化、跨设备历史和错误信封，再在真实手机检查软键盘、焦点与动效。真实浏览器及后端联调必须由总控验收；本次开发不运行真实后端、不联网、不安装依赖。

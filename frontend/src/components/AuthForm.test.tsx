@@ -12,12 +12,23 @@ describe('shared login/register form', () => {
   it.each([
     ['ab', '12345678', '用户名'], ['a'.repeat(21), '12345678', '用户名'],
     ['用户名', '12345678', '用户名'], ['has space', '12345678', '用户名'],
-    ['abc-', '12345678', '用户名'], ['abc', '1234567', '密码'], ['abc', 'x'.repeat(65), '密码'],
+    ['abc-', '12345678', '用户名'], ['abc', 'x'.repeat(65), '密码'],
   ])('validates %s / password length before fetching', async (username, password, reason) => {
     const mock = accountMock(); render(<AuthForm onSuccess={vi.fn()} />);
     fill(username, password); fireEvent.click(screen.getByRole('button', { name: '登录' }));
     expect(screen.getByRole('alert')).toHaveTextContent(reason);
     expect(mock.fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(['', '1', '1234567'])('submits short login passwords to server authentication (%j)', async password => {
+    const mock = accountMock();
+    mock.overrides['POST /auth/login'] = () => json({ code: 40103, message: '密码错误' }, 401);
+    render(<AuthForm onSuccess={vi.fn()} />);
+    fill('demo_123', password);
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('密码错误');
+    expect(mock.calls('/auth/login')).toHaveLength(1);
+    expect(JSON.parse(String(mock.calls('/auth/login')[0][1]?.body))).toEqual({ username: 'demo_123', password });
+    expect(screen.queryByText(/8–64/)).not.toBeInTheDocument();
   });
   it.each([['Ab_', 'x'.repeat(8)], ['A'.repeat(20), 'x'.repeat(64)], ['abc', '😀'.repeat(8)]])('accepts boundary credentials for %s', (username, password) => {
     expect(validateCredentials(username, password)).toBeUndefined();

@@ -115,7 +115,7 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
         requestId: failure.requestId, limitScope: failure.limitScope, question };
       finish(message);
     } finally {
-      if (mounted.current) { onSettled?.(); if (chatStarted) void refreshConversations(); }
+      if (mounted.current && current()) { onSettled?.(); if (chatStarted) void refreshConversations(); }
       if (epoch.current === generation && active.current === controller) {
         active.current = null;
         setPending(false);
@@ -217,7 +217,7 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
     } catch (error) { if (mounted.current) setHistoryError(`重命名失败。${accountError(error)}`); return false; }
   }, [remote]);
 
-  return { sessionId, conversations, messages, pending: pending || historyBusy, historyError, refreshConversations, renameConversation, progress, send, reset, selectConversation, deleteConversation, clearConversations };
+  return { sessionId, conversations, messages, pending: pending || historyBusy, historyError, refreshConversations, renameConversation, progress, send, cancel, reset, selectConversation, deleteConversation, clearConversations };
 }
 
 function serverMessages(detail: ConversationDetail): ChatMessage[] {

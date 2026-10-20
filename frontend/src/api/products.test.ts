@@ -54,12 +54,12 @@ describe('optional product response metadata', () => {
   });
 
   it('bounds UTF-8 metadata including JSON escaping before storage', () => {
-    const products = Array.from({ length: 3 }, (_, index) => ({ ...product(`lamp-${index}`),
+    const products = Array.from({ length: 6 }, (_, index) => ({ ...product(`lamp-${index}`),
       name: '灯'.repeat(160), category: '灯'.repeat(64), highlights: ['灯'.repeat(256), '\u0000'.repeat(256)],
       image_url: 'https://images.example.com/' + 'a'.repeat(1900) }));
     const bounded = normalizeProducts(products)!;
     expect(bounded.length).toBeGreaterThan(0);
-    expect(bounded.length).toBeLessThan(3);
+    expect(bounded.length).toBeLessThan(6);
     expect(new TextEncoder().encode(JSON.stringify(bounded)).byteLength).toBeLessThanOrEqual(MAX_PRODUCTS_BYTES);
   });
 });

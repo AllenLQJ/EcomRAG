@@ -26,8 +26,13 @@ function faviconPlugin(): Plugin {
 }
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), 'VITE_');
+  // Allow checks to run without reading local configuration or secrets.
+  const skipEnvFiles = process.env.VITE_SKIP_ENV_FILES === '1';
+  const env = skipEnvFiles ? process.env : loadEnv(mode, process.cwd(), 'VITE_');
   return {
+    // Vite 5 expects a directory string. Keep its automatic search away from
+    // local configuration by pointing at an intentionally absent directory.
+    envDir: skipEnvFiles ? './.vite-no-env' : undefined,
     plugins: [react(), faviconPlugin()],
     server: {
       port: 3000,

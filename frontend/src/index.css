@@ -52,7 +52,7 @@
     .shop-info-button:hover { @apply border-canvas; }
   }
   .entry-footer { @apply mt-4 text-center text-xs leading-relaxed text-general-dot; }
-  @media (max-width: 640px) {
+  @media (max-width: 639px) {
     .entry-logo { width: 84px; height: 84px; }
   }
   .welcome-splash {
@@ -176,14 +176,11 @@
 
 /* Touch/no-hover devices keep the compact 44px action visible at every width. */
 @media (hover: hover) {
-  .history-rename { opacity: 0; }
-  .group:hover .history-rename, .group:focus-within .history-rename { opacity: 1; }
+  .history-rename, .history-delete { opacity: 0; }
+  .group:hover .history-rename, .group:focus-within .history-rename,
+  .group:hover .history-delete, .group:focus-within .history-delete { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
-}
-
-@media (hover: none) {
-  .history-delete { opacity: 1; }
 }

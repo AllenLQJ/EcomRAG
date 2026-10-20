@@ -88,9 +88,10 @@ export async function sendChatStream(
     }, true);
     const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
     if (!response.ok) {
-      const failure = responseError(await response.json().catch(() => null));
+      const body: unknown = await response.json().catch(() => null);
+      const failure = responseError(body, response.status);
       // Business rejections must not repeat a question through the JSON fallback.
-      if ([40001, 40101, 40301, 42901, 42902, 50301].includes(failure.code)) { received = true; throw failure; }
+      if (isRecord(body) && typeof body.code === 'number') received = true;
       throw failure;
     }
     if (contentType !== 'text/event-stream' || !response.body) {

@@ -6,7 +6,7 @@ import { productImageUrl } from '../lib/productImages';
 function ProductImage({ product }: { product: ProductCard }) {
   const src = productImageUrl(product.image_url, product.sku);
   const [failedSrc, setFailedSrc] = useState<string>();
-  return <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-canvas dark:bg-body-muted">
+  return <div className="flex aspect-[4/3] w-full shrink-0 items-center justify-center overflow-hidden bg-canvas dark:bg-body-muted">
     {src && src !== failedSrc
       ? <img src={src} alt={product.name} loading="lazy" decoding="async" width={400} height={300}
         className="h-full w-full object-contain" onError={() => setFailedSrc(src)} />
@@ -23,12 +23,12 @@ function ProductImage({ product }: { product: ProductCard }) {
 export function ProductCards({ products }: { products?: ProductCard[] }) {
   const cards = normalizeProducts(products);
   if (!cards) return null;
-  return <section aria-label="资料关联商品">
+  return <section aria-label="资料关联商品" className="min-w-0 max-w-full">
     <p className="mb-2 text-xs text-muted dark:text-outline">资料关联商品</p>
-    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-      {cards.map(product => <li key={product.sku} className="min-w-0 overflow-hidden rounded-card border border-line bg-card text-ink dark:border-muted dark:bg-ink dark:text-card">
+    <ul className="grid auto-rows-fr grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {cards.map(product => <li key={product.sku} className="flex h-full min-w-0 flex-col overflow-hidden rounded-card border border-line bg-card text-ink dark:border-muted dark:bg-ink dark:text-card">
         <ProductImage product={product} />
-        <div className="space-y-2 p-3">
+        <div className="min-w-0 space-y-2 break-words p-3">
           <h3 className="break-words text-sm font-semibold">{product.name}</h3>
           <p className="text-xs text-muted dark:text-outline">{product.category}</p>
           <ul className="list-disc space-y-1 break-words pl-4 text-xs leading-relaxed text-body-muted dark:text-line">

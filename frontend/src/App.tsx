@@ -27,6 +27,8 @@ function resetWelcome() { try { sessionStorage.removeItem(WELCOME_KEY); } catch 
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
+  const [identityCheck, setIdentityCheck] = useState(0);
+  const [identityFailed, setIdentityFailed] = useState(false);
   const [entry, setEntry] = useState(true);
   const [authOpen, setAuthOpen] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
@@ -43,16 +45,27 @@ export default function App() {
   useEffect(() => { document.title = `${name} · 客服中心`; }, [name]);
   useEffect(() => {
     const controller = new AbortController();
-    accountAPI.me(controller.signal).then(data => {
-      if (controller.signal.aborted) return;
-      setIdentity(data); setEntry(!data.user && !guestSelected());
-    }).catch(() => {
-      if (controller.signal.aborted) return;
-      setIdentity(guestIdentity()); setEntry(!guestSelected());
-      setNotice('暂时无法获取身份与配额，你仍可先以访客进入。');
-    });
-    return () => controller.abort();
-  }, []);
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    setIdentityFailed(false); setNotice('');
+    function lookup() {
+      attempts += 1;
+      void accountAPI.me(controller.signal).then(data => {
+        if (controller.signal.aborted) return;
+        setIdentity(data); setEntry(!data.user && !guestSelected()); setNotice('');
+      }).catch(() => {
+        if (controller.signal.aborted) return;
+        if (attempts < 3) {
+          setNotice('身份确认失败，正在重试…');
+          retryTimer = setTimeout(lookup, attempts * 1000);
+        } else {
+          setIdentityFailed(true); setNotice('暂时无法确认身份，请稍后重试。');
+        }
+      });
+    }
+    lookup();
+    return () => { controller.abort(); clearTimeout(retryTimer); };
+  }, [identityCheck]);
 
   const refreshQuota = useCallback(() => {
     const generation = authEpoch.current;
@@ -89,7 +102,10 @@ export default function App() {
     catch (error) { setNotice(accountError(error)); }
     finally { setLoggingOut(false); }
   }
-  if (!identity) return <main className="app-shell flex items-center justify-center bg-canvas text-sm text-muted" aria-label="正在获取身份">正在连接客服中心…</main>;
+  if (!identity) return <main className="app-shell flex flex-col items-center justify-center gap-3 bg-canvas text-sm text-muted" aria-label="正在获取身份">
+    <p role="status">{notice || '正在连接客服中心…'}</p>
+    {identityFailed && <button type="button" className="secondary-button" onClick={() => setIdentityCheck(value => value + 1)}>重新确认身份</button>}
+  </main>;
   if (entry) return <main aria-label="入口登录页" className="entry-page">
     <div className="w-full max-w-[360px]">
       <AuthPanel onSuccess={authenticated} onGuest={enterGuest} />
@@ -135,7 +151,8 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   const traceVisible = traceToggleVisible();
   const [traceEnabled, setTraceEnabled] = useState(() => traceVisible && loadTraceEnabled());
   const showTrace = traceVisible && traceEnabled;
-  const { sessionId, conversations, messages, pending, progress, send, reset, selectConversation, deleteConversation, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded, onAuthRequired });
+  const { sessionId, conversations, messages, pending, progress, send, cancel, reset, selectConversation, deleteConversation, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded, onAuthRequired });
+  useLayoutEffect(() => { if (loggingOut) cancel(); }, [loggingOut, cancel]);
   useEffect(() => { saveTraceEnabled(showTrace); }, [showTrace]);
   const [draft, setDraft] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
@@ -155,7 +172,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   }, [pending]);
 
   function submit(question: string) {
-    if (pending || exhausted) return;
+    if (pending || exhausted || loggingOut) return;
     const generation = draftEpoch.current;
     setDraft('');
     void send(question).then(sent => { if (!sent && generation === draftEpoch.current) setDraft(previous => previous || question); });
@@ -219,7 +236,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
         <div className="mx-auto w-full max-w-chat space-y-8 pb-6 pt-6 sm:pt-10">
           {!mobile && messages.length === 0 && welcome}
           {messages.map(message => <ChatMessage key={message.id} message={message} pending={pending} showTrace={showTrace} supportUrl={supportUrl}
-            onLogin={onLogin} quotaRole={identity.user ? 'user' : 'guest'} onRetry={(question, id) => { if (!exhausted) void send(question, id); }}
+            onLogin={onLogin} quotaRole={identity.user ? 'user' : 'guest'} onRetry={(question, id) => { if (!exhausted && !loggingOut) void send(question, id); }}
             onRephrase={question => { setDraft(question); input.current?.focus(); }} />)}
           {pending && (progress?.text ? <StreamingMessage text={progress.text} /> : <LoadingMessage stage={progress?.stage} />)}
         </div>
@@ -233,7 +250,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
       {exhausted && <div role="status" className="mx-auto w-full max-w-chat px-4 py-2 text-sm text-fallback-text">
         {(quotaScope || identity.quota.role) === 'guest' ? <>访客今日次数已用完，登录后每天可提问 50 次。<button type="button" className="secondary-button ml-2" onClick={onLogin}>登录/注册</button></> : '今日提问次数已用完，请明天再试。'}
       </div>}
-      <Composer ref={input} blocked={exhausted} value={draft} onChange={setDraft} onSend={submit} pending={pending} shopAction={mobile ? shopAction : undefined} />
+      <Composer ref={input} blocked={exhausted || loggingOut} value={draft} onChange={setDraft} onSend={submit} pending={pending || Boolean(loggingOut)} shopAction={mobile ? shopAction : undefined} />
     </main>
     </div>
     {shopOpen && <ShopInfo onClose={() => setShopOpen(false)} onCategory={question => { setShopOpen(false); setDraft(question); window.setTimeout(() => input.current?.focus(), 0); }} />}

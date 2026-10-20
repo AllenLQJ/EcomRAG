@@ -52,7 +52,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
               {onRename && <button type="button" aria-label={`重命名对话：${item.title}`} className="history-rename min-h-11 min-w-11 rounded-card text-xs text-muted"
                 onClick={() => { setConfirmation(null); setEditing({ id: item.id, title: item.title }); }}>改名</button>}
               <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation({ id: item.id })}
-                className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
+                className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink">
                 <svg aria-hidden="true" viewBox="0 0 24 24" className="mx-auto h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" /></svg>
               </button>
             </div>

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatHome as App } from './App';
 import { loadConversations, saveConversations, SESSION_KEY } from './lib/storage';
 import { conversation } from './test/conversations';
-import { mockMobile } from './test/media';
+import { mockMobile, mockViewportWidth } from './test/media';
 import { controlledSSE } from './test/streams';
 import { pointer } from './test/pointer';
 import { SIDEBAR_WIDTH_KEY } from './components/ResizableSidebar';
@@ -82,8 +82,7 @@ describe('conversation history integration', () => {
 
 describe('history drawer', () => {
   it.each([390, 640, 800, 1023])('opens below desktop at %ipx with modal focus/scroll management', async width => {
-    vi.stubGlobal('matchMedia', vi.fn((media: string) => ({ matches: media === '(min-width: 1024px)' ? width >= 1024 : width <= 640,
-      addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    mockViewportWidth(width);
     seed();
     const user = userEvent.setup();
     const view = render(<App />);
