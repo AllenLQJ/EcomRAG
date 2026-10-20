@@ -13,6 +13,19 @@ from app.faq.cache import normalize
 if TYPE_CHECKING:
     from app.config import Settings
 
+QUESTION_MAX_CHARS = 500
+ANSWER_MAX_CHARS = 10000
+
+
+def validate_faq_values(values, line=0):
+    """导入与离线检查共享的单行校验；调用者先去除首尾空白。"""
+    if not values["question"] or not values["answer"] or len(values["question"]) > QUESTION_MAX_CHARS:
+        raise ValueError(f"FAQ 第 {line} 行问题或答案为空，或问题超过 {QUESTION_MAX_CHARS} 字")
+    if len(values["answer"]) > ANSWER_MAX_CHARS:
+        raise ValueError(f"FAQ 第 {line} 行答案超过 {ANSWER_MAX_CHARS} 字")
+    if values["category"] not in CATEGORIES:
+        raise ValueError(f"FAQ 第 {line} 行分类不合法")
+
 
 @dataclass(frozen=True)
 class FaqRow:
@@ -34,10 +47,7 @@ def read_faq(path, *, report=None) -> list[FaqRow]:
             if None in row or any(value is None for value in row.values()):
                 raise ValueError(f"FAQ 第 {line} 行列数不正确")
             values = {key: value.strip() for key, value in row.items()}
-            if not values["question"] or not values["answer"] or len(values["question"]) > 500:
-                raise ValueError(f"FAQ 第 {line} 行问题或答案为空，或问题超过 500 字")
-            if values["category"] not in CATEGORIES:
-                raise ValueError(f"FAQ 第 {line} 行分类不合法")
+            validate_faq_values(values, line)
             question = values["question"]
             if question in rows:
                 ignored += 1

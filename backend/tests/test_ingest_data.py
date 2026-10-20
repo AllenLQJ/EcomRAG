@@ -36,7 +36,11 @@ class StoreDataTests(unittest.TestCase):
         self.assertEqual(len({row["question"] for row in rows}), 37)
         self.assertIn("怎么申请退货？", {row["question"] for row in rows})
         self.assertEqual(sum(row["question"] == "怎么申请退货？" for row in rows), 1)
-        self.assertEqual({row["category"] for row in rows}, CATEGORIES)
+        # account/store 为新增类别，合并新内容前现有 FAQ 不使用它们
+        self.assertEqual(
+            {row["category"] for row in rows},
+            CATEGORIES - {"account", "store"},
+        )
         for row in rows:
             with self.subTest(question=row["question"]):
                 self.assertTrue(row["answer"].strip())

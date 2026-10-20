@@ -13,7 +13,7 @@ python -m ingest.load_faq ../data/faq.csv
 ```
 
 1. 先执行 `--dry-run`。它仅校验 CSV 并 SELECT 当前 FAQ，输出新增、修改、未变化、将被忽略的条数；不执行 INSERT/UPDATE/DELETE，不提交、不创建备份、不访问 Redis。它只需要读取 FAQ 表的权限；连接关闭时数据库可能结束只读事务。
-2. 核对差异和近重复提示。导入表头必须严格为 `question,answer,category`，顺序不可改变；允许 UTF-8 BOM。问题和答案去除首尾空白后必须非空，问题最多 500 字，分类仅允许 `after_sales`、`logistics`、`payment`、`product`、`promotion`。完全相同的问题保留最后一行，前面的行计入忽略；按缓存规范化后相同的不同问句会提示所在行号，需人工核对答案一致性。近重复提示不会自动合并语义相近的问题。
+2. 核对差异和近重复提示。导入表头必须严格为 `question,answer,category`，顺序不可改变；允许 UTF-8 BOM。问题和答案去除首尾空白后必须非空，问题最多 500 字、答案最多 10000 字，分类仅允许 `after_sales`、`logistics`、`payment`、`product`、`promotion`、`account`、`store`。完全相同的问题保留最后一行，前面的行计入忽略；按缓存规范化后相同的不同问句会提示所在行号，需人工核对答案一致性。近重复提示不会自动合并语义相近的问题。
 3. 正式导入持有 `ecomrag_faq_import` MySQL 命名锁，先读出现状并完成备份，再在事务中按问题更新/插入，最后提交。备份失败时不修改数据。问题使用二进制精确比较，防止 MySQL 大小写不敏感的排序规则导致 prune 误删近重复问句。所有同类工具共用该锁；直接 SQL 修改不受该锁保护，发布期间应避免其他方式写表。
 4. 备份位于仓库根目录 `backups/faq/faq-<UTC时间戳>.csv`，已加入 `.gitignore`。备份以独占方式创建且文件权限为 `0600`，包含所有行的 `id,question,answer,category,enabled,updated_at`，因此停用状态、重复行、ID 和更新时间都能恢复；不包含数据库/Redis 凭据。备份表头专用于恢复，不应传给普通导入命令。请按本地数据保护和留存要求管理备份。
 5. 仅当有新增、修改或 prune 删除时，提交后才 `INCR faq:data:version`，然后用现有 SCAN 分批删除 `faq:cache:*`。无实际变化的正式导入仍备份当前状态并结束只读事务，但不执行 FAQ 写入、不递增版本、不清理缓存，输出“无变化，未发布”。保留版本键、限流计数和其他业务键；不会执行 FLUSHDB。数据版本键应持久保留，不设置 TTL，也不要在常规清缓存时删除。

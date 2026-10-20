@@ -7,12 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
-CATEGORIES = {"after_sales", "logistics", "payment", "product", "promotion"}
+CATEGORIES = {"after_sales", "logistics", "payment", "product", "promotion", "account", "store"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class LoaderError(RuntimeError):
     """文档读取或可选依赖不可用。"""
+
+
+def filename_category(path: str | Path) -> str:
+    """与在线加载共用前缀映射；未指定前缀时保持 product 的历史默认值。"""
+    return next((name for name in sorted(CATEGORIES)
+                 if Path(path).stem.startswith((name + "_", name + "-"))), "product")
 
 
 @dataclass(frozen=True)
@@ -63,10 +69,7 @@ def load_document(
         raise LoaderError(f"文档没有可读取文本：{path.name}（扫描 PDF 需要另行 OCR）")
     heading = re.search(r"(?m)^#\s+(.+?)\s*$", text) if suffix == ".md" else None
     title = metadata.get("title") or (heading.group(1) if heading else path.stem)
-    category = metadata.get("category") or next(
-        (name for name in sorted(CATEGORIES) if path.stem.startswith((name + "_", name + "-"))),
-        "product",
-    )
+    category = metadata.get("category") or filename_category(path)
     if category not in CATEGORIES:
         raise LoaderError(f"未知文档分类：{category}")
     source = source or path.name

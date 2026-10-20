@@ -14,6 +14,17 @@ if TYPE_CHECKING:
     from app.config import Settings
 
 
+def analyze_documents(documents, *, split_options=None):
+    """离线切块与统计，供入库和内容合并共用。"""
+    chunks = [chunk for document in documents
+              for chunk in split_document(document, **(split_options or {}))]
+    return chunks, {
+        "documents": len(documents),
+        "parent_chunks": len({chunk.parent_id for chunk in chunks}),
+        "child_chunks": len(chunks),
+    }
+
+
 def ingest_directory(directory, *, dry_run: bool = True, split_options: dict | None = None,
                      batch_size: int = 16, embedder=None, store=None,
                      sync_delete=False, prune_missing=False, yes=False,
@@ -25,8 +36,7 @@ def ingest_directory(directory, *, dry_run: bool = True, split_options: dict | N
     documents = load_directory(directory)
     if not documents:
         raise ValueError("目录中没有支持的文档")
-    chunks = [chunk for document in documents
-              for chunk in split_document(document, **(split_options or {}))]
+    chunks, stats = analyze_documents(documents, split_options=split_options)
     if prune_missing and not sync_delete:
         raise ValueError("--prune-missing 必须与 --sync-delete 同用")
     if staged and sync_delete:
@@ -54,9 +64,7 @@ def ingest_directory(directory, *, dry_run: bool = True, split_options: dict | N
             store.delete_ids([row["chunk_id"] for row in plan])
             store.flush_load()
     return {
-        "documents": len(documents),
-        "parent_chunks": len({chunk.parent_id for chunk in chunks}),
-        "child_chunks": len(chunks),
+        **stats,
         "elapsed_s": round(perf_counter() - started, 4),
         "dry_run": dry_run,
         **({"delete_plan": plan} if sync_delete else {}),
