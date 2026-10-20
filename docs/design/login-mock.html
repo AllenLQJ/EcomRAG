@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>灵码 · 登录页参考样图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500&family=Noto+Serif+SC:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#F6F6F4; --card:#FFFFFF; --ink:#16171A; --muted:#5C6068; --hint:#8A8E95; --line:#E4E4E0; --line2:#D6D6D1; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Noto Sans SC','PingFang SC',sans-serif; min-height:100vh; display:flex; justify-content:center; align-items:center; padding:44px 16px; }
+  .wrap { width:100%; max-width:360px; }
+  .brand { display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:30px; }
+  .brand svg { width:104px; height:104px; }
+  .name { font-family:'Noto Serif SC','Songti SC',serif; font-size:30px; font-weight:600; letter-spacing:6px; margin-top:2px; }
+  .slogan { font-family:'Noto Serif SC','Songti SC',serif; font-size:15px; letter-spacing:1px; }
+  .sub { display:flex; align-items:center; gap:8px; color:var(--hint); font-size:12px; letter-spacing:3px; }
+  .sub i { width:18px; height:0.5px; background:var(--line2); display:inline-block; }
+  .card { background:var(--card); border:0.5px solid var(--line); border-radius:16px; padding:22px 22px 20px; }
+  .tabs { display:flex; border-bottom:0.5px solid var(--line); margin-bottom:18px; }
+  .tab { flex:1; border:0; background:transparent; padding:10px 0; font:inherit; font-size:15px; color:var(--muted); border-bottom:2px solid transparent; cursor:pointer; }
+  .tab[aria-selected="true"] { color:var(--ink); font-weight:500; border-bottom-color:var(--ink); }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  input { width:100%; height:44px; border-radius:12px; border:0.5px solid var(--line2); background:#fff; color:var(--ink); padding:0 14px; font:inherit; font-size:15px; }
+  input + label { margin-top:14px; }
+  .warn { display:none; margin-top:12px; padding:10px 12px; border-radius:10px; background:#FBF1EA; color:#8A3D12; font-size:13px; line-height:1.6; }
+  .primary, .secondary { width:100%; height:46px; border-radius:12px; font:inherit; font-size:15px; cursor:pointer; }
+  .primary { margin-top:18px; border:0; background:var(--ink); color:var(--bg); font-weight:500; }
+  .secondary { border:0.5px solid var(--line2); background:#fff; color:var(--ink); }
+  .or { display:flex; align-items:center; gap:10px; margin:16px 0 14px; color:var(--hint); font-size:12px; }
+  .or span { flex:1; height:0.5px; background:var(--line); }
+  .quota { margin-top:12px; font-size:13px; color:var(--muted); text-align:center; line-height:1.6; }
+  .foot { margin-top:16px; font-size:12px; color:var(--hint); text-align:center; }
+  @media (max-width: 640px) { .brand svg { width:84px; height:84px; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="brand">
+    <svg viewBox="0 0 120 120" role="img" aria-label="灵码"><title>灵码 · 墨印</title><rect x="6" y="6" width="108" height="108" rx="26" fill="#16171A"/><g transform="translate(12 10) scale(0.8)"><path d="M34 24H82M42 39H82M30 54H82M82 24V54M38 68L45 80M60 60C60 80 52 94 32 104M62 80C70 92 78 99 90 104" fill="none" stroke="#F6F6F4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="79" cy="72" r="6" fill="#E07A3F"/></g></svg>
+    <div class="name">灵码</div>
+    <div class="slogan">买前问一问，买后有人管</div>
+    <div class="sub"><i></i>智能客服<i></i></div>
+  </div>
+  <section class="card">
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tab-login" role="tab" aria-selected="true" type="button">登录</button>
+      <button class="tab" id="tab-reg" role="tab" aria-selected="false" type="button">注册</button>
+    </div>
+    <label for="u">用户名</label>
+    <input id="u" type="text" autocomplete="username" placeholder="3–20 位字母、数字或下划线">
+    <label for="p">密码</label>
+    <input id="p" type="password" autocomplete="current-password" placeholder="8–64 位">
+    <div class="warn" id="warn">演示站点，请勿使用你常用的真实密码。</div>
+    <button class="primary" id="submit" type="button">登录</button>
+    <div class="or"><span></span>或<span></span></div>
+    <button class="secondary" type="button">以访客进入</button>
+    <div class="quota">访客每天可提问 5 次，登录后每天可提问 50 次</div>
+  </section>
+  <div class="foot">本店为演示用模拟店铺，资料不代表真实商家政策</div>
+</main>
+<script>
+  (function () {
+    var login = document.getElementById('tab-login'), reg = document.getElementById('tab-reg');
+    var warn = document.getElementById('warn'), submit = document.getElementById('submit'), pass = document.getElementById('p');
+    function set(isReg) {
+      login.setAttribute('aria-selected', String(!isReg)); reg.setAttribute('aria-selected', String(isReg));
+      warn.style.display = isReg ? 'block' : 'none'; submit.textContent = isReg ? '注册并进入' : '登录';
+      pass.setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
+    }
+    login.addEventListener('click', function () { set(false); });
+    reg.addEventListener('click', function () { set(true); });
+  })();
+</script>
+</body>
+</html>
