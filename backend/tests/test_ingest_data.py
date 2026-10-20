@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 from ingest import products as product_data
+from ingest.eval_expectations import expected_documents
 from ingest.loaders import CATEGORIES
 from ingest.loaders import load_directory
 from ingest.splitter import split_document
@@ -28,6 +29,7 @@ class StoreDataTests(unittest.TestCase):
                 if path.name in generated:
                     # 参数、相关款比较及 50 款目录按商品表逐字核验，不套短政策长度。
                     self.assertEqual(text, generated[path.name])
+                    self.assertEqual(text, (ROOT / "data/docs_generated" / path.name).read_text(encoding="utf-8"))
                 else:
                     self.assertTrue(300 <= len(text) <= 1500, (path.name, len(text)))
                 self.assertGreaterEqual(len(re.findall(r"[\u4e00-\u9fff]", text)), 300)
@@ -71,6 +73,8 @@ class StoreDataTests(unittest.TestCase):
             faq = {row["question"]: row for row in csv.DictReader(handle)}
         compact = lambda text: re.sub(r"\s+", "", text)
         for question, category, filename in (
+            ("耳机保修多久？", "after_sales", "after_sales_warranty.md"),
+            ("满多少免运费？", "logistics", "logistics_shipping.md"),
             ("运费怎么算？", "logistics", "logistics_shipping.md"),
             ("运费多少钱？", "logistics", "logistics_shipping.md"),
             ("发票怎么开？", "payment", "payment_invoices.md"),
@@ -87,6 +91,13 @@ class StoreDataTests(unittest.TestCase):
                 for sentence in compact(row["answer"]).split("。"):
                     if sentence:
                         self.assertIn(sentence, document)
+
+    def test_shipping_amount_notation_is_consistent(self):
+        for name in ("logistics_shipping.md", "logistics_shipping_threshold_cases.md"):
+            text = (ROOT / "data/docs" / name).read_text(encoding="utf-8")
+            self.assertIn("满99元", text)
+            self.assertIn("收取8元", text)
+            self.assertNotRegex(text, r"(?:满|收取)\s+(?:99|8)|(?:99|8)\s+元")
 
     def test_catalog_product_names_and_key_facts_are_grounded_in_details(self):
         compact = lambda text: re.sub(r"[\s|]", "", text)
@@ -145,7 +156,8 @@ class StoreDataTests(unittest.TestCase):
         for row in rows:
             self.assertEqual(set(row), {"question", "expected_route", "expected_doc"})
             if row["expected_route"] == "rag":
-                self.assertTrue((ROOT / "data/docs" / row["expected_doc"]).is_file())
+                for source in expected_documents(row["expected_doc"], required=True):
+                    self.assertTrue((ROOT / "data/docs" / source).is_file())
                 self.assertNotIn(row["question"], questions)
             else:
                 self.assertIsNone(row["expected_doc"])
@@ -222,7 +234,9 @@ class StoreDataTests(unittest.TestCase):
         rag_rows = [row for row in rows if row["expected_route"] == "rag"]
         self.assertEqual({row["question"] for row in rag_rows}, set(expected))
         for row in rag_rows:
-            text = (ROOT / "data/docs" / row["expected_doc"]).read_text(encoding="utf-8")
+            # 下列逐字事实断言针对保留的原始规则文档；案例的事实见 test_eval_corpus。
+            original = expected_documents(row["expected_doc"], required=True)[0]
+            text = (ROOT / "data/docs" / original).read_text(encoding="utf-8")
             for fact in expected[row["question"]]:
                 self.assertIn(fact, text, row["question"])
 

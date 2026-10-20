@@ -214,8 +214,29 @@ class ProductsDataTests(unittest.TestCase):
                 self.assertEqual(text.count(products.RETURN_POLICY), 1)
                 if row["category"] in ("保温杯", "收纳包"):
                     self.assertNotIn("12 个月", tail)
+                    self.assertIn("制造缺陷保障期为 6 个月", tail)
+                    self.assertIn("等正常磨损部件不作永久更换承诺。", tail)
+                    parts = ("密封圈",) if row["category"] == "保温杯" else ("拉链", "五金")
+                    for part in parts:
+                        self.assertIn(part, tail)
                 else:
-                    self.assertIn("12 个月有限保修", tail)
+                    self.assertIn("自签收起 12 个月有限保修，针对正常使用下确认的非人为功能故障。", tail)
+
+    def test_old_cup_warranty_migration_still_protects_replacement_and_other_limits(self):
+        by_id = {row["sku_id"]: row for row in self.rows}
+        documents = {sku: products.render_product(row, by_id) for sku, row in by_id.items()}
+        baseline = self.folder / "legacy"
+        baseline.mkdir()
+        old, new = next(iter(products.LEGACY_WARRANTY_REPLACEMENTS.items()))
+        for sku, filename in products.LEGACY.items():
+            text = documents[sku].replace(new, old) if sku == "muche-c1" else documents[sku]
+            (baseline / filename).write_text(text, encoding="utf-8")
+        products.check_legacy(documents, baseline)
+        for restriction in (new, "密封圈可拆下清洗并完全晾干后装回，不使用强腐蚀清洁剂"):
+            changed = dict(documents)
+            changed["muche-c1"] = changed["muche-c1"].replace(restriction, "")
+            with self.subTest(restriction=restriction), self.assertRaisesRegex(ValueError, "原有限制缺失"):
+                products.check_legacy(changed, baseline)
 
     def test_image_prompts_cover_all_skus_and_style(self):
         out = self.folder / "prompts.md"

@@ -61,7 +61,7 @@ def test_cli_uses_config_loader_unless_settings_are_injected(monkeypatch, mode, 
         manager.locked.side_effect = nullcontext
         monkeypatch.setattr(versioning, "VersionManager", Mock(return_value=manager))
         # 这里只验证参数传递，统计值为替身；真实默认切块基准见 test_ingest_run.py。
-        ingest = Mock(return_value={"documents": 156, "parent_chunks": 584, "child_chunks": 995})
+        ingest = Mock(return_value={"documents": 156, "parent_chunks": 584, "child_chunks": 1000})
         monkeypatch.setattr(run, "ingest_directory", ingest)
         args = ["--dir", "data/docs"] + (["--dry-run"] if mode == "dry_run" else ["--yes"])
         assert run.main(args, **kwargs) == 0

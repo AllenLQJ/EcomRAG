@@ -8,10 +8,10 @@
 {"question":"签收后发现屏幕有划痕可以退吗？","expected_route":"rag","expected_doc":"after_sales_returns.md"}
 {"question":"木澈C1保温6小时的测试环境和剩余水温是什么？","expected_route":"rag","expected_doc":"product_muche-c1.md"}
 {"question":"栖光L1有哪些色温档位，需要什么输入电源？","expected_route":"rag","expected_doc":"product_qiguang-l1.md"}
-{"question":"包裹外箱破损又发现少件，我应该保留哪些证据？","expected_route":"rag","expected_doc":"logistics_tracking.md"}
-{"question":"开个人抬头和单位抬头电子发票，需要的信息有什么不同？","expected_route":"rag","expected_doc":"payment_invoices.md"}
-{"question":"会员积分在确认收货后哪天到账，有效期多久？","expected_route":"rag","expected_doc":"promotion_membership.md"}
-{"question":"付款后的订单在什么阶段还能申请修改地址，发货后能保证成功吗？","expected_route":"rag","expected_doc":"payment_order_changes.md"}
+{"question":"包裹外箱破损又发现少件，我应该保留哪些证据？","expected_route":"rag","expected_doc":["logistics_tracking.md","logistics_damage_shortage_evidence_case.md"]}
+{"question":"开个人抬头和单位抬头电子发票，需要的信息有什么不同？","expected_route":"rag","expected_doc":["payment_invoices.md","payment_invoice_correction_case.md"]}
+{"question":"会员积分在确认收货后哪天到账，有效期多久？","expected_route":"rag","expected_doc":["promotion_membership.md","promotion_points_arrival_timeline.md"]}
+{"question":"付款后的订单在什么阶段还能申请修改地址，发货后能保证成功吗？","expected_route":"rag","expected_doc":["payment_order_changes.md","payment_address_change_case.md"]}
 {"question":"你好呀，今天心情不错。","expected_route":"general","expected_doc":null}
 {"question":"谢谢你的帮助，祝你一天愉快！","expected_route":"general","expected_doc":null}
 {"question":"给我讲一个轻松的小笑话吧。","expected_route":"general","expected_doc":null}

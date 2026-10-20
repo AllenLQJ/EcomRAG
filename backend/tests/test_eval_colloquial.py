@@ -43,7 +43,11 @@ def test_colloquial_dataset_has_all_requested_questions_and_compatible_fields():
     assert {row["question"] for row in rows if row["expected_route"] == "general"} == {"你好", "谢谢", "你可以做什么", "你们老板是谁"}
     assert all(set(row) == {"question", "expected_route", "expected_doc"} for row in rows)
     assert all(isinstance(row["question"], str) and row["question"].strip() for row in rows)
-    assert all(row["expected_doc"] is None for row in rows[:34])
+    added_references = {"积分怎么用", "怎么改收货地址", "退款多久到账啊", "优惠券怎么用",
+                        "快递停了不动怎么办", "包裹破了怎么办", "活动价买贵了能退差价吗", "订单能取消吗"}
+    assert {row["question"] for row in rows[:34] if row["expected_doc"] is not None} == added_references
+    assert all(isinstance(row["expected_doc"], list) and len(row["expected_doc"]) == 2
+               for row in rows[:34] if row["question"] in added_references)
     catalog_questions = ["你们都卖啥", "有啥好东西", "商品分类有哪些", "店里有什么", "你们家卖什么的", "有哪些产品",
                          "推荐什么", "哪款好"]
     assert rows[34:] == [dict(question=q, expected_route="answer", expected_doc="product_catalog.md")
@@ -139,8 +143,8 @@ def test_cli_accepts_colloquial_eval_file_and_exports_report(tmp_path, monkeypat
     assert run_eval.main(["--eval-file", "data/eval_colloquial.jsonl", "--output", str(output)], settings=settings) == 0
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["total"] == report["completed"] == len(rows)
-    assert report["route_accuracy"] == 1 and report["rag_total"] == 8
-    assert report["rag_source_hits"] == 0  # 假回答未携带来源，8 条参考文档均计为未命中。
+    assert report["route_accuracy"] == 1 and report["rag_total"] == 16
+    assert report["rag_source_hits"] == 0  # 假回答未携带来源，16 条参考文档均计为未命中。
     assert report["false_refusals"] == report["false_answers"] == []
     assert len(report["results"]) == len(rows)
     factory.assert_called_once_with(settings)

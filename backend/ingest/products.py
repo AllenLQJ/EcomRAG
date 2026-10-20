@@ -52,10 +52,14 @@ SKU_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 FORBIDDEN = re.compile(r"元|[¥￥]|价格|售价|促销|库存|现货(?:数量)?")
 RETURN_POLICY = "签收之日起 7 天内商品存在质量问题可申请退货，运费由店铺承担。外观类问题需提供开箱照片或视频，客服 1–2 个工作日内审核。"
 WARRANTIES = {
-    category: "正常使用下的功能故障适用 12 个月有限保修。" for category in REQUIRED_SPECS
+    category: "自签收起 12 个月有限保修，针对正常使用下确认的非人为功能故障。" for category in REQUIRED_SPECS
 }
-WARRANTIES["保温杯"] = "杯体制造缺陷保障期为 6 个月，密封圈正常磨损不属于永久免费更换。"
-WARRANTIES["收纳包"] = "正常使用下的制造缺陷保障期为 6 个月，面料与拉链的正常磨损不属于永久免费更换。"
+WARRANTIES["保温杯"] = "杯体制造缺陷保障期为 6 个月，密封圈等正常磨损部件不作永久更换承诺。"
+WARRANTIES["收纳包"] = "收纳包制造缺陷保障期为 6 个月，拉链、五金等正常磨损部件不作永久更换承诺。"
+# WAR-02 模板升级时只迁移这一条原四款中的旧固定句，其余否定限制仍逐句保护。
+LEGACY_WARRANTY_REPLACEMENTS = {
+    "杯体制造缺陷保障期为 6 个月，密封圈正常磨损不属于永久免费更换": WARRANTIES["保温杯"].rstrip("。"),
+}
 NON_ELECTRONIC_CATEGORIES = ("保温杯", "收纳包")
 POLICY_LABELS = {"香薰加湿": "带电的香薰加湿设备"}
 WEAR_PARTS = {"保温杯": ("密封圈",), "收纳包": ("拉链", "五金")}
@@ -371,7 +375,8 @@ def check_legacy(documents, docs_dir=ROOT / "data/docs"):
         for sentence in re.split(r"[。\n]", original):
             sentence = sentence.strip()
             if sentence and not sentence.startswith(("#", "|")) and re.search(r"不|无|不能|没有", sentence):
-                if compact(sentence) not in compact(documents[sku]):
+                expected = LEGACY_WARRANTY_REPLACEMENTS.get(sentence, sentence)
+                if compact(expected) not in compact(documents[sku]):
                     differences.append(f"{sku} / 原有限制缺失：{sentence}")
     if differences:
         raise ValueError("现有 4 款事实一致性校验失败：\n" + "\n".join(differences))
