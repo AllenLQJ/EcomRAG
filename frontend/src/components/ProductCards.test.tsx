@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { product, productAnswer } from '../test/products';
 import { ChatMessage } from './ChatMessage';
@@ -10,15 +11,18 @@ describe('product cards', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it.each([1, 2, 3, 6, 12])('renders %i cards in server order with names, categories and up to two highlights', count => {
+  it.each([1, 2, 3, 6, 12])('renders %i collapsed cards in server order with only names visible', count => {
     const products = Array.from({ length: count }, (_, index) => product(`lamp-${index}`));
     render(<ProductCards products={products} />);
     const section = screen.getByRole('region', { name: '资料关联商品' });
     expect(within(section).getAllByRole('heading').map(heading => heading.textContent)).toEqual(products.map(item => item.name));
-    expect(within(section).getAllByText('桌面台灯')).toHaveLength(count);
-    expect(within(section).getAllByText(products[0].highlights[0])).toHaveLength(count);
-    expect(within(section).getAllByText(products[0].highlights[1])).toHaveLength(count);
-    expect(section.querySelector('a, button, [tabindex]')).toBeNull();
+    within(section).getAllByRole('button').forEach(button => expect(button).toHaveAttribute('aria-expanded', 'false'));
+    for (const text of ['桌面台灯', ...products[0].highlights]) {
+      const details = within(section).getAllByText(text);
+      expect(details).toHaveLength(count);
+      details.forEach(detail => expect(detail).not.toBeVisible());
+    }
+    expect(section.querySelector('a')).toBeNull();
     expect(section).not.toHaveTextContent(/价格|库存/);
   });
 
@@ -26,6 +30,7 @@ describe('product cards', () => {
     const products = Array.from({ length: 13 }, (_, index) => ({ ...product(`lamp-${index}`),
       highlights: ['<b>额定功率：6 瓦</b>', '连接方式：USB', '不应显示的第三条规格'], price: 199, stock: 10 }));
     const { container } = render(<ProductCards products={products} />);
+    screen.getAllByRole('button').forEach(button => fireEvent.click(button));
     expect(screen.getAllByRole('heading')).toHaveLength(12);
     expect(screen.getAllByText('<b>额定功率：6 瓦</b>')).toHaveLength(12);
     expect(screen.queryByText('不应显示的第三条规格')).not.toBeInTheDocument();
@@ -35,28 +40,31 @@ describe('product cards', () => {
 
   it('renders a single supplied highlight without inventing a second one', () => {
     render(<ProductCards products={[{ ...product(), highlights: ['额定功率：6 瓦'] }]} />);
-    expect(screen.getByText('额定功率：6 瓦')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: product().name }));
+    expect(screen.getByText('额定功率：6 瓦')).toBeVisible();
     expect(screen.queryByText(product().highlights[1])).not.toBeInTheDocument();
   });
 
-  it('uses a single column on narrow screens and semantic tokens for both color schemes', () => {
-    render(<ProductCards products={[product()]} />);
+  it('uses a single column on narrow screens and a light information panel in both color schemes', () => {
+    const { container } = render(<ProductCards products={[product()]} />);
     const grid = screen.getAllByRole('list')[0];
     expect(grid).toHaveClass('grid', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
-    expect(grid.firstElementChild).toHaveClass('bg-card', 'text-ink', 'dark:bg-ink', 'dark:text-card');
+    expect(container.querySelector('.product-card-info')).toBeInTheDocument();
   });
 
-  it('keeps six equal-size cards inside the chat width across multiple rows', () => {
+  it('keeps six equal-width square-image cards aligned at the top without stretching expanded peers', () => {
     render(<ProductCards products={Array.from({ length: 6 }, (_, index) => product(`lamp-${index}`))} />);
     const section = screen.getByRole('region', { name: '资料关联商品' });
     expect(section).toHaveClass('min-w-0', 'max-w-full');
     const grid = within(section).getAllByRole('list')[0];
-    expect(grid).toHaveClass('grid', 'auto-rows-fr', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
+    expect(grid).toHaveClass('grid', 'items-start', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
+    expect(grid).not.toHaveClass('auto-rows-fr');
     expect(grid.children).toHaveLength(6);
     Array.from(grid.children).forEach(card => {
-      expect(card).toHaveClass('flex', 'h-full', 'min-w-0', 'flex-col', 'overflow-hidden');
-      expect(card.firstElementChild).toHaveClass('aspect-[4/3]', 'w-full', 'shrink-0');
-      expect(card).toHaveClass('bg-card', 'text-ink', 'dark:bg-ink', 'dark:text-card');
+      expect(card).toHaveClass('flex', 'min-w-0', 'flex-col', 'overflow-hidden');
+      expect(card).not.toHaveClass('h-full');
+      expect(card.firstElementChild).toHaveClass('product-card-image', 'aspect-square', 'w-full', 'shrink-0');
+      expect(card.lastElementChild).toHaveClass('product-card-info');
     });
   });
 
@@ -65,13 +73,14 @@ describe('product cards', () => {
     const img = screen.getByRole('img', { name: product().name });
     expect(img).toHaveAttribute('loading', 'lazy');
     expect(img).toHaveAttribute('width', '400');
-    expect(img).toHaveAttribute('height', '300');
-    expect(img.parentElement).toHaveClass('aspect-[4/3]');
+    expect(img).toHaveAttribute('height', '400');
+    expect(img).toHaveClass('object-cover', 'h-full', 'w-full');
+    expect(img.parentElement).toHaveClass('aspect-square');
     fireEvent.error(img);
     expect(screen.queryByAltText(product().name)).not.toBeInTheDocument();
     const placeholder = screen.getByRole('img', { name: `${product().name}（暂无图片）` });
     expect(placeholder).toHaveTextContent('暂无图片');
-    expect(placeholder.parentElement).toHaveClass('aspect-[4/3]');
+    expect(placeholder.parentElement).toHaveClass('aspect-square');
     expect(placeholder.querySelector('img')).toBeNull();
   });
 
@@ -86,6 +95,41 @@ describe('product cards', () => {
     fireEvent.error(screen.getByAltText(product().name));
     rerender(<ProductCards products={[{ ...product(), image_url: 'https://other.example/main.webp' }]} />);
     expect(screen.getByAltText(product().name)).toHaveAttribute('src', 'https://other.example/main.webp');
+  });
+
+  it('toggles category and highlights independently with unique accessible controls', async () => {
+    const user = userEvent.setup();
+    const products = [product('lamp-1'), product('lamp-2')];
+    render(<><ProductCards products={products} /><ProductCards products={[product('lamp-1')]} /></>);
+    const buttons = screen.getAllByRole('button');
+    const ids = buttons.map(button => button.getAttribute('aria-controls'));
+    expect(new Set(ids).size).toBe(3);
+    const panel = document.getElementById(ids[0]!);
+    expect(panel).not.toBeVisible();
+    expect(within(buttons[0]).getByText(products[0].name)).toHaveClass('truncate');
+    await user.click(buttons[0]);
+    expect(buttons[0]).toHaveAttribute('aria-expanded', 'true');
+    expect(panel).toBeVisible();
+    expect(within(panel!).getByText('桌面台灯')).toBeVisible();
+    products[0].highlights.forEach(text => expect(within(panel!).getByText(text)).toBeVisible());
+    buttons.slice(1).forEach(button => expect(button).toHaveAttribute('aria-expanded', 'false'));
+    await user.click(buttons[0]);
+    expect(buttons[0]).toHaveAttribute('aria-expanded', 'false');
+    expect(panel).not.toBeVisible();
+  });
+
+  it.each(['{Enter}', ' '])('supports native keyboard activation with %j', async key => {
+    const user = userEvent.setup();
+    render(<ProductCards products={[product()]} />);
+    const button = screen.getByRole('button', { name: product().name });
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard(key);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('桌面台灯')).toBeVisible();
+    await user.keyboard(key);
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('桌面台灯')).not.toBeVisible();
   });
 
   it('keeps legacy assistant markup unchanged when products is absent and places cards below the answer', () => {

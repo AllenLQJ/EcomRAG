@@ -44,7 +44,10 @@ describe('chat flow', () => {
     expect(await screen.findByText('知识库回答')).toBeInTheDocument();
     expect(screen.getByText('7 天内').tagName).toBe('STRONG');
     expect(within(screen.getByRole('log')).getByRole('list')).toBeInTheDocument();
-    const toggle = screen.getByRole('button', { name: '引用来源 3' });
+    const toggle = screen.getByRole('button', { name: '引用来源（3）' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -67,7 +70,9 @@ describe('chat flow', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
     await userEvent.setup().click(screen.getByRole('button', { name: '怎么申请退货？' }));
-    await screen.findByRole('button', { name: '引用来源 1' });
+    const toggle = await screen.findByRole('button', { name: '引用来源（1）' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.setup().click(toggle);
     const source = screen.getByRole('article', { name: '引用 1：怎么申请退货？' });
     expect(within(source).queryByText('常见问题')).not.toBeInTheDocument();
     expect(screen.queryByText('faq:12')).not.toBeInTheDocument();
@@ -106,7 +111,7 @@ describe('chat flow', () => {
     expect(screen.queryByText(/请求编号|req-123/)).not.toBeInTheDocument();
     expect(localStorage.getItem(CONVERSATIONS_KEY)).toBeNull();
     await user.click(screen.getByRole('button', { name: '重试' }));
-    await screen.findByRole('button', { name: '引用来源 1' });
+    expect(await screen.findByRole('button', { name: '引用来源（1）' })).toHaveAttribute('aria-expanded', 'false');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][1].body).toBe(fetchMock.mock.calls[0][1].body);
     expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
@@ -330,6 +335,7 @@ describe('chat flow', () => {
     await screen.findByText('知识库回答');
     expect(screen.getByText('具体售后处理请以店铺核实结果为准。')).toBeInTheDocument();
     expect(screen.queryByText(/Mock ·|虚构|样例/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '引用来源（3）' }));
     expect(within(screen.getByLabelText('引用来源')).getAllByRole('article')).toHaveLength(3);
   });
 

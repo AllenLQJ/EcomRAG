@@ -40,13 +40,22 @@ describe('streaming UI', () => {
     expect(screen.queryByRole('button', { name: '查看引用 1' })).not.toBeInTheDocument();
     expect(screen.queryByText('知识库回答')).not.toBeInTheDocument();
     expect(screen.queryByText('商品总览')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '引用来源' })).not.toBeInTheDocument();
     await emit(stream, { event: 'done', data: done });
     expect(await screen.findByRole('button', { name: '查看引用 1' })).toBeInTheDocument();
-    expect(screen.getByText('商品总览')).toBeInTheDocument();
+    const sourcesToggle = screen.getByRole('button', { name: '引用来源（1）' });
+    expect(sourcesToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText('商品总览')).not.toBeVisible();
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
     expect(screen.getByText('知识库回答')).toBeInTheDocument();
     expect(screen.getByRole('log')).toHaveAttribute('aria-busy', 'false');
     expect(screen.getByText(/\d+\.\d 秒/)).toBeInTheDocument();
     expect(screen.getByRole('textbox')).toBeEnabled();
+    fireEvent.click(sourcesToggle);
+    expect(sourcesToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('商品总览')).toBeVisible();
+    fireEvent.click(sourcesToggle);
+    expect(screen.getByText('商品总览')).not.toBeVisible();
   });
 
   it('shows a stream error bubble and retries with the same session and question', async () => {
@@ -93,6 +102,7 @@ describe('streaming UI', () => {
     expect(await screen.findByText('知识库回答')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/v1/chat/stream', '/api/v1/chat']);
     expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '引用来源（1）' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('does not pull a reader back down on a delta after scrolling up', async () => {

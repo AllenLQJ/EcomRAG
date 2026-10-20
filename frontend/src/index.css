@@ -14,6 +14,9 @@
 }
 
 @layer components {
+  /* Keep the information panel light and readable in either system theme. */
+  .product-card-info, .sources-panel { @apply bg-track text-ink; }
+  .product-card-toggle:focus-visible, .sources-toggle:focus-visible { outline-offset: -2px; }
   .app-shell { height: 100vh; height: 100dvh; min-height: 320px; }
   .composer-footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   .entry-page {

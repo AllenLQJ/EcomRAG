@@ -79,7 +79,7 @@ def metadata_retriever(client):
 
 
 def product(sku="qiguang-l1", **changes):
-    row = dict(sku_id=sku, name="栖光 L1 台灯", category="桌面台灯",
+    row = dict(sku_id=sku, name="栖光 L1 台灯", series="", category="桌面台灯",
                specs={"库存": "99 件", "价格": "199 元", "额定功率": "6 瓦",
                       "色温档位": "三档", "亮度调节": "三档"}, image_main=f"{sku}/main.webp",
                price=199, stock=99)
@@ -291,7 +291,7 @@ def test_repo_selects_only_public_columns_and_closes_owned_connection(mapping):
     repo = ProductRepo(connection_factory=lambda: connection)
     rows = repo.fetch(["qiguang-l1", "bad' OR 1=1"])
     sql, params = connection.calls[0]
-    assert sql == "SELECT sku_id, name, category, specs, image_main FROM products WHERE sku_id IN (%s, %s)"
+    assert sql == "SELECT sku_id, name, series, category, specs, image_main FROM products WHERE sku_id IN (%s, %s)"
     assert params == ("qiguang-l1", "bad' OR 1=1")
     assert rows[0]["sku_id"] == "qiguang-l1"
     assert connection.closed and not connection.commits
@@ -608,6 +608,78 @@ def test_names_longest_boundary_category_and_ambiguity():
         "灵码衡电 P1 充电宝") == ["bank"]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_lamp_alias_answer_six_cards_with_two_cited_skus(app_factory, tmp_path, stream):
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 内置电池台灯")
+            for i in range(1, 7)]
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    services.retrieve.return_value = [doc([row["sku_id"]], index=i)
+                                      for i, row in enumerate(rows[:2], 1)]
+    answer = "、".join(f"栖光 L{i}（款式介绍）" for i in range(1, 7)) + "。[1][2]"
+    services.generate_answer.return_value = GeneratedAnswer(answer, {1, 2})
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="lamp-aliases", message="介绍一下灵码的桌面台灯有哪些款"))
+    assert response.status_code == 200
+    body = events(response.text)[-1][1] if stream else response.json()
+    assert [card["sku"] for card in body["products"]] == [row["sku_id"] for row in rows]
+    assert all(set(card) == {"sku", "name", "category", "highlights", "image_url"}
+               for card in body["products"])
+    repo.fetch.assert_called_once_with(None)
+
+
+def test_series_model_aliases_distinguish_series_and_require_series():
+    rows = [product(sku, series=series, name=f"{series} C2 {kind}")
+            for sku, series, kind in [("tinglan-c2", "听岚", "夹耳无线耳机"),
+                                      ("lianshu-c2", "联枢", "数据线"),
+                                      ("muche-c2", "木澈", "保温杯")]]
+    rows += [product("hengdian-p1", series="衡电", name="灵码衡电 P1 充电宝"),
+             product("tinglan-s1", series="听岚", name="听岚 S1 无线耳机"),
+             product("muche-c4", series="木澈", name="木澈 C4 随行杯")]
+    index = ProductNameIndex(rows)
+    assert index.match("木澈 C2、听岚 C2、联枢 C2、衡电 P1、听岚 S1、木澈 C4") == [
+        "muche-c2", "tinglan-c2", "lianshu-c2", "hengdian-p1", "tinglan-s1", "muche-c4"]
+    assert index.match("C2、P1、S1、C4") == []
+
+
+def test_alias_model_boundary_full_name_priority_and_first_mention():
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in (1, 3, 10)]
+    index = ProductNameIndex(rows)
+    assert index.match("栖光 L10、栖光 L1x、栖光 L100、栖光 L1_、栖光 XL1") == ["qiguang-l10"]
+    assert index.match("L3") == []
+    assert index.match("栖光 L3、栖光 L1 台灯、栖光 L3 台灯、栖光 L1") == ["qiguang-l3", "qiguang-l1"]
+    # 同系列同型号跨品类产生歧义时，完整名称仍能确定商品；简称不猜。
+    index = ProductNameIndex(rows + [product("other", series="栖光", name="栖光 L1 阅读灯")])
+    assert index.match("栖光 L1") == []
+    assert index.match("栖光 L1 台灯、栖光 L1 阅读灯") == ["qiguang-l1", "other"]
+    # 完整名称比另一商品从名称中派生的同字面简称优先。
+    assert ProductNameIndex(rows + [product("explicit", name="栖光 L1")]).match("栖光 L1") == ["explicit"]
+
+
+def test_aliases_preserve_source_priority_cap_and_fresh_series(tmp_path):
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in range(1, 7)]
+    service, repo = cards(tmp_path, rows, product_cards_max=3)
+    answer = "、".join(f"栖光 L{i}" for i in range(1, 7))
+    sources = [doc(["qiguang-l6", "qiguang-l1"])]
+    for _ in range(2):  # 冷索引与热索引都遵循相同去重和上限。
+        assert [card.sku for card in service.for_sources(sources, answer)] == [
+            "qiguang-l6", "qiguang-l1", "qiguang-l2"]
+    repo.fetch.return_value = [{**rows[2], "series": "新系列"}]
+    assert service.for_sources([], "栖光 L3") == []
+
+
+@pytest.mark.parametrize("changes", [{"series": None}, {"series": ""},
+                                     {"series": "别的系列"}, {"name": "栖光 台灯 L3"},
+                                     {"name": "栖光 L3x 台灯"}])
+def test_aliases_do_not_guess_missing_or_inconsistent_series_model(changes):
+    row = product("qiguang-l3", series="栖光", name="栖光 L3 台灯")
+    row.update(changes)
+    assert ProductNameIndex([row]).match("栖光 L3") == []
+
+
 def test_sources_first_dedup_and_skip_invalid_hidden_missing(tmp_path):
     rows = charging_products()
     rows[1]["specs"] = {"输出规格": "售价 199 元"}
@@ -719,7 +791,7 @@ def test_full_table_refresh_only_reads_public_columns():
     connection.cursor = lambda: Cursor(connection)
     repo = ProductRepo(connection_factory=lambda: connection)
     assert repo.fetch(None)[0]["sku_id"] == "qiguang-l1"
-    assert connection.calls == [("SELECT sku_id, name, category, specs, image_main FROM products", ())]
+    assert connection.calls == [("SELECT sku_id, name, series, category, specs, image_main FROM products", ())]
     assert connection.closed
 
 

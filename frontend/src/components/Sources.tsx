@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Source } from '../api/types';
-import { Chevron } from './Brand';
 import { cleanSourceSnippet } from '../lib/sourceSnippet';
 
 interface Props {
@@ -9,7 +8,7 @@ interface Props {
 }
 
 export function Sources({ sources, selection }: Props) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState<number | null>(null);
   const cards = useRef(new Map<number, HTMLElement>());
   const id = useId();
@@ -30,12 +29,18 @@ export function Sources({ sources, selection }: Props) {
   }, [open, highlighted, selection]);
 
   if (sources.length === 0) return null;
-  return <section aria-label="引用来源">
-    <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
-      className="inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted">
-      引用来源 {sources.length}<Chevron open={open} />
-    </button>
-    <div id={id} hidden={!open}>
+  return <section aria-label="引用来源" className="sources-panel min-w-0 rounded-card border border-line p-3 dark:border-muted">
+    <h3>
+      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
+        className="sources-toggle flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold">
+        <span className="min-w-0 flex-1 truncate">引用来源（{sources.length}）</span>
+        <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+          className={`h-4 w-4 shrink-0 ${open ? 'rotate-180' : ''}`}>
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </button>
+    </h3>
+    <div id={id} hidden={!open} className="pt-2">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {sources.map((source, position) => <article key={`${source.index}-${position}`} tabIndex={-1}
           aria-label={`引用 ${source.index}：${source.title}`}

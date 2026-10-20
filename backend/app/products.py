@@ -21,7 +21,7 @@ _card_stage = ContextVar("product_cards_stage", default=None)
 _warning_lock = threading.Lock()
 _warning_times = {}
 _WARNING_INTERVAL_S = 60
-COLUMNS = ("sku_id", "name", "category", "specs", "image_main")
+COLUMNS = ("sku_id", "name", "series", "category", "specs", "image_main")
 SPEC_KEYS = {
     "无线耳机": ("佩戴方式", "关闭主动降噪单次续航", "单次音乐续航", "降噪能力", "续航说明"),
     "桌面台灯": ("额定功率", "色温档位", "亮度调节"),
@@ -42,6 +42,7 @@ BRAND_PREFIXES = ("灵码",)
 class ProductNameIndex:
     def __init__(self, rows):
         aliases = {}
+        model_aliases = {}
         for row in rows:
             sku, name = row.get("sku_id"), row.get("name")
             if not parse_skus([sku]) or not safe_text(name, 160):
@@ -53,21 +54,33 @@ class ProductNameIndex:
                     names.add(name[len(brand):].strip())
             for alias in names:
                 aliases.setdefault(alias, set()).add(sku)
+            series = row.get("series")
+            if not safe_text(series, 32):
+                continue
+            series = " ".join(series.split())
+            # 只从名称中紧跟真实系列名的编码提取型号，不从 SKU 拼音猜系列。
+            for variant in names:
+                model = re.match(re.escape(series) + r"\s*([A-Za-z]+[0-9]+)(?![A-Za-z0-9_])", variant)
+                if model:
+                    alias = f"{series} {model[1]}"
+                    model_aliases.setdefault(alias, set()).add(sku)
         self.aliases = aliases
+        self.model_aliases = model_aliases
 
     def match(self, answer):
         answer = " ".join(answer.split())
         matches = []
-        for alias, skus in self.aliases.items():
-            # ASCII 型号不能嵌在另一型号里，例如 S1 / S10、XS1 / S1。
-            pattern = ((r"(?<![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", alias) else "")
-                       + re.escape(alias)
-                       + (r"(?![A-Za-z0-9_])" if re.search(r"[A-Za-z0-9_]$", alias) else ""))
-            for match in re.finditer(pattern, answer):
-                matches.append((match.start(), match.end(), skus))
-        # 先保留最长的不重叠名称，再恢复正文顺序。歧义名称也占位，不能退成短名称。
+        for priority, aliases in enumerate((self.aliases, self.model_aliases)):
+            for alias, skus in aliases.items():
+                # ASCII 型号不能嵌在另一型号里，例如 S1 / S10、XS1 / S1。
+                pattern = ((r"(?<![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", alias) else "")
+                           + re.escape(alias)
+                           + (r"(?![A-Za-z0-9_])" if re.search(r"[A-Za-z0-9_]$", alias) else ""))
+                for match in re.finditer(pattern, answer):
+                    matches.append((priority, match.start(), match.end(), skus))
+        # 全称优先于系列型号，再取最长不重叠匹配；歧义也占位，不退成短名称。
         selected = []
-        for start, end, skus in sorted(matches, key=lambda item: (item[0] - item[1], item[0])):
+        for _, start, end, skus in sorted(matches, key=lambda item: (item[0], item[1] - item[2], item[1])):
             if not any(start < right and end > left for left, right, _ in selected):
                 selected.append((start, end, skus))
         result = []

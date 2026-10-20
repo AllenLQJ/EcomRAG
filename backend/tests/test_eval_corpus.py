@@ -35,6 +35,10 @@ class EvalCorpusTests(unittest.TestCase):
             "promotion_coupon_usage_case.md": ["最多使用一张店铺优惠券", "运费不参与凑券门槛", "以结算页实际可选结果为准"],
             "promotion_price_protection_case.md": ["没有统一的全店价保承诺", "个别活动如有单独价保规则"],
         }
+        for name in ("payment_failure_checklist.md", "payment_reorder_checklist.md", "payment_purchase_receipt_flow.md"):
+            evidence[name] = ["不支持货到付款"]
+        for n in range(1, 7):
+            evidence[f"product_muche-c{n}.md"] = ["杯体制造缺陷保障期为6个月"]
         used = set()
         for name in ("eval.jsonl", "eval_multiturn.jsonl", "eval_ragas_gold.jsonl", "eval_colloquial.jsonl"):
             for row in read_cases(name):
