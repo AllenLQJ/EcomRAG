@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ConversationHistory } from './ConversationHistory';
 import { conversation } from '../test/conversations';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 function setup() {
   const props = { conversations: [conversation('当前'), conversation('另一个')], currentId: '当前',
@@ -12,6 +14,27 @@ function setup() {
 }
 
 describe('conversation history navigation', () => {
+  it('keeps rename reachable by keyboard and touch, hiding it only under hover-capable CSS', async () => {
+    const rename = vi.fn().mockResolvedValue(true);
+    render(<ConversationHistory conversations={[conversation('当前')]} currentId="当前"
+      onNew={vi.fn()} onSelect={vi.fn()} onDelete={vi.fn()} onRename={rename} />);
+    const button = screen.getByRole('button', { name: '重命名对话：当前' });
+    expect(button).toHaveClass('history-rename', 'min-h-11', 'min-w-11');
+    expect(button).not.toHaveAttribute('tabindex', '-1');
+    expect(button).not.toHaveAttribute('aria-hidden');
+    const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
+    const hoverOnly = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/)?.[1];
+    expect(hoverOnly).toContain('.history-rename { opacity: 0; }');
+    expect(hoverOnly).toContain('.group:hover .history-rename');
+    expect(hoverOnly).toContain('.group:focus-within .history-rename');
+    expect(button.className).not.toMatch(/hidden|opacity-0|invisible/);
+    button.focus();
+    await userEvent.setup().keyboard('{Enter}');
+    expect(screen.getByLabelText('对话标题')).toHaveFocus();
+    fireEvent.change(screen.getByLabelText('对话标题'), { target: { value: '新标题' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '保存标题' })); });
+    expect(rename).toHaveBeenCalledWith('当前', '新标题');
+  });
   it('provides navigation/list semantics, current state and keyboard selection', async () => {
     const props = setup();
     expect(screen.getByRole('navigation', { name: '历史对话' })).toBeInTheDocument();

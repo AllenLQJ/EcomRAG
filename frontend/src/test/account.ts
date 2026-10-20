@@ -34,6 +34,14 @@ export function accountMock(initial = guestIdentity()) {
       state.items.push(item); state.details[item.id] = { id: item.id, title: item.title, messages: [] };
       return json(item, 201);
     }
+    const answerPath = path.match(/^\/conversations\/([^/]+)\/messages$/);
+    if (answerPath && method === 'POST') {
+      const detail = state.details[decodeURIComponent(answerPath[1])];
+      if (!detail) return json({ code: 40401, message: '对话不存在' }, 404);
+      const message = detail.messages[detail.messages.length - 1];
+      if (message?.role === 'assistant') message.elapsed_ms = body.elapsed_ms;
+      return json({});
+    }
     if (path.startsWith('/conversations/')) {
       const id = decodeURIComponent(path.slice('/conversations/'.length));
       if (method === 'GET') return state.details[id] ? json(state.details[id]) : json({ code: 40401, message: '对话不存在' }, 404);
@@ -44,8 +52,15 @@ export function accountMock(initial = guestIdentity()) {
       const request = body as ChatRequest;
       state.identity = { ...state.identity, quota: { ...state.identity.quota, used: state.identity.quota.used + 1, remaining: state.identity.quota.remaining - 1 } };
       const item = state.items.find(item => item.id === request.conversation_id);
-      if (item) { item.title = request.message; item.message_count += 2; }
-      return json(fixtureFor(request));
+      const response = fixtureFor(request);
+      if (item) {
+        item.title = request.message; item.message_count += 2;
+        state.details[item.id].messages.push(
+          { role: 'user', content: request.message, created_at: new Date().toISOString() },
+          { role: 'assistant', content: response.answer, route: response.route, sources: response.sources, created_at: new Date().toISOString() },
+        );
+      }
+      return json(response);
     }
     throw new Error(`Unexpected mock request: ${method} ${path}`);
   });

@@ -37,7 +37,9 @@ export function ChatMessage({ message, pending, showTrace, supportUrl, onRetry, 
           : message.code !== 42902 && <button type="button" disabled={pending} onClick={() => onRetry(message.question, message.id)} className="secondary-button mt-3 disabled:opacity-50">重试</button>}
       </div> : <>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-          <RouteBadge route={message.response.route} /><span>{formatSeconds(message.elapsedMs)}</span>
+          <RouteBadge route={message.response.route} />
+          {typeof message.elapsedMs === 'number' && Number.isFinite(message.elapsedMs) && message.elapsedMs >= 0
+            && <span>{formatSeconds(message.elapsedMs)}</span>}
         </div>
         <AnswerMarkdown answer={message.response.answer} sources={message.response.sources}
           onCitation={index => setSelection(previous => ({ index, sequence: (previous?.sequence || 0) + 1 }))} />

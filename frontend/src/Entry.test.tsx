@@ -138,6 +138,43 @@ describe('entry and welcome lifecycle', () => {
 
 describe('quota, account and shop integration', () => {
   beforeEach(() => { vi.stubEnv('VITE_STREAM', '0'); });
+  it.each([false, true])('places authentication close at the top right above the logo with a touch-sized target (mobile=%s)', async mobile => {
+    mockMobile(mobile);
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock(); await mount();
+    if (mobile) fireEvent.click(screen.getByRole('button', { name: '历史' }));
+    fireEvent.click(screen.getByRole('button', { name: '登录/注册' }));
+    const modal = screen.getByRole('dialog', { name: '登录/注册' });
+    const close = within(modal).getByRole('button', { name: '关闭登录/注册' });
+    expect(close).toHaveClass('min-h-11', 'min-w-11');
+    expect(close.parentElement).toHaveClass('flex', 'justify-end');
+    expect(close.parentElement?.nextElementSibling).toContainElement(modal.querySelector('.entry-logo'));
+    fireEvent.click(within(modal).getByRole('tab', { name: '注册' }));
+    const rules = within(modal).getByRole('list', { name: '注册密码要求' });
+    fireEvent.change(within(modal).getByLabelText('密码'), { target: { value: '12345678' } });
+    expect(rules.querySelector('[data-rule="digits"]')).toHaveAttribute('data-state', 'unmet');
+    fireEvent.click(close);
+    expect(screen.queryByRole('dialog', { name: '登录/注册' })).not.toBeInTheDocument();
+  });
+  it('moves a single shop action across the existing mobile breakpoint and opens one shared dialog', async () => {
+    const resize = mockMobile(false);
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock(); await mount();
+    expect(screen.getAllByRole('button', { name: '店铺信息' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '店铺信息' }));
+    expect(screen.getAllByRole('dialog', { name: '店铺信息' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '关闭店铺信息' }));
+    act(() => resize(true));
+    expect(screen.getAllByRole('button', { name: '店铺信息' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '店铺信息' }).closest('.composer-actions')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '常见问题' }));
+    expect(screen.queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    act(() => resize(false));
+    expect(within(screen.getByRole('banner')).getByRole('button', { name: '店铺信息' })).toBeInTheDocument();
+    act(() => resize(true));
+    expect(screen.queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '常见问题' }));
+    fireEvent.click(screen.getByRole('button', { name: '店铺信息' }));
+    expect(screen.getAllByRole('dialog', { name: '店铺信息' })).toHaveLength(1);
+  });
   it.each(['0', '1'])('shows an origin-specific chat error (stream=%s)', async stream => {
     vi.stubEnv('VITE_STREAM', stream);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
@@ -147,12 +184,13 @@ describe('quota, account and shop integration', () => {
     await screen.findByText('访问来源未被允许，请使用正确的访问地址。');
     expect(screen.queryByText('服务有点忙，请稍后再试。')).not.toBeInTheDocument();
   });
-  it('shows shop information only on an empty conversation and restores it for a new conversation', async () => {
+  it.each([false, true])('keeps shop information available before and after sending and creating a conversation (mobile=%s)', async mobile => {
+    mockMobile(mobile);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock();
     await mount();
     expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
     ask(); await screen.findByText('闲聊');
-    expect(screen.queryByRole('button', { name: /店铺信息/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '新对话' }));
     expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
   });
@@ -204,11 +242,17 @@ describe('quota, account and shop integration', () => {
   it.each([false, true])('shop facts render and a category fills the draft without sending (mobile=%s)', async mobile => {
     mockMobile(mobile);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); const mock = accountMock(); await mount();
-    const main = screen.getByRole('main', { name: '客服对话' });
-    const entry = within(main).getByRole('button', { name: /店铺信息/ });
-    expect(entry).toHaveClass('shop-entry');
-    expect(entry.compareDocumentPosition(within(main).getByRole('heading', { name: /你好，我是/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    if (!mobile) expect(within(screen.getByRole('navigation', { name: '历史对话' })).queryByRole('button', { name: /店铺信息/ })).not.toBeInTheDocument();
+    const entry = screen.getByRole('button', { name: '店铺信息' });
+    expect(entry).toHaveClass('shop-info-button');
+    expect(document.querySelector('.shop-entry')).toBeNull();
+    if (mobile) {
+      expect(entry.closest('.composer-actions')).toHaveClass('justify-between', 'sm:hidden');
+      expect(within(screen.getByRole('banner')).queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    } else {
+      expect(entry.closest('header')).toBe(screen.getByRole('banner'));
+      expect(entry.parentElement).toHaveClass('header-shop-action', 'sm:flex');
+      expect(within(screen.getByRole('navigation', { name: '历史对话' })).queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    }
     fireEvent.click(entry);
     const shop = screen.getByRole('dialog', { name: '店铺信息' });
     expect(within(shop).getByText(shopInfo.disclaimer)).toBeInTheDocument();

@@ -5,7 +5,7 @@
 ## 图片部署
 
 - 完整 HTTP(S) `image_url` 直接使用。
-- 相对路径 `<sku>/main.webp`（及接口允许的 PNG/JPG/JPEG/SVG）需要构建时设置 `VITE_PRODUCT_IMAGE_BASE_URL`，例如 `https://images.example.com/products` 或同源 `/products`。图片根地址与 `VITE_API_BASE` 独立，配置路径前缀会被保留。
+- 相对路径 `<sku>/main.webp`（及接口允许的 PNG/JPG/JPEG/SVG）使用图片根地址拼接：**未设置 `VITE_PRODUCT_IMAGE_BASE_URL` 时默认同源 `/images`**（由 `deploy/Caddyfile` 的 `handle_path /images/*` 托管 `data/images`，需设置环境变量 `ECOMRAG_IMAGES_DIR` 为该目录的绝对路径）；也可构建时显式设置，例如 `https://images.example.com/products` 或同源 `/products`。图片根地址与 `VITE_API_BASE` 独立，配置路径前缀会被保留。
 - 相对路径未配置图片根地址、图片为空、URL 无效或加载失败，统一显示组件内 SVG/文字占位，无额外占位文件请求。图片与占位均固定 4:3，图片使用商品名 alt 与懒加载。
 - 前端不提供静态图片服务或改动代理。部署方需确定公开图片根地址，并托管后端 `data/images/`；若后端 `IMAGE_BASE_URL` 已生成完整地址，无须额外前端配置。
 

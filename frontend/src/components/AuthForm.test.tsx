@@ -30,10 +30,47 @@ describe('shared login/register form', () => {
     fireEvent.click(screen.getByRole('tab', { name: '注册' }));
     expect(screen.queryByText('演示站点，请勿使用你常用的真实密码。')).not.toBeInTheDocument();
     expect(screen.getByText('3–20 位字母、数字或下划线。')).toBeVisible();
-    expect(screen.getByText('8–64 位。')).toBeVisible();
+    expect(screen.getByRole('list', { name: '注册密码要求' })).toBeVisible();
     expect(screen.getByLabelText('密码')).toHaveAttribute('autocomplete', 'new-password');
     fireEvent.keyDown(screen.getByRole('tab', { name: '注册' }), { key: 'ArrowLeft' });
     expect(screen.getByRole('tab', { name: '登录' })).toHaveAttribute('aria-selected', 'true');
+  });
+  it.each([false, true])('shows all registration rules before submit and updates them while typing (entry=%s)', entry => {
+    const mock = accountMock();
+    render(<AuthForm onSuccess={vi.fn()} onGuest={entry ? vi.fn() : undefined} />);
+    expect(screen.queryByRole('list', { name: '注册密码要求' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '注册' }));
+    const rules = screen.getByRole('list', { name: '注册密码要求' });
+    expect(rules.querySelectorAll('li')).toHaveLength(4);
+    expect(rules).toHaveTextContent('8–64 位字符');
+    expect(rules).toHaveTextContent('不能为纯数字');
+    expect(rules).toHaveTextContent('不能与用户名相同（不区分大小写）');
+    expect(rules).toHaveTextContent('不能使用常见弱口令');
+    fill('demo_123', '12345678');
+    expect(rules.querySelector('[data-rule="digits"]')).toHaveAttribute('data-state', 'unmet');
+    expect(rules.querySelector('[data-rule="digits"]')).toHaveClass('password-rule-unmet');
+    expect(rules.querySelector('[data-rule="length"]')).toHaveAttribute('data-state', 'satisfied');
+    expect(screen.getByLabelText('密码')).toHaveAttribute('aria-invalid', 'true');
+    expect(mock.fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: entry ? '注册并进入' : '注册' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('密码不能为纯数字');
+    expect(mock.fetchMock).not.toHaveBeenCalled();
+    fill('demo_123', 'dEMO_123');
+    expect(rules.querySelector('[data-rule="different"]')).toHaveAttribute('data-state', 'unmet');
+    // Editing the username also immediately reevaluates the password comparison.
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'another_user' } });
+    expect(rules.querySelector('[data-rule="different"]')).toHaveAttribute('data-state', 'satisfied');
+    fill('another_user', 'Password123');
+    expect(rules.querySelector('[data-rule="common"]')).toHaveAttribute('data-state', 'unmet');
+    fill('another_user', 'Unique_password!');
+    for (const rule of rules.querySelectorAll('li')) {
+      expect(rule).toHaveAttribute('data-state', 'satisfied');
+      expect(rule).toHaveClass('password-rule-satisfied');
+      expect(rule).toHaveTextContent('已满足');
+    }
+    expect(screen.getByLabelText('密码')).toHaveAttribute('aria-invalid', 'false');
+    fireEvent.click(screen.getByRole('tab', { name: '登录' }));
+    expect(screen.queryByRole('list', { name: '注册密码要求' })).not.toBeInTheDocument();
   });
   it('keeps the guest action secondary and separate from form submission in entry mode', () => {
     const mock = accountMock(); const onGuest = vi.fn(); const onSuccess = vi.fn();
@@ -52,7 +89,8 @@ describe('shared login/register form', () => {
   for (const mode of ['login', 'register'] as const) {
     it.each([
       [40001, '请求参数非法'], [40002, '用户名须为3–20位英文字母、数字或下划线'],
-      [40003, '密码长度须为8–64位'], [40102, '账号不存在'], [40103, '密码错误'], [40901, '用户名已被使用'],
+      [40003, '密码长度须为8–64位'], [40003, '密码过于常见，请使用更安全的密码'],
+      [40102, '账号不存在'], [40103, '密码错误'], [40901, '用户名已被使用'],
       [42903, '登录尝试过多'], [50301, '服务暂不可用'],
     ])(`${mode} displays business code %i and its Chinese reason`, async (code, message) => {
       const mock = accountMock();

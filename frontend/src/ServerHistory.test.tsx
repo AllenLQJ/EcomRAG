@@ -4,6 +4,9 @@ import App, { GUEST_ENTRY_KEY } from './App';
 import { accountMock, json, userIdentity } from './test/account';
 import { CONVERSATIONS_KEY, saveConversations } from './lib/storage';
 import { conversation } from './test/conversations';
+import { accountAPI } from './api/account';
+import { fixtureFor } from './mocks/fixtures';
+import { controlledSSE } from './test/streams';
 
 function ask(question: string) {
   fireEvent.change(screen.getByRole('textbox', { name: '输入问题' }), { target: { value: question } });
@@ -19,6 +22,65 @@ function seed(mock: ReturnType<typeof accountMock>) {
 
 describe('server conversation history', () => {
   beforeEach(() => { vi.stubEnv('VITE_STREAM', '0'); });
+  it.each([undefined, null, 6000, 0])('restores known timing and hides unknown timing (%s)', async elapsed_ms => {
+    const mock = accountMock(userIdentity()); seed(mock);
+    mock.state.details.a.messages[1].elapsed_ms = elapsed_ms;
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '打开对话：服务器a' }));
+    await screen.findByText('旧回答a[1]');
+    if (elapsed_ms == null) expect(screen.queryByText(/秒$/)).not.toBeInTheDocument();
+    else expect(screen.getByText(`${(elapsed_ms / 1000).toFixed(1)} 秒`)).toBeInTheDocument();
+  });
+
+  it.each(['json', 'sse'])('saves the browser elapsed time and restores it after login (%s)', async transport => {
+    vi.stubEnv('VITE_STREAM', transport === 'sse' ? '1' : '0');
+    const mock = accountMock(userIdentity()); seed(mock);
+    let clock = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    if (transport === 'sse') mock.overrides['POST /chat/stream'] = init => {
+      const request = JSON.parse(String(init.body));
+      const response = fixtureFor(request);
+      const detail = mock.state.details.a;
+      detail.messages.push({ role: 'user', content: request.message, created_at: '' },
+        { role: 'assistant', content: response.answer, route: response.route, sources: response.sources, created_at: '' });
+      mock.state.items[0].title = '继续';
+      const stream = controlledSSE(); stream.event({ event: 'done', data: response }); stream.close();
+      return stream.response;
+    };
+    const original = mock.fetchMock.getMockImplementation()!;
+    mock.fetchMock.mockImplementation(async (url, init = {}) => {
+      const response = await original(url, init);
+      if (url.endsWith('/chat') || url.endsWith('/chat/stream')) clock = 7000;
+      if (url.endsWith('/messages')) clock = 19000; // 回写耗时不计入回答耗时。
+      return response;
+    });
+    const view = render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '打开对话：服务器a' }));
+    await screen.findByText('旧回答a[1]');
+    ask('继续');
+    await screen.findByText('6.0 秒');
+    await waitFor(() => expect(mock.state.details.a.messages.at(-1)?.elapsed_ms).toBe(6000));
+    const body = JSON.parse(String(mock.calls('/conversations/a/messages', 'POST')[0][1]?.body));
+    expect(body).toMatchObject({ elapsed_ms: 6000, request_id: expect.any(String), route: 'rag' });
+    expect(mock.calls('/conversations/a/messages')[0][1]?.headers).toMatchObject({ 'X-Requested-With': 'ecomrag' });
+    view.unmount();
+    await accountAPI.logout(); await accountAPI.authenticate('login', 'demo_user', 'demo_pass_123');
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '打开对话：继续' }));
+    await screen.findByText('6.0 秒');
+    expect(screen.queryByText('0.0 秒')).not.toBeInTheDocument();
+  });
+
+  it('keeps the completed answer and reports a timing persistence failure', async () => {
+    const mock = accountMock(userIdentity()); seed(mock);
+    mock.overrides['POST /conversations/a/messages'] = () => json({ code: 50301, message: '服务暂不可用' }, 503);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: '打开对话：服务器a' }));
+    await screen.findByText('旧回答a[1]'); ask('继续');
+    await screen.findByText(/回答耗时保存失败/);
+    expect(screen.getByText('知识库回答')).toBeInTheDocument();
+    expect(mock.calls('/chat')).toHaveLength(1);
+  });
   it('lists only server entries, opens on demand, and keeps existing multi-turn history assembly', async () => {
     saveConversations([conversation('游客')]); const before = localStorage.getItem(CONVERSATIONS_KEY);
     const mock = accountMock(userIdentity()); seed(mock); render(<App />);

@@ -7,6 +7,7 @@ import { AuthPanel } from './components/AuthPanel';
 import { Modal } from './components/Modal';
 import { DeleteAccount } from './components/DeleteAccount';
 import { ShopInfo } from './components/ShopInfo';
+import { ShopInfoButton } from './components/ShopInfoButton';
 import { accountAPI, accountError, guestIdentity, type Identity, type User } from './api/account';
 import { WELCOME_KEY, WelcomeSplash } from './components/WelcomeSplash';
 import { useDesktop } from './hooks/useDesktop';
@@ -135,6 +136,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   const scroll = useAutoScroll(`${sessionId}-${messages.length}-${pending}-${progress?.text.length || 0}-${progress?.stage || ""}`);
   const name = storeName();
   const supportUrl = humanSupportUrl();
+  const shopAction = <ShopInfoButton onClick={() => setShopOpen(true)} />;
 
   useEffect(() => { document.title = `${name} · 客服中心`; }, [name]);
   useEffect(() => {
@@ -190,10 +192,6 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
     </div> };
 
   const welcome = <section className={mobile ? 'shrink-0 px-4 pt-6' : 'pb-8 pt-2 sm:py-16'}>
-    <button type="button" aria-label="店铺信息" className="shop-entry" onClick={() => setShopOpen(true)}>
-      <span><span className="block text-title font-semibold">店铺信息</span><span className="mt-1 block text-sm text-muted">了解店铺、服务承诺与商品分类</span></span>
-      <span aria-hidden="true" className="text-title">↗</span>
-    </button>
     <LogoLockup className="mb-5 hidden h-14 sm:block" />
     <h1 className="font-serif text-title">你好，我是{name}的智能客服</h1>
     <p className="mt-2 text-sm leading-relaxed text-muted">售后、配送、发票、商品参数，都可以问我。</p>
@@ -205,7 +203,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
     {desktop && <ResizableSidebar><ConversationHistory {...historyProps} /></ResizableSidebar>}
     <div className="flex min-w-0 flex-1 flex-col">
     <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(true)} historyButton={historyButton} name={name} supportUrl={supportUrl} onReset={newConversation}
-      traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} />
+      traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} shopAction={!mobile ? shopAction : undefined} />
     <main ref={chatArea} aria-hidden={historyOpen || undefined} className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
       {mobile && messages.length === 0 && welcome}
       <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-busy={pending} aria-relevant="additions" tabIndex={0}
@@ -224,7 +222,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
       {exhausted && <div role="status" className="mx-auto w-full max-w-chat px-4 py-2 text-sm text-fallback-text">
         {(quotaScope || identity.quota.role) === 'guest' ? <>访客今日次数已用完，登录后每天可提问 50 次。<button type="button" className="secondary-button ml-2" onClick={onLogin}>登录/注册</button></> : '今日提问次数已用完，请明天再试。'}
       </div>}
-      <Composer ref={input} blocked={exhausted} value={draft} onChange={setDraft} onSend={submit} pending={pending} />
+      <Composer ref={input} blocked={exhausted} value={draft} onChange={setDraft} onSend={submit} pending={pending} shopAction={mobile ? shopAction : undefined} />
     </main>
     </div>
     {shopOpen && <ShopInfo onClose={() => setShopOpen(false)} onCategory={question => { setShopOpen(false); setDraft(question); window.setTimeout(() => input.current?.focus(), 0); }} />}

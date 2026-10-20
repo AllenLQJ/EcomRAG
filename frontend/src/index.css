@@ -42,11 +42,13 @@
   .entry-auth-divider { @apply my-4 flex items-center gap-3 text-xs text-general-dot; }
   .entry-auth-divider > span[aria-hidden] { @apply flex-1 bg-line; height: 0.5px; }
   .entry-auth-quota { @apply mt-3 text-center text-[13px] leading-relaxed text-muted; }
-  .shop-entry { @apply mb-8 flex min-h-11 w-full items-center justify-between gap-4 rounded-card border border-outline bg-card p-5 text-left text-ink hover:border-ink; }
+  .password-rule-pending { @apply text-muted; }
+  .password-rule-unmet { @apply font-medium text-fallback-text; }
+  .password-rule-satisfied { @apply text-cache-text; }
+  .shop-info-button { @apply inline-flex min-h-11 shrink-0 items-center justify-center rounded-card border border-outline bg-card px-3 text-base font-semibold text-ink hover:border-ink sm:px-4 sm:text-lg; }
   @media (prefers-color-scheme: dark) {
-    .shop-entry { @apply bg-ink text-canvas border-muted; }
-    .shop-entry .text-muted { @apply text-outline; }
-    .shop-entry:hover { @apply border-canvas; }
+    .shop-info-button { @apply bg-ink text-canvas border-muted; }
+    .shop-info-button:hover { @apply border-canvas; }
   }
   .entry-footer { @apply mt-4 text-center text-xs leading-relaxed text-general-dot; }
   @media (max-width: 640px) {
@@ -169,6 +171,12 @@
   .answer-markdown blockquote { @apply border-l-2 border-outline pl-4 text-muted; }
   .answer-markdown h1, .answer-markdown h2, .answer-markdown h3 { @apply font-serif text-lg font-semibold; }
   .answer-markdown a { @apply inline-block min-h-11; }
+}
+
+/* Touch/no-hover devices keep the compact 44px action visible at every width. */
+@media (hover: hover) {
+  .history-rename { opacity: 0; }
+  .group:hover .history-rename, .group:focus-within .history-rename { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

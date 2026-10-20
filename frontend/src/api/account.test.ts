@@ -18,6 +18,7 @@ describe('shared account/history transport policy', () => {
     const created = await conversationsAPI.create();
     await conversationsAPI.open(created.id);
     await conversationsAPI.rename(created.id, '新标题');
+    await conversationsAPI.saveAnswer(created.id, fixtureFor(request), 6000);
     await conversationsAPI.remove(created.id);
     await accountAPI.logout();
     await accountAPI.remove('demo_pass_123');
@@ -33,6 +34,21 @@ describe('shared account/history transport policy', () => {
     }
     for (const path of ['/chat', '/chat/stream']) expect(JSON.parse(String(mock.calls(path)[0][1]?.body))).toHaveProperty('conversation_id', 'server-id');
     expect(mock.calls('/auth/account')[0][1]?.method).toBe('DELETE');
+  });
+  it.each([6000, 3_600_001])('bounds answer persistence and omits unsupported elapsed values (%s)', async elapsedMs => {
+    const mock = accountMock(userIdentity());
+    const created = await conversationsAPI.create();
+    const response = { ...fixtureFor(request), answer: '😀'.repeat(4001), sources: Array.from({ length: 9 }, () => ({
+      index: 1, doc_id: '文'.repeat(129), title: '题'.repeat(201), snippet: '摘'.repeat(501), score: 1,
+    })) };
+    await conversationsAPI.saveAnswer(created.id, response, elapsedMs);
+    const body = JSON.parse(String(mock.calls(`/conversations/${created.id}/messages`, 'POST')[0][1]?.body));
+    expect(body.request_id).toBe(response.request_id);
+    expect(Array.from(body.content)).toHaveLength(4000);
+    expect(body.sources).toHaveLength(8);
+    expect(body.sources[0]).toEqual({ index: 1, doc_id: '文'.repeat(128), title: '题'.repeat(200), snippet: '摘'.repeat(500), score: 1 });
+    if (elapsedMs === 6000) expect(body.elapsed_ms).toBe(6000);
+    else expect(body).not.toHaveProperty('elapsed_ms');
   });
   it('joins the configured API base for auth and history without changing Cookie policy', async () => {
     vi.stubEnv('VITE_API_BASE', 'https://api.example.test/');

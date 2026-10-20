@@ -1,4 +1,4 @@
-import { forwardRef, useId, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { characterCount } from '../lib/format';
 import { Chevron, SendIcon } from './Brand';
 import { useMobile } from '../hooks/useMobile';
@@ -11,10 +11,11 @@ interface Props {
   onSend: (value: string) => void;
   pending: boolean;
   blocked?: boolean;
+  shopAction?: ReactNode;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(
-  { value, onChange, onSend, pending, blocked = false }, forwardedRef,
+  { value, onChange, onSend, pending, blocked = false, shopAction }, forwardedRef,
 ) {
   const mobile = useMobile();
   const [quickOpen, setQuickOpen] = useState(false);
@@ -38,10 +39,13 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
 
   return <footer className="composer-footer shrink-0 bg-canvas px-4 pt-2 sm:px-10 sm:pt-3">
     <div className="mx-auto w-full max-w-chat">
-      {mobile && <button type="button" disabled={pending || blocked} aria-expanded={quickOpen} aria-controls={`${id}-quick`}
-        onClick={() => setQuickOpen(open => !open)} className="mb-1 inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted disabled:opacity-50">
-        常见问题<Chevron open={quickOpen} />
-      </button>}
+      {mobile && <div className="composer-actions mb-1 flex items-center justify-between gap-3 sm:hidden">
+        <button type="button" disabled={pending || blocked} aria-expanded={quickOpen} aria-controls={`${id}-quick`}
+          onClick={() => setQuickOpen(open => !open)} className="inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted disabled:opacity-50">
+          常见问题<Chevron open={quickOpen} />
+        </button>
+        {!quickOpen && shopAction}
+      </div>}
       <div id={`${id}-quick`} aria-label="快捷问题" hidden={mobile && !quickOpen}>
         <div className="-mx-1 mb-2 flex flex-wrap gap-2 px-1">
           {QUICK_QUESTIONS.map(question => <button key={question} type="button" disabled={pending || blocked}

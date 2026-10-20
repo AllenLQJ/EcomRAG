@@ -44,9 +44,14 @@ describe('products in live chat and history', () => {
   });
 
   it.each([false, true])('clears old cards immediately on regeneration and keeps them cleared on retry (remote=%s)', async remote => {
+    let completeTimingSave: () => void = () => undefined;
     if (remote) {
       vi.spyOn(conversationsAPI, 'list').mockResolvedValue({ items: [] });
       vi.spyOn(conversationsAPI, 'create').mockResolvedValue({ id: 'server-1', title: '', updated_at: '2026-10-20T00:00:00Z', message_count: 0 });
+      // Keep the first timing write pending across regeneration. It is a separate JSON
+      // request, so it must not consume one of the three chat SSE responses below.
+      vi.spyOn(conversationsAPI, 'saveAnswer').mockResolvedValue(undefined).mockImplementationOnce(() =>
+        new Promise<void>(resolve => { completeTimingSave = resolve; }));
     }
     const first = controlledSSE(), second = controlledSSE(), third = controlledSSE();
     const fetchMock = vi.fn().mockResolvedValueOnce(first.response).mockResolvedValueOnce(second.response).mockResolvedValueOnce(third.response);
@@ -63,12 +68,16 @@ describe('products in live chat and history', () => {
     await act(async () => { second.event({ event: 'delta', data: { text: '新的部分回答' } }); });
     expect(screen.getByText('新的部分回答')).toBeInTheDocument();
     expect(cards()).not.toBeInTheDocument();
+    await act(async () => { completeTimingSave(); });
+    expect(screen.getByText('新的部分回答')).toBeInTheDocument();
+    expect(cards()).not.toBeInTheDocument();
     await act(async () => { second.event({ event: 'error', data: { code: 50201, message: 'failed' } }); });
     fireEvent.click(await screen.findByRole('button', { name: '重试' }));
     expect(cards()).not.toBeInTheDocument();
     await act(async () => { third.event({ event: 'done', data: productAnswer() }); });
     expect(await screen.findByText(productAnswer().answer)).toBeInTheDocument();
     expect(cards()).not.toBeInTheDocument();
+    if (remote) expect(conversationsAPI.saveAnswer).toHaveBeenCalledTimes(2);
   });
 
   it('renders cards in JSON mode and restores bounded local metadata without sending it as context', async () => {
@@ -98,7 +107,7 @@ describe('products in live chat and history', () => {
     vi.spyOn(conversationsAPI, 'create').mockResolvedValue({ id: 'server-1', title: '', updated_at: '2026-10-20T00:00:00Z', message_count: 0 });
     vi.spyOn(conversationsAPI, 'open').mockResolvedValue({ id: 'server-1', title: '台灯规格', messages: [
       { role: 'user', content: '台灯规格', created_at: '2026-10-20T00:00:00Z' },
-      { role: 'assistant', content: productAnswer().answer, route: 'rag', sources: [], created_at: '2026-10-20T00:00:01Z' },
+      { role: 'assistant', content: productAnswer().answer, route: 'rag', sources: [], elapsed_ms: 6000, created_at: '2026-10-20T00:00:01Z' },
     ] });
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => jsonResponse(productAnswer([product()]))));
     render(<Chat remote />);
@@ -107,6 +116,7 @@ describe('products in live chat and history', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新打开历史' }));
     await waitFor(() => expect(cards()).not.toBeInTheDocument());
     expect(screen.getByText(productAnswer().answer)).toBeInTheDocument();
+    expect(screen.getByText('6.0 秒')).toBeInTheDocument();
     expect(conversationsAPI.open).toHaveBeenCalledWith('server-1', expect.any(AbortSignal));
     expect(localStorage.getItem(CONVERSATIONS_KEY)).toBeNull();
   });

@@ -57,7 +57,8 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
     setPending(true);
     setProgress({ text: '', stage: 'faq' });
     const userMessage: ChatMessage = { id: createId(), kind: 'user', text: question };
-    if (!remote) setMessages(previous => !current() ? previous : retryId
+    // Remove a regenerated/retried reply before any remote work, including its product cards.
+    if (retryId || !remote) setMessages(previous => !current() ? previous : retryId
       ? previous.filter(message => message.id !== retryId)
       : [...previous, userMessage]);
     const finish = (message: ChatMessage) => {
@@ -78,8 +79,7 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
         remoteId.current = created.id;
         setSessionId(created.id);
       }
-      if (remote) setMessages(previous => !current() ? previous : retryId
-        ? previous.filter(message => message.id !== retryId) : [...previous, userMessage]);
+      if (remote && !retryId) setMessages(previous => !current() ? previous : [...previous, userMessage]);
       chatStarted = true;
       const history = buildHistory(retryId ? messages.filter(message => message.id !== retryId) : messages);
       const response = await sendChatStream({ ...(remote && remoteId.current ? { conversation_id: remoteId.current } : {}), session_id: remoteId.current || sessionId, message: question, debug: traceEnabled, history }, event => {
@@ -91,9 +91,20 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
           : { text: (previous?.text || '') + event.data.text, stage: previous?.stage || 'generating' });
       }, controller.signal);
       if (!current()) return false;
+      const elapsedMs = Math.round((completedAt ?? performance.now()) - started);
       const message: ChatMessage = { id: createId(), kind: 'assistant', response,
-        elapsedMs: (completedAt ?? performance.now()) - started, question };
+        elapsedMs, question };
       finish(message);
+      if (remote && remoteId.current) {
+        // A timing write must not keep chat active. Its callbacks only update history
+        // metadata for this epoch; they never replay the completed message snapshot.
+        const conversationId = remoteId.current;
+        void conversationsAPI.saveAnswer(conversationId, response, elapsedMs).then(() => {
+          if (mounted.current && current()) void refreshConversations();
+        }).catch(error => {
+          if (mounted.current && current()) setHistoryError(`回答耗时保存失败。${accountError(error)}`);
+        });
+      }
     } catch (error) {
       if (!current()) return false;
       if (!chatStarted) { setHistoryError(`无法创建对话。${accountError(error)} 输入内容已保留，请重试。`); return false; }
@@ -215,7 +226,7 @@ function serverMessages(detail: ConversationDetail): ChatMessage[] {
       question = message.content;
       return { id: createId(), kind: 'user', text: message.content };
     }
-    return { id: createId(), kind: 'assistant', question, elapsedMs: 0, response: {
+    return { id: createId(), kind: 'assistant', question, elapsedMs: message.elapsed_ms, response: {
       request_id: '', session_id: detail.id, answer: message.content, route: message.route || 'general',
       sources: message.sources || [], strategy: null, trace: null, is_mock: false,
     } };

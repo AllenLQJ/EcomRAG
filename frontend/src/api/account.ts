@@ -1,12 +1,12 @@
 import { apiJSON } from './http';
-import type { Route, Source } from './types';
+import type { ChatResponse, Route, Source } from './types';
 
 export interface User { id: string | number; username: string }
 export interface Quota { role: 'guest' | 'user'; limit: number; used: number; remaining: number; resets_at: string }
 export interface Identity { user: User | null; quota: Quota }
 export interface ConversationSummary { id: string; title: string; updated_at: string; message_count: number }
 export interface ConversationDetail { id: string; title: string; messages: {
-  role: 'user' | 'assistant'; content: string; route?: Route | null; sources?: Source[] | null; created_at: string;
+  role: 'user' | 'assistant'; content: string; route?: Route | null; sources?: Source[] | null; elapsed_ms?: number | null; created_at: string;
 }[] }
 
 export const accountAPI = {
@@ -22,6 +22,17 @@ export const conversationsAPI = {
   open: (id: string, signal?: AbortSignal) => apiJSON<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, 'GET', undefined, signal),
   rename: (id: string, title: string) => apiJSON<void>(`/conversations/${encodeURIComponent(id)}`, 'PATCH', { title }),
   remove: (id: string) => apiJSON<void>(`/conversations/${encodeURIComponent(id)}`, 'DELETE'),
+  saveAnswer: (id: string, response: ChatResponse, elapsedMs: number) =>
+    apiJSON<void>(`/conversations/${encodeURIComponent(id)}/messages`, 'POST', {
+      request_id: response.request_id,
+      // Match the server's Unicode character limits before sending the completed answer.
+      content: Array.from(response.answer).slice(0, 4000).join(''), route: response.route,
+      sources: response.sources.slice(0, 8).map(source => ({ index: source.index, score: source.score,
+        doc_id: Array.from(source.doc_id).slice(0, 128).join(''),
+        title: Array.from(source.title).slice(0, 200).join(''), snippet: Array.from(source.snippet).slice(0, 500).join(''),
+      })),
+      ...(Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 3_600_000 ? { elapsed_ms: elapsedMs } : {}),
+    }),
 };
 
 export function guestIdentity(): Identity {

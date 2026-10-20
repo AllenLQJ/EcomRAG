@@ -49,7 +49,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
                 <span className="block truncate text-sm">{item.title}</span>
                 <time dateTime={new Date(item.updatedAt).toISOString()} className="mt-1 block text-xs text-muted">{relativeTime(item.updatedAt, now)}</time>
               </button>
-              {onRename && <button type="button" aria-label={`重命名对话：${item.title}`} className="min-h-11 min-w-11 rounded-card text-xs text-muted"
+              {onRename && <button type="button" aria-label={`重命名对话：${item.title}`} className="history-rename min-h-11 min-w-11 rounded-card text-xs text-muted"
                 onClick={() => { setConfirmation(null); setEditing({ id: item.id, title: item.title }); }}>改名</button>}
               <button type="button" aria-label={`删除对话：${item.title}`} onClick={() => setConfirmation({ id: item.id })}
                 className="history-delete min-h-11 min-w-11 rounded-card text-muted hover:text-ink lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">

@@ -1,10 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import * as api from '../api/client';
+import { conversationsAPI } from '../api/account';
 import { ChatError } from '../api/errors';
 import type { ChatRequest, ChatResponse, ChatStreamEvent } from '../api/types';
 import { CONVERSATIONS_KEY, MESSAGES_KEY, SESSION_KEY, saveConversations, loadConversations } from '../lib/storage';
 import { conversation, turn } from '../test/conversations';
+import { product, productAnswer } from '../test/products';
 import { useChat } from './useChat';
 
 interface Attempt {
@@ -27,6 +29,113 @@ function answer(attempt: Attempt, text: string): ChatResponse {
   return { request_id: 'r', session_id: attempt.request.session_id, answer: text,
     route: 'general', strategy: null, sources: [], is_mock: false, trace: null };
 }
+
+function pendingTimingWrite() {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((done, fail) => { resolve = done; reject = fail; });
+  const list = vi.spyOn(conversationsAPI, 'list').mockResolvedValue({ items: [] });
+  vi.spyOn(conversationsAPI, 'create').mockResolvedValue({ id: 'server-1', title: '', updated_at: '2026-10-20T00:00:00Z', message_count: 0 });
+  const save = vi.spyOn(conversationsAPI, 'saveAnswer').mockResolvedValue(undefined).mockReturnValueOnce(promise);
+  return { resolve, reject, list, save };
+}
+
+describe('remote timing writes and live reply ownership', () => {
+  it.each(['resolve', 'reject'] as const)('does not block regeneration or restore cards when an older timing write finishes (%s)', async outcome => {
+    const write = pendingTimingWrite();
+    const attempts = fakeTransport();
+    const onSettled = vi.fn();
+    let clock = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    const { result } = renderHook(() => useChat(false, { remote: true, onSettled }));
+    let first!: Promise<boolean>;
+    await act(async () => { first = result.current.send('台灯规格'); });
+    const response = productAnswer([product()]);
+    await act(async () => {
+      clock = 7000;
+      attempts[0].emit({ event: 'done', data: response });
+      attempts[0].resolve(response);
+    });
+    // The timing write is still unresolved. The completed chat must already be usable.
+    expect(result.current.pending).toBe(false);
+    await expect(first).resolves.toBe(true);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(write.save).toHaveBeenCalledWith('server-1', response, 6000);
+    const oldReply = result.current.messages[1];
+    expect(oldReply).toMatchObject({ kind: 'assistant', elapsedMs: 6000, response: { products: [product()] } });
+
+    let regeneration!: Promise<boolean>;
+    await act(async () => { regeneration = result.current.send('台灯规格', oldReply.id); });
+    expect(result.current.messages.map(message => message.kind)).toEqual(['user']);
+    expect(attempts[1].request.history).toEqual([]);
+    act(() => { attempts[1].emit({ event: 'delta', data: { text: '新的部分回答' } }); });
+    const listsBeforeCompletion = write.list.mock.calls.length;
+    await act(async () => {
+      if (outcome === 'resolve') write.resolve();
+      else write.reject(new ChatError(50301));
+    });
+    expect(result.current.pending).toBe(true);
+    expect(result.current.progress?.text).toBe('新的部分回答');
+    expect(result.current.messages.map(message => message.kind)).toEqual(['user']);
+    expect(result.current.historyError).toBe('');
+    expect(write.list).toHaveBeenCalledTimes(listsBeforeCompletion);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      clock = 13000;
+      const replacement = productAnswer();
+      attempts[1].emit({ event: 'done', data: replacement });
+      attempts[1].resolve(replacement);
+      await regeneration;
+    });
+    expect(result.current.messages[1]).toMatchObject({ kind: 'assistant', elapsedMs: 6000 });
+    expect(result.current.messages[1].kind === 'assistant' && result.current.messages[1].response.products).toBeUndefined();
+    expect(write.save).toHaveBeenCalledTimes(2);
+    expect(result.current.pending).toBe(false);
+  });
+
+  it.each(['reset', 'open', 'unmount'] as const)('ignores a late timing failure after %s', async action => {
+    const write = pendingTimingWrite();
+    const attempts = fakeTransport();
+    vi.spyOn(conversationsAPI, 'open').mockResolvedValue({ id: 'saved', title: '历史', messages: [
+      { role: 'user', content: '旧问题', created_at: '' },
+      { role: 'assistant', content: '历史回答', route: 'faq', sources: [], elapsed_ms: 2000, created_at: '' },
+    ] });
+    const { result, unmount } = renderHook(() => useChat(false, { remote: true }));
+    await act(async () => { void result.current.send('台灯规格'); });
+    await act(async () => { attempts[0].resolve(productAnswer([product()])); });
+    expect(result.current.pending).toBe(false);
+    if (action === 'reset') act(() => result.current.reset());
+    else if (action === 'open') await act(async () => { await result.current.selectConversation('saved'); });
+    else unmount();
+    const messages = result.current.messages;
+    const listCalls = write.list.mock.calls.length;
+    await act(async () => { write.reject(new ChatError(50301)); });
+    expect(result.current.messages).toBe(messages);
+    expect(result.current.historyError).toBe('');
+    expect(write.list).toHaveBeenCalledTimes(listCalls);
+    if (action === 'reset') expect(result.current.messages).toEqual([]);
+    if (action === 'open') {
+      expect(result.current.messages[1]).toMatchObject({ kind: 'assistant', elapsedMs: 2000, response: { answer: '历史回答' } });
+      expect(result.current.messages[1].kind === 'assistant' && result.current.messages[1].response.products).toBeUndefined();
+    }
+  });
+
+  it('reports a current timing failure without replacing the successful answer or its elapsed time', async () => {
+    const write = pendingTimingWrite();
+    const attempts = fakeTransport();
+    const { result } = renderHook(() => useChat(false, { remote: true }));
+    await act(async () => { void result.current.send('台灯规格'); });
+    await act(async () => { attempts[0].resolve(productAnswer([product()])); });
+    expect(result.current.pending).toBe(false);
+    const messages = result.current.messages;
+    await act(async () => { write.reject(new ChatError(50301)); });
+    expect(result.current.historyError).toContain('回答耗时保存失败');
+    expect(result.current.messages).toBe(messages);
+    expect(result.current.messages.map(message => message.kind)).toEqual(['user', 'assistant']);
+    expect(result.current.pending).toBe(false);
+  });
+});
 
 describe('request epochs and completed conversation storage', () => {
   it('ignores old deltas and done after a new conversation even when transport ignores abort', async () => {

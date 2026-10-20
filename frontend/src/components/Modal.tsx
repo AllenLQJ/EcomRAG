@@ -40,9 +40,9 @@ export function Modal({ title, onClose, children, auth = false }: { title: strin
   }, []);
   return <div ref={overlay} className="fixed inset-0 z-[60] overflow-y-auto bg-ink/30 p-4 sm:p-10">
     <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className={`mx-auto w-full ${auth ? 'max-w-[424px]' : 'max-w-chat'} rounded-card border border-line bg-canvas p-4 sm:p-8`}>
-      <div className="mb-4 flex items-center justify-between gap-4">
+      <div className={`mb-4 flex items-center gap-4 ${auth ? 'justify-end' : 'justify-between'}`}>
         <h2 className={auth ? 'sr-only' : 'font-serif text-title'}>{title}</h2>
-        <button type="button" className="secondary-button shrink-0" onClick={onClose} aria-label={`关闭${title}`}>关闭</button>
+        <button type="button" className="secondary-button min-h-11 min-w-11 shrink-0" onClick={onClose} aria-label={`关闭${title}`}>关闭</button>
       </div>
       {children}
     </div>

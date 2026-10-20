@@ -86,7 +86,7 @@ function isMessage(value: unknown): value is ChatMessage {
   if (value.kind === 'error') return typeof value.code === 'number' && Number.isFinite(value.code)
     && (value.requestId === undefined || typeof value.requestId === 'string');
   return value.kind === 'assistant' && isChatResponse(value.response)
-    && typeof value.elapsedMs === 'number' && Number.isFinite(value.elapsedMs) && value.elapsedMs >= 0;
+    && (value.elapsedMs == null || (typeof value.elapsedMs === 'number' && Number.isFinite(value.elapsedMs) && value.elapsedMs >= 0));
 }
 
 /** Keep adjacent, completed turns; discard orphan messages and interrupted questions. */

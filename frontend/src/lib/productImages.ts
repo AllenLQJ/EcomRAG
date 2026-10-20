@@ -7,7 +7,8 @@ export function productImageUrl(imageUrl: string | null, sku: string): string | 
       return !url.username && !url.password ? url.href : undefined;
     }
     if (!['webp', 'png', 'jpg', 'jpeg', 'svg'].some(ext => imageUrl === `${sku}/main.${ext}`)) return undefined;
-    const base = import.meta.env.VITE_PRODUCT_IMAGE_BASE_URL?.trim();
+    // 未配置时默认同源 /images（由 Caddy 托管 data/images）；仍可用 VITE_PRODUCT_IMAGE_BASE_URL 覆盖。
+    const base = (import.meta.env.VITE_PRODUCT_IMAGE_BASE_URL ?? '/images').trim();
     if (!base) return undefined;
     const sameOrigin = base.startsWith('/') && !base.startsWith('//');
     if (!sameOrigin && !/^https?:\/\//i.test(base)) return undefined;

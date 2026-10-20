@@ -1,8 +1,20 @@
 import { turn, conversation } from '../test/conversations';
 import { describe, expect, it, vi } from 'vitest';
-import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled, CONVERSATIONS_KEY, MAX_STORAGE_LENGTH, loadConversations, saveConversations } from './storage';
+import { clearMessages, debugEnabled, getSessionId, loadMessages, MESSAGES_KEY, newSessionId, saveMessages, SESSION_KEY, TRACE_KEY, traceToggleVisible, loadTraceEnabled, saveTraceEnabled, CONVERSATIONS_KEY, MAX_STORAGE_LENGTH, loadConversations, saveConversations, resetStorageMemory } from './storage';
 
 describe('storage', () => {
+  it.each([6000, 0, undefined, null])('preserves guest timing across browser lifetimes without dropping untimed answers (%s)', elapsedMs => {
+    const messages = turn('问题');
+    const assistant = messages[1];
+    if (assistant.kind !== 'assistant') throw new Error('expected assistant');
+    assistant.elapsedMs = elapsedMs;
+    saveMessages('timing', messages, 100);
+    resetStorageMemory();
+    const restored = loadMessages('timing');
+    expect(restored).toHaveLength(2);
+    expect(restored[1]).toMatchObject({ kind: 'assistant', response: assistant.response });
+    expect(restored[1].kind === 'assistant' && restored[1].elapsedMs).toBe(elapsedMs);
+  });
   it('creates/reuses a UUID and replaces it for a new conversation', () => {
     const first = getSessionId();
     expect(first).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i);
