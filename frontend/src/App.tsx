@@ -29,12 +29,16 @@ export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [entry, setEntry] = useState(true);
   const [authOpen, setAuthOpen] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [playWelcome, setPlayWelcome] = useState(true);
   const [notice, setNotice] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
   const authEpoch = useRef(0);
   const quotaEpoch = useRef(0);
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const requireAuth = useCallback(() => setAuthRequired(true), []);
   const name = storeName();
   useEffect(() => { document.title = `${name} · 客服中心`; }, [name]);
   useEffect(() => {
@@ -55,6 +59,8 @@ export default function App() {
     const request = ++quotaEpoch.current;
     void accountAPI.me().then(data => {
       if (generation !== authEpoch.current || request !== quotaEpoch.current) return;
+      // An expired Cookie must not remount chat as a guest and discard the live reply.
+      if (identityRef.current?.user && !data.user) { setAuthRequired(true); return; }
       setIdentity(data);
       setNotice('');
     }).catch(() => { if (generation === authEpoch.current && request === quotaEpoch.current) setNotice('配额暂时无法更新，请稍后再试。'); });
@@ -69,12 +75,12 @@ export default function App() {
     if (entry) resetWelcome();
     setPlayWelcome(entry);
     setIdentity({ user, quota: { role: 'user', limit: 50, used: 0, remaining: 50, resets_at: '' } });
-    setEntry(false); setAuthOpen(false); setNotice(''); refreshQuota();
+    setEntry(false); setAuthOpen(false); setAuthRequired(false); setNotice(''); refreshQuota();
   }
   function signedOut() {
     authEpoch.current += 1;
     try { sessionStorage.removeItem(GUEST_ENTRY_KEY); } catch { /* Optional storage. */ }
-    resetWelcome(); setIdentity(guestIdentity()); setEntry(true); setAuthOpen(false); setDeleteOpen(false); setNotice('');
+    resetWelcome(); setIdentity(guestIdentity()); setEntry(true); setAuthOpen(false); setAuthRequired(false); setDeleteOpen(false); setNotice('');
   }
   async function logout() {
     if (loggingOut) return;
@@ -92,6 +98,7 @@ export default function App() {
   </main>;
   return <>
     <ChatHome key={identity.user ? `user-${identity.user.id}` : 'guest'} identity={identity} onQuotaRefresh={refreshQuota}
+      authRequired={authRequired} onAuthRequired={requireAuth}
       playWelcome={playWelcome} notice={notice} loggingOut={loggingOut} onLogin={() => setAuthOpen(true)}
       onLogout={() => { void logout(); }} onDeleteAccount={() => setDeleteOpen(true)} />
     {authOpen && <Modal title="登录/注册" auth onClose={() => setAuthOpen(false)}><AuthPanel onSuccess={authenticated} /></Modal>}
@@ -101,11 +108,12 @@ export default function App() {
 
 interface HomeProps {
   identity?: Identity; onQuotaRefresh?: () => void; playWelcome?: boolean; notice?: string; loggingOut?: boolean;
+  authRequired?: boolean; onAuthRequired?: () => void;
   onLogin?: () => void; onLogout?: () => void; onDeleteAccount?: () => void;
 }
 
 export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelcome = true, notice, loggingOut,
-  onLogin, onLogout, onDeleteAccount }: HomeProps = {}) {
+  authRequired, onAuthRequired, onLogin, onLogout, onDeleteAccount }: HomeProps = {}) {
   const mobile = useMobile();
   const desktop = useDesktop();
   const [shopOpen, setShopOpen] = useState(false);
@@ -127,7 +135,7 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   const traceVisible = traceToggleVisible();
   const [traceEnabled, setTraceEnabled] = useState(() => traceVisible && loadTraceEnabled());
   const showTrace = traceVisible && traceEnabled;
-  const { sessionId, conversations, messages, pending, progress, send, reset, selectConversation, deleteConversation, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded });
+  const { sessionId, conversations, messages, pending, progress, send, reset, selectConversation, deleteConversation, renameConversation, historyError, refreshConversations } = useChat(showTrace, { remote: Boolean(identity.user), onSettled: onQuotaRefresh, onQuotaExceeded: quotaExceeded, onAuthRequired });
   useEffect(() => { saveTraceEnabled(showTrace); }, [showTrace]);
   const [draft, setDraft] = useState('');
   const input = useRef<HTMLTextAreaElement>(null);
@@ -216,6 +224,9 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
           {pending && (progress?.text ? <StreamingMessage text={progress.text} /> : <LoadingMessage stage={progress?.stage} />)}
         </div>
       </div>
+      {authRequired && <div className="mx-auto w-full max-w-chat px-4 py-2 text-sm text-fallback-text" role="status">
+        登录已失效，请重新登录。<button type="button" className="min-h-11 underline" onClick={onLogin}>重新登录</button>
+      </div>}
       {(notice || historyError) && <div className="mx-auto w-full max-w-chat px-4 py-2 text-sm text-fallback-text" role="status">
         {notice && <p>{notice}</p>}{historyError && <><p>{historyError}</p><button type="button" className="min-h-11 underline" onClick={() => { void refreshConversations(); }}>刷新历史列表</button></>}
       </div>}

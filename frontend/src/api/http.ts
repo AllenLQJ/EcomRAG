@@ -10,10 +10,10 @@ export function apiFetch(path: string, init: RequestInit = {}, chat = false): Pr
   return fetch(`${base}/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
 }
 
-export function responseError(body: unknown): ChatError {
+export function responseError(body: unknown, status?: number): ChatError {
   return new ChatError(isRecord(body) && typeof body.code === 'number' ? body.code : 50001,
     isRecord(body) && typeof body.request_id === 'string' ? body.request_id : undefined,
-    isRecord(body) ? body : undefined);
+    isRecord(body) ? body : undefined, status);
 }
 
 export async function apiJSON<T>(path: string, method = 'GET', data?: unknown, signal?: AbortSignal): Promise<T> {
@@ -27,7 +27,7 @@ export async function apiJSON<T>(path: string, method = 'GET', data?: unknown, s
       ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
     const body: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw responseError(body);
+    if (!response.ok) throw responseError(body, response.status);
     return body as T;
   } catch (error) {
     if (signal?.aborted) throw error;

@@ -4,7 +4,7 @@ import App, { GUEST_ENTRY_KEY } from './App';
 import { accountMock, json, userIdentity } from './test/account';
 import { CONVERSATIONS_KEY, saveConversations } from './lib/storage';
 import { conversation } from './test/conversations';
-import { accountAPI } from './api/account';
+import { accountAPI, guestIdentity } from './api/account';
 import { fixtureFor } from './mocks/fixtures';
 import { controlledSSE } from './test/streams';
 
@@ -71,14 +71,54 @@ describe('server conversation history', () => {
     expect(screen.queryByText('0.0 秒')).not.toBeInTheDocument();
   });
 
-  it('keeps the completed answer and reports a timing persistence failure', async () => {
+  it.each([404, 503])('silently handles HTTP %s timing failures and allows another question without duplicate answers', async status => {
+    vi.useFakeTimers();
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const mock = accountMock(userIdentity()); seed(mock);
-    mock.overrides['POST /conversations/a/messages'] = () => json({ code: 50301, message: '服务暂不可用' }, 503);
+    mock.overrides['POST /conversations/a/messages'] = () => json({ detail: 'Unavailable' }, status);
+    await act(async () => { render(<App />); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '打开对话：服务器a' })); });
+    await act(async () => { ask('继续'); });
+    expect(screen.getByText('知识库回答')).toBeInTheDocument();
+    const timing = screen.getByText(/^\d+\.\d 秒$/).textContent;
+    expect(screen.getByRole('textbox', { name: '输入问题' })).toBeEnabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(warning).toHaveBeenCalledOnce();
+    expect(mock.calls('/conversations/a/messages', 'POST')).toHaveLength(status === 404 ? 1 : 3);
+    expect(screen.queryByText(/回答耗时保存失败/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '刷新历史列表' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新登录' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByText(timing!)).toBeInTheDocument();
+    expect(mock.calls('/chat')).toHaveLength(1);
+    await act(async () => { ask('再问一次'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(mock.calls('/chat')).toHaveLength(2);
+    expect(mock.state.details.a.messages.map(message => message.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
+    expect(screen.getAllByText('知识库回答')).toHaveLength(2);
+  });
+  it.each([false, true])('offers login on a bare HTTP 401 and retains the answer through reauthentication (expired quota=%s)', async expiredQuota => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const mock = accountMock(userIdentity()); seed(mock);
+    mock.overrides['POST /conversations/a/messages'] = () => json({ detail: 'Unauthorized' }, 401);
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: '打开对话：服务器a' }));
-    await screen.findByText('旧回答a[1]'); ask('继续');
-    await screen.findByText(/回答耗时保存失败/);
+    await screen.findByText('旧回答a[1]');
+    if (expiredQuota) mock.overrides['GET /auth/me'] = () => json(guestIdentity());
+    ask('继续');
+    fireEvent.click(await screen.findByRole('button', { name: '重新登录' }));
+    expect(screen.getByRole('dialog', { name: '登录/注册' })).toBeInTheDocument();
     expect(screen.getByText('知识库回答')).toBeInTheDocument();
+    expect(mock.calls('/conversations/a/messages', 'POST')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '刷新历史列表' })).not.toBeInTheDocument();
+    delete mock.overrides['GET /auth/me'];
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'demo_user' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'demo_pass_123' } });
+    fireEvent.click(screen.getByRole('button', { name: '登录' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '登录/注册' })).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: '重新登录' })).not.toBeInTheDocument();
+    expect(screen.getByText('知识库回答')).toBeInTheDocument();
+    expect(screen.getByText(/^\d+\.\d 秒$/)).toBeInTheDocument();
     expect(mock.calls('/chat')).toHaveLength(1);
   });
   it('lists only server entries, opens on demand, and keeps existing multi-turn history assembly', async () => {

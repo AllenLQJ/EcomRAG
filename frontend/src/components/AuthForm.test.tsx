@@ -22,8 +22,19 @@ describe('shared login/register form', () => {
   it.each([['Ab_', 'x'.repeat(8)], ['A'.repeat(20), 'x'.repeat(64)], ['abc', '😀'.repeat(8)]])('accepts boundary credentials for %s', (username, password) => {
     expect(validateCredentials(username, password)).toBeUndefined();
   });
-  it('uses password inputs/autocomplete and keeps format hints without a registration warning', () => {
-    render(<AuthForm onSuccess={vi.fn()} />);
+  it.each([false, true])('shows format hints only on registration and keeps accessible errors (entry=%s)', entry => {
+    render(<AuthForm onSuccess={vi.fn()} onGuest={entry ? vi.fn() : undefined} />);
+    const expectLoginWithoutHints = () => {
+      expect(screen.queryByText('3–20 位字母、数字或下划线。')).not.toBeInTheDocument();
+      expect(screen.queryByText('8–64 位。')).not.toBeInTheDocument();
+      expect(screen.queryByRole('list', { name: '注册密码要求' })).not.toBeInTheDocument();
+      for (const label of ['用户名', '密码']) {
+        const describedBy = screen.getByLabelText(label).getAttribute('aria-describedby')!;
+        expect(describedBy).not.toContain('-hint');
+        expect(document.getElementById(describedBy)).toBeInTheDocument();
+      }
+    };
+    expectLoginWithoutHints();
     expect(screen.getByLabelText('用户名')).toHaveAttribute('autocomplete', 'username');
     expect(screen.getByLabelText('密码')).toHaveAttribute('type', 'password');
     expect(screen.getByLabelText('密码')).toHaveAttribute('autocomplete', 'current-password');
@@ -34,12 +45,14 @@ describe('shared login/register form', () => {
     expect(screen.getByLabelText('密码')).toHaveAttribute('autocomplete', 'new-password');
     fireEvent.keyDown(screen.getByRole('tab', { name: '注册' }), { key: 'ArrowLeft' });
     expect(screen.getByRole('tab', { name: '登录' })).toHaveAttribute('aria-selected', 'true');
+    expectLoginWithoutHints();
   });
   it.each([false, true])('shows all registration rules before submit and updates them while typing (entry=%s)', entry => {
     const mock = accountMock();
     render(<AuthForm onSuccess={vi.fn()} onGuest={entry ? vi.fn() : undefined} />);
     expect(screen.queryByRole('list', { name: '注册密码要求' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '注册' }));
+    expect(screen.getByText('3–20 位字母、数字或下划线。')).toBeVisible();
     const rules = screen.getByRole('list', { name: '注册密码要求' });
     expect(rules.querySelectorAll('li')).toHaveLength(4);
     expect(rules).toHaveTextContent('8–64 位字符');

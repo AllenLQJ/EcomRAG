@@ -1,4 +1,5 @@
 import { apiJSON } from './http';
+import { ChatError } from './errors';
 import type { ChatResponse, Route, Source } from './types';
 
 export interface User { id: string | number; username: string }
@@ -23,7 +24,7 @@ export const conversationsAPI = {
   rename: (id: string, title: string) => apiJSON<void>(`/conversations/${encodeURIComponent(id)}`, 'PATCH', { title }),
   remove: (id: string) => apiJSON<void>(`/conversations/${encodeURIComponent(id)}`, 'DELETE'),
   saveAnswer: (id: string, response: ChatResponse, elapsedMs: number) =>
-    apiJSON<void>(`/conversations/${encodeURIComponent(id)}/messages`, 'POST', {
+    saveAnswerWithRetry(id, {
       request_id: response.request_id,
       // Match the server's Unicode character limits before sending the completed answer.
       content: Array.from(response.answer).slice(0, 4000).join(''), route: response.route,
@@ -34,6 +35,22 @@ export const conversationsAPI = {
       ...(Number.isInteger(elapsedMs) && elapsedMs >= 0 && elapsedMs <= 3_600_000 ? { elapsed_ms: elapsedMs } : {}),
     }),
 };
+
+async function saveAnswerWithRetry(id: string, body: Record<string, unknown>): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      // The backend merges writes by (conversation_id, request_id) under a row lock.
+      // Reuse the exact payload even if the server saved it before a response was lost.
+      await apiJSON<void>(`/conversations/${encodeURIComponent(id)}/messages`, 'POST', body);
+      return;
+    } catch (error) {
+      const transient = error instanceof ChatError && (error.status !== undefined
+        ? error.status >= 500 && error.status <= 599 : error.code >= 50000 && error.code < 60000);
+      if (!transient || attempt >= 2) throw error;
+      await new Promise<void>(resolve => window.setTimeout(resolve, 500 * 2 ** attempt));
+    }
+  }
+}
 
 export function guestIdentity(): Identity {
   return { user: null, quota: { role: 'guest', limit: 5, used: 0, remaining: 5, resets_at: '' } };

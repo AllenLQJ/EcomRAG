@@ -9,6 +9,62 @@ import { fixtureFor } from '../mocks/fixtures';
 const request = { session_id: 's', message: '你好', debug: false, conversation_id: 'server-id' };
 
 describe('shared account/history transport policy', () => {
+  it.each([400, 401, 403, 404, 409, 422, 429])('does not retry HTTP %s, even without a business error envelope', async status => {
+    vi.useFakeTimers();
+    const mock = accountMock(userIdentity());
+    mock.overrides['POST /conversations/c/messages'] = () => json({ detail: 'Rejected' }, status);
+    await expect(conversationsAPI.saveAnswer('c', fixtureFor(request), 6000)).rejects.toMatchObject({ status });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mock.calls('/conversations/c/messages', 'POST')).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each([500, 502, 503, 504])('retries HTTP %s twice with exponential backoff and the identical payload', async status => {
+    vi.useFakeTimers();
+    const mock = accountMock(userIdentity());
+    mock.overrides['POST /conversations/c/messages'] = () => json({ detail: 'Unavailable' }, status);
+    const assertion = expect(conversationsAPI.saveAnswer('c', fixtureFor(request), 6000)).rejects.toMatchObject({ status });
+    const calls = () => mock.calls('/conversations/c/messages', 'POST');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(calls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(calls()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await assertion;
+    expect(calls()).toHaveLength(3);
+    expect(new Set(calls().map(([, init]) => init?.body)).size).toBe(1);
+    expect(JSON.parse(String(calls()[0][1]?.body))).toMatchObject({ request_id: expect.any(String), elapsed_ms: 6000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(calls()).toHaveLength(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('reuses request_id after a committed write loses its response, without replaying chat or duplicating the message', async () => {
+    vi.useFakeTimers();
+    const mock = accountMock(userIdentity());
+    // Model the backend's (conversation_id, request_id) upsert, including an ACK lost after commit.
+    const stored = new Map<string, unknown>();
+    let attempts = 0;
+    mock.overrides['POST /conversations/c/messages'] = init => {
+      const body = JSON.parse(String(init.body));
+      stored.set(body.request_id, body);
+      if (++attempts === 1) throw new TypeError('Network response lost after commit');
+      return json({});
+    };
+    const response = fixtureFor(request);
+    const saving = conversationsAPI.saveAnswer('c', response, 6000);
+    await vi.advanceTimersByTimeAsync(500);
+    await saving;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mock.calls('/conversations/c/messages', 'POST')).toHaveLength(2);
+    expect(stored.size).toBe(1);
+    expect(stored.get(response.request_id)).toMatchObject({ content: response.answer, elapsed_ms: 6000 });
+    expect(mock.calls('/chat')).toHaveLength(0);
+    expect(mock.calls('/chat/stream')).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('adds X-Requested-With only to account/history writes and includes Cookie policy everywhere', async () => {
     const mock = accountMock(userIdentity());
     await accountAPI.me();

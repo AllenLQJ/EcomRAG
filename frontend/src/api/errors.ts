@@ -14,7 +14,7 @@ export class ChatError extends Error {
   readonly reason?: string;
   readonly limitScope?: 'guest' | 'user';
   readonly retryAfterSeconds?: number;
-  constructor(public readonly code: number, public readonly requestId?: string, details?: Record<string, unknown>) {
+  constructor(public readonly code: number, public readonly requestId?: string, details?: Record<string, unknown>, public readonly status?: number) {
     super(errorMessage(code));
     this.name = 'ChatError';
     this.reason = typeof details?.message === 'string' ? details.message : undefined;

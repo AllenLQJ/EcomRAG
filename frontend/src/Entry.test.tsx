@@ -34,6 +34,8 @@ describe('entry and welcome lifecycle', () => {
     vi.stubEnv('VITE_LOGO', 'a-spark');
     accountMock(); await mount();
     const entry = screen.getByRole('main', { name: '入口登录页' });
+    expect(within(entry).queryByText('3–20 位字母、数字或下划线。')).not.toBeInTheDocument();
+    expect(within(entry).queryByText('8–64 位。')).not.toBeInTheDocument();
     expect(within(entry).getByRole('heading', { name: '灵码' })).toBeInTheDocument();
     expect(within(entry).getByText(brandSlogan())).toBeInTheDocument();
     expect(within(entry).getByText('智能客服')).toBeInTheDocument();
@@ -48,6 +50,8 @@ describe('entry and welcome lifecycle', () => {
     }
     expect(sessionStorage.getItem(WELCOME_KEY)).toBeNull();
     fireEvent.click(within(entry).getByRole('tab', { name: '注册' }));
+    expect(within(entry).getByText('3–20 位字母、数字或下划线。')).toBeVisible();
+    expect(within(entry).getByRole('list', { name: '注册密码要求' }).children).toHaveLength(4);
     expect(within(entry).getByRole('button', { name: '注册并进入' })).toBeInTheDocument();
     expect(within(entry).queryByText('演示站点，请勿使用你常用的真实密码。')).not.toBeInTheDocument();
     expect(document.querySelector('.welcome-splash')).toBeNull();
@@ -114,6 +118,8 @@ describe('entry and welcome lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: '以访客进入' })); skipSplash();
     fireEvent.click(screen.getByRole('button', { name: '登录/注册' }));
     const modal = screen.getByRole('dialog', { name: '登录/注册' });
+    expect(within(modal).queryByText('3–20 位字母、数字或下划线。')).not.toBeInTheDocument();
+    expect(within(modal).queryByText('8–64 位。')).not.toBeInTheDocument();
     expect(within(modal).getByRole('heading', { name: '灵码' })).toBeInTheDocument();
     expect(within(modal).getByText(brandSlogan())).toBeInTheDocument();
     expect(modal.querySelector('.entry-logo')).toHaveAttribute('src', '/brand/lingma-b-seal.svg');
@@ -150,6 +156,8 @@ describe('quota, account and shop integration', () => {
     expect(close.parentElement?.nextElementSibling).toContainElement(modal.querySelector('.entry-logo'));
     fireEvent.click(within(modal).getByRole('tab', { name: '注册' }));
     const rules = within(modal).getByRole('list', { name: '注册密码要求' });
+    expect(within(modal).getByText('3–20 位字母、数字或下划线。')).toBeVisible();
+    expect(rules.children).toHaveLength(4);
     fireEvent.change(within(modal).getByLabelText('密码'), { target: { value: '12345678' } });
     expect(rules.querySelector('[data-rule="digits"]')).toHaveAttribute('data-state', 'unmet');
     fireEvent.click(close);

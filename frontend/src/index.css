@@ -45,7 +45,8 @@
   .password-rule-pending { @apply text-muted; }
   .password-rule-unmet { @apply font-medium text-fallback-text; }
   .password-rule-satisfied { @apply text-cache-text; }
-  .shop-info-button { @apply inline-flex min-h-11 shrink-0 items-center justify-center rounded-card border border-outline bg-card px-3 text-base font-semibold text-ink hover:border-ink sm:px-4 sm:text-lg; }
+  .chat-header { --header-control-size: 2.75rem; }
+  .shop-info-button { @apply inline-flex shrink-0 items-center justify-center rounded-card border border-outline bg-card px-3 text-base font-semibold text-ink hover:border-ink sm:px-4 sm:text-lg; min-height: var(--header-control-size, 2.75rem); }
   @media (prefers-color-scheme: dark) {
     .shop-info-button { @apply bg-ink text-canvas border-muted; }
     .shop-info-button:hover { @apply border-canvas; }

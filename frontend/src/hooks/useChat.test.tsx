@@ -121,19 +121,28 @@ describe('remote timing writes and live reply ownership', () => {
     }
   });
 
-  it('reports a current timing failure without replacing the successful answer or its elapsed time', async () => {
+  it.each([404, 503, 401])('keeps the answer and timing on HTTP %s, and only requests login on 401', async status => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const onAuthRequired = vi.fn();
     const write = pendingTimingWrite();
     const attempts = fakeTransport();
-    const { result } = renderHook(() => useChat(false, { remote: true }));
+    const { result } = renderHook(() => useChat(false, { remote: true, onAuthRequired }));
     await act(async () => { void result.current.send('台灯规格'); });
     await act(async () => { attempts[0].resolve(productAnswer([product()])); });
     expect(result.current.pending).toBe(false);
     const messages = result.current.messages;
-    await act(async () => { write.reject(new ChatError(50301)); });
-    expect(result.current.historyError).toContain('回答耗时保存失败');
+    await act(async () => { write.reject(new ChatError(status * 100 + 1, undefined, undefined, status)); });
+    expect(warning).toHaveBeenCalledOnce();
+    expect(result.current.historyError).toBe('');
+    expect(onAuthRequired).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
     expect(result.current.messages).toBe(messages);
     expect(result.current.messages.map(message => message.kind)).toEqual(['user', 'assistant']);
     expect(result.current.pending).toBe(false);
+    expect(result.current.messages[1]).toMatchObject({ kind: 'assistant', elapsedMs: expect.any(Number) });
+    await act(async () => { void result.current.send('继续'); });
+    expect(attempts).toHaveLength(2);
+    await act(async () => { attempts[1].resolve(answer(attempts[1], '继续回答')); });
+    expect(result.current.messages.map(message => message.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
   });
 });
 

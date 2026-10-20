@@ -5,15 +5,15 @@ interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void;
 
 export function Header({ desktop, historyOpen, onHistory, historyButton, name, supportUrl, onReset, traceVisible, traceEnabled, onToggleTrace, shopAction }: Props) {
   return <header className="chat-header flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-card px-4 py-1 sm:grid sm:min-h-16 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-6 sm:py-2">
-    <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+    <div className="flex min-w-0 items-center gap-2 overflow-hidden sm:h-[var(--header-control-size)] sm:gap-3">
       {!desktop && <button ref={historyButton} type="button" aria-label="历史" aria-expanded={historyOpen} aria-controls={historyOpen ? 'history-drawer' : undefined}
         onClick={onHistory} className="flex min-h-11 min-w-11 items-center justify-center rounded-card text-muted hover:text-ink">
         <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 4h16v16H4zM9 4v16m4-11h4m-4 4h4" /></svg>
       </button>}
-      <LogoMark className="h-8 w-8" />
+      <LogoMark className="h-8 w-8 sm:h-[var(--header-control-size)] sm:w-[var(--header-control-size)]" />
       <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
-        <span className="truncate font-serif text-base font-semibold sm:text-lg">{name}<span className="sm:hidden">客服</span></span>
-        <span className="hidden shrink-0 text-sm text-muted lg:inline">客服中心</span>
+        <span className="truncate font-serif text-base font-semibold sm:text-2xl sm:leading-none">{name}<span className="sm:hidden">客服</span></span>
+        <span className="hidden shrink-0 text-lg leading-none text-muted lg:inline">客服中心</span>
       </div>
     </div>
     {shopAction && <div className="header-shop-action hidden justify-center sm:flex">{shopAction}</div>}

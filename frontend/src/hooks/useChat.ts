@@ -7,9 +7,9 @@ import { characterCount } from '../lib/format';
 import { clearMessages, completedMessages, createId, getSessionId, loadConversations, newSessionId, saveConversations, saveMessages, setSessionId as persistSessionId } from '../lib/storage';
 import { buildHistory } from '../lib/history';
 
-interface Options { remote?: boolean; onSettled?: () => void; onQuotaExceeded?: (scope?: 'guest' | 'user') => void }
+interface Options { remote?: boolean; onSettled?: () => void; onQuotaExceeded?: (scope?: 'guest' | 'user') => void; onAuthRequired?: () => void }
 
-export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQuotaExceeded }: Options = {}) {
+export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQuotaExceeded, onAuthRequired }: Options = {}) {
   const [initial] = useState(() => {
     const conversations = remote ? [] : loadConversations();
     const sessionId = remote ? createId() : getSessionId();
@@ -102,7 +102,8 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
         void conversationsAPI.saveAnswer(conversationId, response, elapsedMs).then(() => {
           if (mounted.current && current()) void refreshConversations();
         }).catch(error => {
-          if (mounted.current && current()) setHistoryError(`回答耗时保存失败。${accountError(error)}`);
+          console.warn('回答与耗时回写失败；当前页面中的回答与耗时仍保留。', error);
+          if (mounted.current && current() && error instanceof ChatError && (error.status === 401 || error.code === 40101)) onAuthRequired?.();
         });
       }
     } catch (error) {
@@ -122,7 +123,7 @@ export function useChat(traceEnabled: boolean, { remote = false, onSettled, onQu
       }
     }
     return true;
-  }, [sessionId, traceEnabled, messages, remote, onSettled, onQuotaExceeded, refreshConversations]);
+  }, [sessionId, traceEnabled, messages, remote, onSettled, onQuotaExceeded, onAuthRequired, refreshConversations]);
 
   const cancel = useCallback(() => {
     epoch.current += 1;

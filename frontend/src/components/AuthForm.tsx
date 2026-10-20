@@ -61,13 +61,13 @@ export function AuthForm({ onSuccess, onGuest }: { onSuccess: (user: User) => vo
       }}>
         <div><label htmlFor={`${id}-username`} className="entry-field-label">用户名</label>
           <input id={`${id}-username`} name="username" autoComplete="username" value={username} disabled={pending}
-            aria-describedby={`${id}-username-hint ${id}-error`} className="entry-auth-input" onChange={event => { setUsername(event.target.value); setError(''); }} />
-          <p id={`${id}-username-hint`} className="mt-2 text-xs text-muted">3–20 位字母、数字或下划线。</p></div>
+            aria-describedby={mode === 'register' ? `${id}-username-hint ${id}-error` : `${id}-error`} className="entry-auth-input" onChange={event => { setUsername(event.target.value); setError(''); }} />
+          {mode === 'register' && <p id={`${id}-username-hint`} className="mt-2 text-xs text-muted">3–20 位字母、数字或下划线。</p>}</div>
         <div><label htmlFor={`${id}-password`} className="entry-field-label">密码</label>
           <input id={`${id}-password`} name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            value={password} disabled={pending} aria-invalid={invalidPassword} aria-describedby={`${id}-password-hint ${id}-error`} className="entry-auth-input"
+            value={password} disabled={pending} aria-invalid={invalidPassword} aria-describedby={mode === 'register' ? `${id}-password-hint ${id}-error` : `${id}-error`} className="entry-auth-input"
             onBlur={() => setPasswordTouched(true)} onChange={event => { setPassword(event.target.value); setPasswordTouched(true); setError(''); }} />
-          {mode === 'register' ? <ul id={`${id}-password-hint`} aria-label="注册密码要求" aria-live="polite" className="mt-2 space-y-1 text-xs leading-relaxed">
+          {mode === 'register' && <ul id={`${id}-password-hint`} aria-label="注册密码要求" aria-live="polite" className="mt-2 space-y-1 text-xs leading-relaxed">
             {passwordRules.map(rule => {
               const state = !passwordTouched ? 'pending' : rule.satisfied ? 'satisfied' : 'unmet';
               return <li key={rule.id} data-rule={rule.id} data-state={state}
@@ -76,7 +76,7 @@ export function AuthForm({ onSuccess, onGuest }: { onSuccess: (user: User) => vo
                 {rule.label}<span className="sr-only">：{state === 'satisfied' ? '已满足' : state === 'unmet' ? '未满足' : '待输入'}</span>
               </li>;
             })}
-          </ul> : <p id={`${id}-password-hint`} className="mt-2 text-xs text-muted">8–64 位。</p>}</div>
+          </ul>}</div>
         <div id={`${id}-error`} aria-live="polite" hidden={!error && seconds === 0}>
           {error && <p role="alert" className="text-sm text-fallback-text">{error}</p>}
           {seconds > 0 && <p role="status" className="mt-2 text-sm text-muted">请 {seconds} 秒后再试。</p>}
