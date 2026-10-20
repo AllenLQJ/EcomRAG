@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.contracts import FaqHit, RouteDecision
+from app.contracts import FaqHit, RetrievedDoc, RouteDecision
 from app.faq.cache import FaqCache
 from app.llm.generator import GeneratedAnswer
 from app.products import COLUMNS, ProductCards, ProductRepo
@@ -17,6 +17,30 @@ from ingest.product_metadata import ProductSourceIndex
 from test_chat_stream import events
 from test_products_load import FakeConnection, FakeCursor
 from test_online_retrieval import FakeMilvus, hit
+
+
+# 与真实 SDK 一样由 dependency_error 识别，完全离线。
+MilvusError = type("MilvusException", (Exception,), {"__module__": "pymilvus.exceptions"})
+
+
+class SchemaMilvus(FakeMilvus):
+    def __init__(self, results, *, with_skus=False):
+        super().__init__(results)
+        self.fields = OUTPUT_FIELDS + (["skus"] if with_skus else [])
+        self.describe_collection = Mock(side_effect=lambda **kw: {
+            "fields": [{"name": field} for field in self.fields]})
+
+    def hybrid_search(self, **kwargs):
+        invalid = set(kwargs["output_fields"]) - set(self.fields)
+        if invalid:
+            self.calls.append(kwargs)
+            raise MilvusError(f"field {sorted(invalid)[0]} not exist in schema")
+        return super().hybrid_search(**kwargs)
+
+
+def metadata_retriever(client):
+    return Retriever(client, FakeEmbedder(), rerank_enabled=False, skus_metadata=True,
+                     request_factory=lambda **kw: kw, rrf_factory=lambda **kw: kw)
 
 
 def product(sku="qiguang-l1", **changes):
@@ -142,7 +166,8 @@ def test_image_base_url_validation(url):
 
 
 @pytest.mark.parametrize("raw,expected", [('["a-1","b-2"]', ["a-1", "b-2"]),
-                                        ("null", None), ("[]", []), ("[invalid", [])])
+                                        ("null", None), ("[]", []), ("[invalid", None),
+                                        ("  [invalid", None), ("  []  ", []), (" null ", None)])
 def test_retriever_optional_metadata_roundtrip(raw, expected):
     result = hit("p1", .8)
     result["entity"]["skus"] = raw
@@ -153,6 +178,135 @@ def test_retriever_optional_metadata_roundtrip(raw, expected):
     assert retrieved.skus == expected
     assert client.calls[0]["output_fields"] == OUTPUT_FIELDS + ["skus"]
     assert "skus" not in retrieved.model_dump()
+
+
+@pytest.mark.parametrize("raw,expected", [("[invalid", ["qiguang-l1"]),
+                                        ("null", ["qiguang-l1"]), ("[]", [])])
+def test_corrupt_metadata_allows_filename_fallback(tmp_path, raw, expected):
+    service, repo = cards(tmp_path, [product()])
+    source = RetrievedDoc.model_validate({**doc(source="product_qiguang-l1.md").model_dump(), "skus": raw})
+    assert [card.sku for card in service.for_sources([source])] == expected
+    assert repo.fetch.call_count == bool(expected)
+
+
+def test_missing_metadata_field_degrades_once_and_survives_alias_rollback(caplog):
+    result = hit("p1", .8)
+    result["entity"]["skus"] = '["qiguang-l1"]'
+    client = SchemaMilvus([[result], [hit("p2", .7)], [hit("p3", .6)]], with_skus=True)
+    retriever = metadata_retriever(client)
+    assert retriever.retrieve(["参数"], "参数")[0].skus == ["qiguang-l1"]
+    # 同一个 alias 随时可切回无字段的旧集合，不在进程中固定实体版本。
+    client.fields = OUTPUT_FIELDS
+    assert retriever.retrieve(["参数"], "参数")[0].skus is None
+    assert retriever.retrieve(["参数"], "参数")[0].skus is None
+    assert [call["output_fields"] for call in client.calls] == [
+        OUTPUT_FIELDS + ["skus"], OUTPUT_FIELDS + ["skus"], OUTPUT_FIELDS, OUTPUT_FIELDS]
+    client.describe_collection.assert_called_once_with(collection_name="kb_chunks", timeout=10)
+    assert caplog.text.count("product_skus_metadata_unavailable") == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("source", ["product_qiguang-l1.md", "product_guide_lamps.md"])
+def test_old_collection_metadata_enabled_keeps_rag_and_fallback_cards(app_factory, tmp_path, caplog, stream, source):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False, product_skus_metadata=True)
+    services = app.state.services.knowledge()
+    result = hit("p1", .8)
+    result["entity"]["source"] = source
+    client = SchemaMilvus([[result], [result]])
+    retriever = metadata_retriever(client)
+    services.retrieve = Mock(wraps=retriever.retrieve)
+    service, repo = cards(tmp_path, [product()])
+    if source == "product_guide_lamps.md":
+        manifest = tmp_path / "manifest.csv"
+        manifest.write_text("file,skus\nproduct_guide_lamps.md,qiguang-l1\n", encoding="utf-8")
+        service.index = ProductSourceIndex([manifest])
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        for i in range(2):
+            response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                                json=dict(session_id=f"old-schema-{i}", message="台灯参数"))
+            assert response.status_code == 200
+            body = events(response.text)[-1][1] if stream else response.json()
+            assert body["route"] == "rag"
+            assert [card["sku"] for card in body["products"]] == ["qiguang-l1"]
+    assert repo.fetch.call_count == 2
+    assert len(client.calls) == 3  # 首次失败后重试一次，后续不再请求 skus。
+    assert caplog.text.count("product_skus_metadata_unavailable") == 1
+
+
+@pytest.mark.parametrize("failure", ["permission denied", "deadline exceeded", "connection refused",
+                                   "field parent_text not exist in schema"])
+def test_real_milvus_errors_still_return_dependency_503(app_factory, caplog, failure):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    client = SchemaMilvus([])
+    client.hybrid_search = Mock(side_effect=MilvusError(failure))
+    services.retrieve = Mock(wraps=metadata_retriever(client).retrieve)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat", json=dict(session_id="dependency", message="参数"))
+    assert response.status_code == 503
+    client.describe_collection.assert_not_called()
+    client.hybrid_search.assert_called_once()
+    assert "product_skus_metadata_unavailable" not in caplog.text
+
+
+@pytest.mark.parametrize("schema_failure", [False, True])
+def test_schema_must_confirm_missing_field_before_downgrade(app_factory, caplog, schema_failure):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    client = SchemaMilvus([], with_skus=True)
+    client.hybrid_search = Mock(side_effect=MilvusError("field skus not found"))
+    if schema_failure:
+        client.describe_collection.side_effect = MilvusError("permission denied")
+    retriever = metadata_retriever(client)
+    services.retrieve = Mock(wraps=retriever.retrieve)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat", json=dict(session_id="schema-check", message="参数"))
+    assert response.status_code == 503
+    assert retriever.skus_metadata
+    client.hybrid_search.assert_called_once()
+    assert "product_skus_metadata_unavailable" not in caplog.text
+
+
+def test_hidden_skus_use_shared_parser_and_warn_without_raw_values(monkeypatch, tmp_path, caplog):
+    values = ["qiguang-l1", "qiguang-l1", "QIGUANG-L1", " qiguang-l1 ", "bad--sku", "x" * 65,
+              "../PRIVATE_SKU", None, 123]
+    monkeypatch.setenv("PRODUCT_HIDDEN_SKUS", json.dumps(values))
+    settings = Settings(_env_file=None)
+    assert settings.product_hidden_skus == ["qiguang-l1"]
+    assert caplog.text.count("PRODUCT_HIDDEN_SKUS 含非法 SKU") == 1
+    assert "PRIVATE_SKU" not in caplog.text
+    service, repo = cards(tmp_path, [product()], product_hidden_skus=values)
+    assert service.for_sources([doc(["qiguang-l1"])]) == []
+    repo.fetch.assert_not_called()
+
+
+def test_default_manifests_conflict_warns_and_stops_filename_fallback(tmp_path, monkeypatch, caplog):
+    settings = Settings(_env_file=None)
+    assert settings.product_manifest_paths == [
+        "data/docs_new", "data/docs_staging/manifest.csv", "data/docs/manifest.csv"]
+    for folder, sku in [("docs_new/drafts", "qiguang-l1"), ("docs_staging", "PRIVATE_SKU"),
+                        ("docs", "qiguang-l2")]:
+        path = tmp_path / "data" / folder
+        path.mkdir(parents=True)
+        (path / "manifest.csv").write_text(f"file,skus\nproduct_qiguang-l1.md,{sku}\n", encoding="utf-8")
+    service, repo = cards(tmp_path, [product()])
+    service.index = None
+    monkeypatch.setattr("app.products.resolve_data_path", lambda path: tmp_path / path)
+    for source in ["product_qiguang-l1.md", "flattened/product_qiguang-l1.md"]:
+        assert service.for_sources([doc(source=source)]) == []
+    repo.fetch.assert_not_called()
+    assert caplog.text.count("product_manifest_ambiguous") == 1
+    assert "product_qiguang-l1.md" in caplog.text
+    assert str(tmp_path) not in caplog.text and "PRIVATE_SKU" not in caplog.text
+
+
+@pytest.mark.parametrize("text", ["price199", "199USD", "USD199", "RMB199", "CNY199", "￥199", "199 元"])
+def test_commercial_filter_remains_conservative_for_concatenated_prices(tmp_path, text):
+    service, _ = cards(tmp_path, [product(name="台灯 " + text)])
+    assert service.for_sources([doc(["qiguang-l1"])]) == []
+    service, _ = cards(tmp_path, [product(specs={"额定功率": text})])
+    assert service.for_sources([doc(["qiguang-l1"])]) == []
 
 
 def test_optional_card_callback_failure_preserves_rag_answer(app_factory, caplog):

@@ -1,4 +1,6 @@
 """唯一 RAGAS 版本适配点：只使用公开 API，安装真实版本后需核对这里。"""
+import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import replace
 
 from eval.judge_diagnostics import (
@@ -7,7 +9,7 @@ from eval.judge_diagnostics import (
 
 
 class ResponseDiagnostics:
-    """每次 evaluate 独享的回调状态；从不保存输出文本或 SDK 对象。"""
+    """每次评分尝试独享的回调状态；从不保存输出文本或 SDK 对象。"""
     def __init__(self):
         self.truncated = False
         self.empty = False
@@ -23,19 +25,21 @@ class ResponseDiagnostics:
                 self.empty |= (not getattr(generation, "text", "").strip()
                                and not getattr(message, "tool_calls", None))
 
-    def failure(self, exc=None):
+    def failure(self, exc=None, *, secrets=()):
         if self.truncated:
             result = diagnose(TruncatedJudgeResponseError())
         elif self.empty:
             result = diagnose(EmptyJudgeResponseError())
         else:
-            return diagnose(exc) if exc is not None else None
+            return diagnose(exc, secrets=secrets) if exc is not None else None
         result["is_empty_response"] = self.empty
         if exc is not None:
-            original = diagnose(exc)
+            original = diagnose(exc, secrets=secrets)
             result.update(exception_type=original["exception_type"], http_status=original["http_status"],
                           provider_error_code=original["provider_error_code"],
-                          is_parse_error=original["is_parse_error"], is_timeout=original["is_timeout"])
+                          is_parse_error=original["is_parse_error"], is_timeout=original["is_timeout"],
+                          is_connection_error=original["is_connection_error"],
+                          exception_chain=original["exception_chain"])
         return result
 
 
@@ -50,12 +54,14 @@ class EvaluationConfigurationError(ValueError):
 def make_scorer(config, *, judge=None, embeddings=None):
     """延迟导入并返回 scorer(sample, metric)；可注入已包装的 judge/embeddings。
 
-    约定返回 {value, reason?, usage?}；不把异常消息或 SDK 对象导出。
+    约定返回 {value, reason?, usage?}。默认客户端每次尝试独立创建和关闭；
+    注入对象由调用者管理，不由这里关闭。
     """
     import os
     os.environ["RAGAS_DO_NOT_TRACK"] = "true"
     try:
-        from ragas import EvaluationDataset, evaluate
+        import httpx
+        from ragas.dataset_schema import SingleTurnSample
         from ragas.llms import LangchainLLMWrapper
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from ragas.metrics import (
@@ -69,19 +75,10 @@ def make_scorer(config, *, judge=None, embeddings=None):
                                         "再核对 eval/ragas_backend.py 与已安装 RAGAS 的公开 API。") from None
 
     automatic_judge = judge is None
-    if automatic_judge:
-        judge = LangchainLLMWrapper(ChatOpenAI(
-            model=config.judge_model, base_url=config.judge_base_url, api_key=config.api_key,
-            temperature=0, timeout=config.timeout_s, max_retries=0,
-            max_tokens=config.max_tokens,
-            extra_body=getattr(config, "judge_extra_body", None)))
     if "response_relevancy" in config.metrics and embeddings is None:
         if not config.embedding_model or not config.embedding_base_url:
             raise EvaluationConfigurationError(
                 "response_relevancy 需要显式配置 --embedding-model 和 --embedding-base-url")
-        embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(
-            model=config.embedding_model, base_url=config.embedding_base_url,
-            api_key=config.api_key, request_timeout=config.timeout_s, max_retries=0))
     classes = {"faithfulness": Faithfulness, "response_relevancy": ResponseRelevancy,
                "context_precision": LLMContextPrecisionWithReference, "context_recall": LLMContextRecall}
 
@@ -90,33 +87,46 @@ def make_scorer(config, *, judge=None, embeddings=None):
             pass
 
         observer = Observer()
-        options = {"llm": judge}
-        if metric == "response_relevancy":
-            options["embeddings"] = embeddings
+
+        async def run_attempt():
+            # 所有资源属于本次尝试的循环。显式传入 HTTP clients，避免 SDK/
+            # LangChain 默认连接池缓存；关闭连接后 asyncio.run 才关闭循环。
+            async with AsyncExitStack() as stack:
+                needs_clients = automatic_judge or (metric == "response_relevancy" and embeddings is None)
+                if needs_clients:
+                    async_client = await stack.enter_async_context(httpx.AsyncClient(timeout=config.timeout_s))
+                    sync_client = stack.enter_context(httpx.Client(timeout=config.timeout_s))
+                active_judge = judge
+                if automatic_judge:
+                    active_judge = LangchainLLMWrapper(ChatOpenAI(
+                        model=config.judge_model, base_url=config.judge_base_url, api_key=config.api_key,
+                        temperature=0, timeout=config.timeout_s, max_retries=0,
+                        max_tokens=config.max_tokens, extra_body=config.judge_extra_body,
+                        http_client=sync_client, http_async_client=async_client))
+                options = {"llm": active_judge}
+                if metric == "response_relevancy":
+                    active_embeddings = embeddings
+                    if active_embeddings is None:
+                        active_embeddings = LangchainEmbeddingsWrapper(OpenAIEmbeddings(
+                            model=config.embedding_model, base_url=config.embedding_base_url,
+                            api_key=config.api_key, request_timeout=config.timeout_s, max_retries=0,
+                            http_client=sync_client, http_async_client=async_client))
+                    options["embeddings"] = active_embeddings
+                active_metric = classes[metric](**options)
+                active_metric.init(RunConfig(timeout=config.timeout_s, max_retries=0, max_workers=1))
+                # 直接等待公开的异步指标 API，不调用可能另行创建/修补事件循环的 evaluate。
+                return await active_metric.single_turn_ascore(
+                    SingleTurnSample(**sample), callbacks=[observer], timeout=config.timeout_s)
+
         try:
-            result = evaluate(
-                EvaluationDataset.from_list([sample]), metrics=[classes[metric](**options)],
-                callbacks=[observer], raise_exceptions=True, show_progress=False,
-                run_config=RunConfig(timeout=config.timeout_s, max_retries=0, max_workers=1))
+            value = asyncio.run(run_attempt())
         except Exception as exc:
-            raise JudgeCallError(observer.failure(exc)) from None
+            raise JudgeCallError(observer.failure(exc, secrets=(config.api_key,))) from None
         failure = observer.failure()
         if failure:
             raise JudgeCallError(failure)
-        # 单样本、单指标，避免依赖版本之间变化的结果列名。
-        values = list(result.scores[0].values())
-        usage = {}
-        token_usage = getattr(result, "token_usage", None)
-        if callable(token_usage):
-            try:
-                available = token_usage()
-                usage = {name: getattr(available, name) for name in
-                         ("input_tokens", "output_tokens", "total_tokens") if hasattr(available, name)}
-            except Exception:
-                # 未配置 token parser 的版本会报错；保持 unknown，不推算或记零。
-                pass
-        return {"value": values[0] if len(values) == 1 else None,
-                "reason": "ragas_metric_result", "usage": usage}
+        # 指标公开异步 API 返回标量；没有 token parser 时保持 unknown，不推算。
+        return {"value": value, "reason": "ragas_metric_result", "usage": {}}
 
     # 每个评分任务独立切换配置，避免并发下修改共享 Judge 的请求参数。
     if automatic_judge:

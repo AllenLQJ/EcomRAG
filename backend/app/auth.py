@@ -227,10 +227,12 @@ class AccountService:
             self.repo.delete_user(user["id"], lambda: self.store.revoke_all(user["id"]))
         await self.executor.run(remove)
 
-    async def save(self, user_id, conversation_id, role, content, route=None, sources=None):
+    async def save(self, user_id, conversation_id, role, content, route=None, sources=None,
+                   elapsed_ms=None, request_id=None):
         try:
-            content, route, compact = bounded_message(content, route, sources)
-            await self.call("append_message", user_id, conversation_id, role, content, route, compact)
+            content, route, compact = bounded_message(content, route, sources, elapsed_ms, request_id)
+            metadata = {} if elapsed_ms is None and request_id is None else dict(elapsed_ms=elapsed_ms, request_id=request_id)
+            await self.call("append_message", user_id, conversation_id, role, content, route, compact, **metadata)
         except Exception:
             logger.warning("服务器端历史保存失败，已跳过")
 

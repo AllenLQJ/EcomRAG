@@ -44,6 +44,13 @@ class Client:
     def list_collections(self, **kwargs):
         return list(self.rows)
 
+    def describe_collection(self, collection_name, **kwargs):
+        # 与真实 SDK 一致：返回含 fields 的 dict；测试集合不含 skus 字段。
+        # 真实 Milvus 的 describe_collection 也接受 alias 名。
+        target = self.aliases.get(collection_name, collection_name)
+        assert target in self.rows
+        return {"collection_name": target, "fields": [{"name": "chunk_id"}, {"name": "dense"}, {"name": "sparse"}]}
+
     def list_aliases(self, collection_name, **kwargs):
         return {"aliases": [alias for alias, target in self.aliases.items() if target == collection_name],
                 "collection_name": collection_name, "db_name": "default"}

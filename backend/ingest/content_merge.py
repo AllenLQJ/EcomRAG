@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ingest.content_check import FAQ_FIELDS, GROUPS, csv_rows, safe_file
 from ingest.load_faq import validate_faq_values
+from app.faq.cache import normalize
 from ingest.loaders import EXTENSIONS, PROJECT_ROOT, load_document
 from ingest.products import resolve_path
 from ingest.run import analyze_documents
@@ -74,7 +75,7 @@ def merge_content(out, faq_out, *, dry_run=False, force=False, data_dir=None, wi
     documents = [load_document(item["path"], source=name) for name, item in sorted(selected.items())]
     sku_index = ProductSourceIndex([data / "docs", data / "docs_generated", data / "docs_new"]) if with_skus else None
     _, stats = analyze_documents(documents)
-    faqs = []
+    faqs, faq_sources = [], {}
     sources = [data / "faq.csv"]
     if new_root.is_dir():
         sources.extend(folder / "faq.csv" for folder in sorted(new_root.iterdir()) if folder.is_dir())
@@ -84,6 +85,14 @@ def merge_content(out, faq_out, *, dry_run=False, force=False, data_dir=None, wi
             continue
         for index, row in enumerate(csv_rows(path, FAQ_FIELDS), 2):
             validate_faq_values(row, index)
+            key = normalize(row["question"])
+            if key in faq_sources:
+                previous, source = faq_sources[key]
+                # 仅允许线上 FAQ 与新增来源逐字相同；新增来源之间重复仍失败。
+                if source != data / "faq.csv" or source == path or row != previous:
+                    raise ValueError(f"FAQ 问题重复或内容冲突：{source} 与 {path}：{row['question']}")
+                continue
+            faq_sources[key] = (row, path)
             faqs.append(row)
     stats.update(categories=dict(sorted(Counter(doc.category for doc in documents).items())),
                  faqs=len(faqs), faq_categories=dict(sorted(Counter(row["category"] for row in faqs).items())),
@@ -107,7 +116,7 @@ def merge_content(out, faq_out, *, dry_run=False, force=False, data_dir=None, wi
                     writer.writerow(dict(file=doc.source, title=doc.title, category=doc.category, facts="",
                                          skus=";".join(source_skus(str(selected[doc.source]["path"]), sku_index))))
         with faq_out.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=FAQ_FIELDS)
+            writer = csv.DictWriter(handle, fieldnames=FAQ_FIELDS, lineterminator="\n")
             writer.writeheader()
             writer.writerows(faqs)
     return stats

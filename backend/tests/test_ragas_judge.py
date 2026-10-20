@@ -1,4 +1,6 @@
 """Judge 调用回归：仅标准库，可用 unittest 单独运行，不加载服务或评估依赖。"""
+import asyncio
+import inspect
 import json
 import os
 import tempfile
@@ -39,6 +41,52 @@ class HTTPFailure(Exception):
         self.headers = {"Authorization": "Bearer sk-test-only"}
 
 
+class OpenAIConnectionError(Exception):
+    pass
+
+
+def connection_failure():
+    underlying = RuntimeError("Event loop is closed")
+    transport = type("ConnectError", (Exception,), {})("All connection attempts failed")
+    transport.__cause__ = underlying
+    sdk = OpenAIConnectionError("Connection error.")
+    sdk.__cause__ = transport
+    return sdk
+
+
+class LoopBoundHTTPClient:
+    """假连接池在第一次创建的循环里才能使用/关闭，用于重现旧生命周期故障。"""
+    def __init__(self, **kwargs):
+        self.loop = asyncio.get_running_loop()
+        self.closed = False
+
+    def check(self):
+        if self.closed or self.loop is not asyncio.get_running_loop():
+            raise connection_failure()
+
+    async def request(self):
+        self.check()
+        await asyncio.sleep(0)
+        return "json"
+
+    def __enter__(self):
+        self.check()
+        return self
+
+    def __exit__(self, *args):
+        self.check()
+        self.closed = True
+
+    async def __aenter__(self):
+        self.check()
+        return self
+
+    async def __aexit__(self, *args):
+        self.check()
+        await asyncio.sleep(0)
+        self.closed = True
+
+
 def response(text="json", finish_reason="stop"):
     return SimpleNamespace(generations=[[SimpleNamespace(
         text=text, generation_info={"finish_reason": finish_reason},
@@ -47,26 +95,212 @@ def response(text="json", finish_reason="stop"):
 
 @contextmanager
 def fake_dependencies(evaluate):
-    """伪造公开依赖接口，验证适配器传参和回调，不导入 SDK。"""
+    """伪造公开指标 API 和有循环约束的 HTTP clients，不导入 SDK。"""
     modules = {name: ModuleType(name) for name in (
-        "ragas", "ragas.llms", "ragas.embeddings", "ragas.metrics", "ragas.run_config",
-        "langchain_openai", "langchain_core", "langchain_core.callbacks")}
-    clients = Mock(side_effect=lambda **kwargs: SimpleNamespace(**kwargs))
-    modules["ragas"].EvaluationDataset = SimpleNamespace(from_list=lambda rows: rows)
-    modules["ragas"].evaluate = evaluate
+        "ragas", "ragas.dataset_schema", "ragas.llms", "ragas.embeddings", "ragas.metrics", "ragas.run_config",
+        "langchain_openai", "langchain_core", "langchain_core.callbacks", "httpx")}
+
+    def model(**kwargs):
+        kwargs["http_async_client"].check()
+        kwargs["http_client"].check()
+        return SimpleNamespace(**kwargs)
+
+    clients = Mock(side_effect=model)
+    clients.http_clients = []
+    clients.embedding_clients = Mock(side_effect=model)
+
+    def http_client(**kwargs):
+        client = LoopBoundHTTPClient(**kwargs)
+        clients.http_clients.append(client)
+        return client
+
+    class Metric:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def init(self, run_config):
+            self.run_config = run_config
+
+        async def single_turn_ascore(self, sample, *, callbacks, timeout):
+            assert asyncio.get_running_loop().is_running()
+            assert timeout == self.run_config.timeout
+            for wrapped in (self.llm, getattr(self, "embeddings", None)):
+                if getattr(wrapped, "http_async_client", None) is not None:
+                    await wrapped.http_async_client.request()
+            result = evaluate([vars(sample)], metrics=[self], callbacks=callbacks, run_config=self.run_config)
+            if inspect.isawaitable(result):
+                result = await result
+            return next(iter(result.scores[0].values()))
+
+    modules["ragas.dataset_schema"].SingleTurnSample = SimpleNamespace
+    modules["ragas"].evaluate = Mock(side_effect=AssertionError("不得使用隐式管理事件循环的 evaluate"))
     modules["ragas.llms"].LangchainLLMWrapper = lambda client: client
     modules["ragas.embeddings"].LangchainEmbeddingsWrapper = lambda client: client
     for name in ("Faithfulness", "ResponseRelevancy", "LLMContextPrecisionWithReference", "LLMContextRecall"):
-        setattr(modules["ragas.metrics"], name, lambda **kwargs: SimpleNamespace(**kwargs))
+        setattr(modules["ragas.metrics"], name, Metric)
     modules["ragas.run_config"].RunConfig = lambda **kwargs: SimpleNamespace(**kwargs)
     modules["langchain_openai"].ChatOpenAI = clients
-    modules["langchain_openai"].OpenAIEmbeddings = Mock(side_effect=AssertionError("embedding 不应初始化"))
+    modules["langchain_openai"].OpenAIEmbeddings = clients.embedding_clients
+    modules["httpx"].Client = http_client
+    modules["httpx"].AsyncClient = http_client
     modules["langchain_core.callbacks"].BaseCallbackHandler = type("BaseCallbackHandler", (), {})
     with patch.dict("sys.modules", modules), patch.dict(os.environ, {"RAGAS_DO_NOT_TRACK": "true"}):
         yield clients
 
 
 class JudgeTests(unittest.TestCase):
+    def test_shared_async_pool_reproduces_closed_loop_connection_failure(self):
+        shared = []
+
+        async def use():
+            if not shared:
+                shared.append(LoopBoundHTTPClient())
+            return await shared[0].request()
+
+        self.assertEqual(asyncio.run(use()), "json")
+        self.assertTrue(shared[0].loop.is_closed())
+        with self.assertRaises(OpenAIConnectionError) as caught:
+            asyncio.run(use())
+        diagnostic = diagnose(caught.exception)
+        self.assertEqual(diagnostic["category"], "connection")
+        self.assertEqual(diagnostic["exception_chain"][-1], {
+            "exception_type": "RuntimeError", "message": "Event loop is closed"})
+
+    def test_default_backend_isolates_all_48_attempts_and_closes_clients_on_owner_loop(self):
+        def evaluate(dataset, *, callbacks, **kwargs):
+            callbacks[0].on_llm_end(response())
+            return SimpleNamespace(scores=[{"metric": 0.5}])
+
+        metrics = ("faithfulness", "context_precision", "context_recall")
+        with fake_dependencies(evaluate) as clients:
+            # make_scorer 只捕获配置和类，不能在运行循环外创建/缓存客户端。
+            scorer = make_scorer(config(metrics=metrics))
+            self.assertEqual(clients.call_count, 0)
+            self.assertEqual(clients.http_clients, [])
+            report = ragas_eval.score(collection(16), config(metrics=metrics))
+            self.assertEqual(clients.call_count, 48)
+            self.assertEqual(len(clients.http_clients), 96)
+            self.assertEqual(len({id(client.loop) for client in clients.http_clients}), 48)
+            self.assertTrue(all(client.closed and client.loop.is_closed() for client in clients.http_clients))
+        self.assertEqual(report["meta"]["judge_client_lifecycle"], "per_attempt_event_loop")
+        self.assertEqual(report["meta"]["max_workers"], 4)
+        self.assertEqual(report["summary"]["failure_categories"], {})
+        self.assertEqual([report["summary"]["metrics"][name]["valid"] for name in metrics], [16, 16, 16])
+
+    def test_connection_failure_retries_with_fresh_clients_then_succeeds(self):
+        attempted = []
+
+        def evaluate(dataset, *, metrics, callbacks, **kwargs):
+            attempted.append(metrics[0].llm.http_async_client)
+            if len(attempted) == 1:
+                raise connection_failure()
+            callbacks[0].on_llm_end(response())
+            return SimpleNamespace(scores=[{"faithfulness": 0.75}])
+
+        with fake_dependencies(evaluate) as clients:
+            report = ragas_eval.score(collection(), config())
+            self.assertEqual(clients.call_count, 2)
+            self.assertTrue(all(client.closed and client.loop.is_closed() for client in clients.http_clients))
+        self.assertIsNot(attempted[0], attempted[1])
+        self.assertIsNot(attempted[0].loop, attempted[1].loop)
+        entry = report["cases"][0]["scores"]["faithfulness"]
+        self.assertEqual((entry["status"], entry["retries"]), ("valid", 1))
+        failure = entry["attempt_failures"][0]
+        self.assertEqual(failure["category"], "connection")
+        self.assertTrue(failure["is_connection_error"])
+        self.assertEqual([item["exception_type"] for item in failure["exception_chain"]],
+                         ["OpenAIConnectionError", "ConnectError", "RuntimeError"])
+        self.assertEqual(report["summary"]["attempt_failure_categories"], {"connection": 1})
+
+    def test_persistent_connection_failure_exhausts_retries_and_preserves_diagnostics(self):
+        def evaluate(*args, **kwargs):
+            raise connection_failure()
+
+        with fake_dependencies(evaluate) as clients:
+            report = ragas_eval.score(collection(), config())
+            self.assertEqual(clients.call_count, 3)
+            self.assertTrue(all(client.closed and client.loop.is_closed() for client in clients.http_clients))
+        entry = report["cases"][0]["scores"]["faithfulness"]
+        self.assertEqual((entry["status"], entry["reason"], entry["retries"]), ("error", "judge_connection", 2))
+        self.assertEqual(len(entry["attempt_failures"]), 3)
+        self.assertEqual(entry["diagnostics"]["exception_chain"][-1]["message"], "Event loop is closed")
+        self.assertEqual(report["summary"]["failure_categories"], {"connection": 1})
+        self.assertEqual(report["summary"]["failure_categories_by_metric"], {"faithfulness": {"connection": 1}})
+        self.assertEqual(report["summary"]["attempt_failure_categories"], {"connection": 3})
+
+    def test_embeddings_use_and_close_the_same_attempts_owned_clients(self):
+        def evaluate(dataset, *, metrics, callbacks, **kwargs):
+            metric = metrics[0]
+            self.assertIs(metric.llm.http_async_client, metric.embeddings.http_async_client)
+            self.assertIs(metric.llm.http_client, metric.embeddings.http_client)
+            callbacks[0].on_llm_end(response())
+            return SimpleNamespace(scores=[{"response_relevancy": 0.5}])
+
+        with fake_dependencies(evaluate) as clients:
+            report = ragas_eval.score(collection(2), config(
+                metrics=("response_relevancy",), embedding_model="fake-embedding",
+                embedding_base_url="https://embedding.invalid/v1"))
+            self.assertEqual(clients.embedding_clients.call_count, 2)
+            self.assertTrue(all(client.closed for client in clients.http_clients))
+        self.assertEqual(report["summary"]["metrics"]["response_relevancy"]["valid"], 2)
+
+    def test_injected_clients_remain_caller_owned(self):
+        judge, embeddings = SimpleNamespace(), SimpleNamespace()
+
+        def evaluate(dataset, *, metrics, **kwargs):
+            self.assertIs(metrics[0].llm, judge)
+            self.assertIs(metrics[0].embeddings, embeddings)
+            return SimpleNamespace(scores=[{"response_relevancy": 0.5}])
+
+        with fake_dependencies(evaluate) as clients:
+            report = ragas_eval.score(collection(), config(metrics=("response_relevancy",)),
+                                      judge=judge, embeddings=embeddings)
+            self.assertEqual(clients.call_count, 0)
+            self.assertEqual(clients.http_clients, [])
+        self.assertEqual(report["meta"]["judge_client_lifecycle"], "external_clients")
+        self.assertEqual(vars(judge), {})
+        self.assertEqual(vars(embeddings), {})
+
+    def test_connection_type_variants_and_timeout_precedence(self):
+        for name in ("OpenAIConnectionError", "APIConnectionError", "ConnectError", "ReadError", "WriteError",
+                     "RemoteProtocolError", "ClosedResourceError", "BrokenResourceError", "EndOfStream"):
+            with self.subTest(name=name):
+                exc = type(name, (Exception,), {})("private-body")
+                self.assertEqual(diagnose(exc)["category"], "connection")
+                report = ragas_eval.score(collection(), config(), scorer=Mock(side_effect=[exc, 0.5]))
+                self.assertEqual(report["cases"][0]["scores"]["faithfulness"]["retries"], 1)
+        exc = type("ReadTimeout", (type("ReadError", (Exception,), {}),), {})("private-body")
+        self.assertEqual(diagnose(exc)["category"], "timeout")
+        self.assertTrue(diagnose(exc)["is_connection_error"])
+
+    def test_exception_chain_messages_are_bounded_and_never_copy_payloads_or_urls(self):
+        payload = (' https://user:sk-test-only@judge.invalid/v1?token=private-query '
+                   'Authorization: Bearer sk-test-only request_body={"prompt":"private-body"}')
+        exc = OpenAIConnectionError("Connection error." + payload)
+        exc.__cause__ = RuntimeError("Event loop is closed" + payload)
+        report = ragas_eval.score(collection(), config(max_retries=0), scorer=Mock(side_effect=exc))
+        entry = report["cases"][0]["scores"]["faithfulness"]
+        self.assertEqual(entry["diagnostics"]["exception_chain"][-1]["message"], "Event loop is closed")
+        self.assertTrue(all(len(item["message"] or "") <= 80
+                            for item in entry["diagnostics"]["exception_chain"]))
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            out = Path(folder) / "connection.json"
+            write_report(report, out, secrets=("sk-test-only",))
+            exported = json.dumps(report) + out.read_text() + out.with_suffix(".md").read_text()
+        for secret in ("sk-test-only", "private-query", "judge.invalid", "private-body", "request_body", "Authorization"):
+            self.assertNotIn(secret, exported)
+        opaque = type("ReadError", (Exception,), {})(payload)
+        self.assertEqual(diagnose(opaque)["exception_chain"][0]["message"], "[REDACTED]")
+        parser = ValueError(payload)
+        self.assertIsNone(diagnose(parser)["exception_chain"][0]["message"])
+        current = exc
+        for _ in range(12):
+            current.__cause__ = RuntimeError(payload)
+            current = current.__cause__
+        self.assertEqual(len(diagnose(exc)["exception_chain"]), 8)
+        current.__cause__ = exc
+        self.assertLessEqual(len(diagnose(exc)["exception_chain"]), 8)
+
     def test_defaults_and_explicit_parameters(self):
         cfg = config()
         self.assertEqual((cfg.max_retries, cfg.max_workers, cfg.max_tokens), (2, 4, 4096))
@@ -315,6 +549,20 @@ class JudgeTests(unittest.TestCase):
                         {"max_workers": 0}, {"max_tokens": 0}, {"max_workers": 1.5}, {"max_retries": True}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 config(**options)
+
+    def test_cli_no_env_file_never_calls_config_file_loader(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            source, out = Path(folder) / "collect.json", Path(folder) / "score.json"
+            source.write_text(json.dumps(collection()))
+            env = {"TEST_JUDGE_KEY": "sk-test-only", "JUDGE_MODEL": "glm-5.3-flash",
+                   "JUDGE_BASE_URL": "https://judge.invalid/v1"}
+            with patch.dict(os.environ, env, clear=True), patch.object(
+                    ragas_eval, "load_judge_env", side_effect=AssertionError("不允许读取配置文件")) as loader:
+                result = ragas_eval.main([
+                    "score", "--in", str(source), "--out", str(out), "--judge-key-env", "TEST_JUDGE_KEY",
+                    "--metrics", "faithfulness", "--no-env-file"], scorer=lambda *a: 0.5)
+                self.assertEqual(result, 0)
+                loader.assert_not_called()
 
 
 if __name__ == "__main__":

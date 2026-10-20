@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import csv
+import logging
 import re
 from pathlib import Path, PurePosixPath
 
 SKU_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+logger = logging.getLogger(__name__)
 
 
 def parse_skus(value) -> list[str]:
@@ -42,6 +44,11 @@ class ProductSourceIndex:
                             entries.setdefault(key, set()).add(skus)
         self.entries = {key: next(iter(values)) for key, values in entries.items() if len(values) == 1}
         self.ambiguous = {key for key, values in entries.items() if len(values) > 1}
+        if self.ambiguous:
+            # 只报告冲突文件名，避免把目录或清单中的其他内容写进日志。
+            names = sorted({PurePosixPath(key).name for key in self.ambiguous})
+            logger.warning("product_manifest_ambiguous files=%r；同名 SKU 映射冲突，停止回退；"
+                           "生产请只配置当前已发布库对应的一份清单", names)
 
     def lookup(self, source: str):
         key = source_key(source)
@@ -49,7 +56,10 @@ class ProductSourceIndex:
             return ()
         if key in self.entries:
             return self.entries[key]
-        return self.entries.get(PurePosixPath(key).name)
+        basename = PurePosixPath(key).name
+        if basename in self.ambiguous:
+            return ()
+        return self.entries.get(basename)
 
 
 def source_skus(source: str, index: ProductSourceIndex) -> list[str]:

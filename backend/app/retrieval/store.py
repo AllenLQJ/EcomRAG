@@ -66,10 +66,15 @@ class MilvusStore:
             indexes.add_index(field_name="sparse", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
             client.create_collection(collection_name=self.collection_name, schema=schema,
                                      index_params=indexes, consistency_level="Bounded")
-        elif self.skus_metadata:
-            fields = client.describe_collection(collection_name=self.collection_name)["fields"]
-            if "skus" not in {field["name"] for field in fields}:
+        else:
+            fields = client.describe_collection(collection_name=self.collection_name,
+                                                timeout=self.timeout_s)["fields"]
+            has_skus = "skus" in {field["name"] for field in fields}
+            if self.skus_metadata and not has_skus:
                 raise ValueError("已有集合缺少 skus 字段；请使用 --staged --with-skus 构建新版本")
+            if not self.skus_metadata and has_skus:
+                raise ValueError("已有集合含 skus 字段，拒绝不带 SKU 元数据的写入；"
+                                 "请使用 staged 构建并带 --with-skus（--staged --with-skus）")
         self._ready = True
 
     def upsert(self, chunks: list[Chunk], embeddings: EmbeddingBatch):
@@ -141,7 +146,7 @@ class MilvusStore:
 
     def iter_rows(self, *, fields=None):
         # 使用 iterator 而非 offset 分页，避免超过 query 的 result window 上限。
-        # None 明确表示不指定过滤条件，不依赖服务端是否接受空字符串表达式。
+        # 传 None，由 SDK 生成主键默认表达式（VARCHAR 主键为 chunk_id != ""）。
         iterator = self._connect().query_iterator(
             collection_name=self.collection_name, batch_size=256, filter=None,
             output_fields=fields or [*TEXT_FIELDS, "dense"],

@@ -30,7 +30,7 @@ REQUIRED_SPECS = {
     "香薰加湿": ("功能类型", "水箱容量", "额定功率", "输入要求", "喷雾量", "整机重量"),
 }
 SERIES = dict(zip(REQUIRED_SPECS, ("听岚", "栖光", "木澈", "鸣澜", "衡电", "联枢", "键行", "纳境", "沐息")))
-LEGACY = {sku: f"product_{sku.replace('-', '_')}.md" for sku in (
+LEGACY = {sku: f"product_{sku}.md" for sku in (
     "tinglan-s1", "tinglan-s2", "qiguang-l1", "muche-c1",
 )}
 # 原四款的键和值冻结；其余款必须同时具备公共键及下列统一补充键。
@@ -310,9 +310,14 @@ def render_product(row, by_id):
 def render_catalog(rows):
     categories = [category for category in REQUIRED_SPECS if any(row["category"] == category for row in rows)]
     lines = ["# 灵码在售商品总览", "", "以下内容摘自各商品详情，用于了解商品品类与选购方向。", "",
-             "## 你这里有什么商品？你们卖什么？", "", "目前资料收录的商品包括" + "、".join(categories) + "。"]
+             "## 你这里有什么商品？你们卖什么？", "", f"目前收录{len(rows)}款商品，分为" + "、".join(categories) + ("九个品类。" if len(categories) == 9 else f"{len(categories)}个品类。")]
     for category in categories:
         lines.extend(["", f"## {category}", "", "选购方向：" + CHOOSING[category]])
+        if category == "无线耳机":
+            models = [row["series"] + " " + row["name"].split()[1]
+                      for row in rows if row["category"] == category]
+            lines.extend(["", f"无线耳机共 {len(models)} 款，包括" + "、".join(models)
+                          + "，可按佩戴方式或使用场景选择。"])
         for row in rows:
             if row["category"] == category:
                 lines.extend(["", f"### 灵码{row['name']}", "", f"SKU：{row['sku_id']}。定位：{row['positioning']}",

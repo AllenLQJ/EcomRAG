@@ -138,6 +138,7 @@ class MemoryRepo:
     def __init__(self):
         self.users, self.conversations = {}, {}
         self.messages = defaultdict(list)
+        self.message_requests = {}
         self.lock = threading.RLock()
         self.save_fails = False
         self.sequence = 0
@@ -214,14 +215,24 @@ class MemoryRepo:
         del self.conversations[cid]
         self.messages.pop(cid, None)
 
-    def append_message(self, user_id, cid, role, content, route=None, sources=None):
-        content, route, sources = bounded_message(content, route, sources)
+    def append_message(self, user_id, cid, role, content, route=None, sources=None,
+                       elapsed_ms=None, request_id=None):
+        content, route, sources = bounded_message(content, route, sources, elapsed_ms, request_id)
         with self.lock:
             if self.save_fails:
                 raise RuntimeError("PRIVATE_QUESTION PRIVATE_ANSWER")
             item = self.owned_conversation(user_id, cid)
-            self.messages[cid].append(dict(role=role, content=content, route=route,
-                                           sources=sources, created_at=self.stamp()))
+            existing = self.message_requests.get((cid, request_id)) if request_id is not None else None
+            if existing is not None and any(existing is message for message in self.messages[cid]):
+                if elapsed_ms is not None:
+                    existing["elapsed_ms"] = elapsed_ms
+                return
+            message = dict(role=role, content=content, route=route, sources=sources, created_at=self.stamp())
+            if elapsed_ms is not None:
+                message["elapsed_ms"] = elapsed_ms
+            self.messages[cid].append(message)
+            if request_id is not None:
+                self.message_requests[cid, request_id] = message
             del self.messages[cid][:-MAX_CONVERSATION_MESSAGES]
             if role == "user" and not item["title"]:
                 item["title"] = content[:20]

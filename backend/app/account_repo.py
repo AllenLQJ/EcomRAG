@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from app.chat_log import connect_mysql
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, INVALID_ARGUMENT, NOT_FOUND, UNAUTHORIZED, USERNAME_CONFLICT
-from app.message_limits import MAX_CONVERSATION_MESSAGES, bounded_message, json_bytes
+from app.message_limits import MAX_CONVERSATION_MESSAGES, bounded_message, check_message_size, json_bytes, message_metadata
 
 
 def iso(value):
@@ -143,6 +143,11 @@ class AccountRepo:
                 message["created_at"] = iso(message["created_at"])
                 if isinstance(message["sources"], (str, bytes)):
                     message["sources"] = json.loads(message["sources"])
+                if isinstance(message["sources"], dict):
+                    metadata = message["sources"]
+                    message["sources"] = metadata.get("sources")
+                    if "elapsed_ms" in metadata:
+                        message["elapsed_ms"] = metadata["elapsed_ms"]
                 messages.append(message)
             return dict(id=item["id"], title=item["title"], messages=messages)
 
@@ -158,13 +163,31 @@ class AccountRepo:
             self.require_conversation(cur, user_id, conversation_id, lock=True)
             cur.execute("DELETE FROM conversations WHERE id=%s AND user_id=%s", (conversation_id, user_id))
 
-    def append_message(self, user_id, conversation_id, role, content, route=None, sources=None):
-        content, route, sources = bounded_message(content, route, sources)
+    def append_message(self, user_id, conversation_id, role, content, route=None, sources=None,
+                       elapsed_ms=None, request_id=None):
+        content, route, sources = bounded_message(content, route, sources, elapsed_ms, request_id)
+        metadata = message_metadata(sources, elapsed_ms, request_id)
         with self.transaction() as cur:
             item = self.require_conversation(cur, user_id, conversation_id, lock=True)
+            if role == "assistant" and request_id is not None:
+                # 自动保存与浏览器回写可能任意先后到达；同一对话行锁下去重。
+                cur.execute("SELECT id, content, route, sources FROM messages WHERE conversation_id=%s AND role='assistant' "
+                            "AND JSON_UNQUOTE(JSON_EXTRACT(sources,'$.request_id'))=%s LIMIT 1",
+                            (conversation_id, request_id))
+                existing = self.row(cur, cur.fetchone())
+                if existing is not None:
+                    if elapsed_ms is not None:
+                        stored = existing["sources"]
+                        if isinstance(stored, (str, bytes)):
+                            stored = json.loads(stored)
+                        stored["elapsed_ms"] = elapsed_ms
+                        check_message_size(existing["content"], existing["route"], stored)
+                        cur.execute("UPDATE messages SET sources=%s WHERE id=%s AND conversation_id=%s",
+                                    (json_bytes(stored).decode("utf-8"), existing["id"], conversation_id))
+                    return
             cur.execute("INSERT INTO messages (conversation_id,role,content,route,sources) VALUES (%s,%s,%s,%s,%s)",
                         (conversation_id, role, content, route,
-                         json_bytes(sources).decode("utf-8") if sources is not None else None))
+                         json_bytes(metadata).decode("utf-8") if metadata is not None else None))
             title = content[:20] if role == "user" and not item["title"] else item["title"]
             cur.execute("UPDATE conversations SET title=%s, updated_at=UTC_TIMESTAMP(6) WHERE id=%s AND user_id=%s",
                         (title, conversation_id, user_id))

@@ -159,7 +159,7 @@ def _judge_score(scorer, sample, metric, config):
     actual_body = config.judge_extra_body
     fallback_used = False
     while True:
-        result = _judge_attempt(scorer, sample, metric)
+        result = _judge_attempt(scorer, sample, metric, secrets=(config.api_key,))
         diagnostics = result.get("diagnostics")
         if diagnostics is None:
             break
@@ -183,7 +183,7 @@ def _judge_score(scorer, sample, metric, config):
     return result
 
 
-def _judge_attempt(scorer, sample, metric):
+def _judge_attempt(scorer, sample, metric, *, secrets=()):
     try:
         raw = scorer(sample, metric)
         raw = raw if isinstance(raw, dict) else {"value": raw}
@@ -203,9 +203,10 @@ def _judge_attempt(scorer, sample, metric):
                             value=float(value), usage=usage)
         if result["status"] != "valid":
             result["diagnostics"] = {**diagnose(RuntimeError()), "exception_type": None,
+                                     "exception_chain": [],
                                      "category": "invalid_score" if result["status"] == "invalid" else "reported_error"}
     except Exception as exc:
-        diagnostics = diagnose(exc)
+        diagnostics = diagnose(exc, secrets=secrets)
         category = diagnostics["category"]
         result = _entry("error", "judge_error" if category == "unknown" else "judge_" + category)
         result["diagnostics"] = diagnostics
@@ -220,6 +221,8 @@ def score(collection, config, *, scorer=None, judge=None, embeddings=None):
 
 def _score(collection, config, *, scorer=None, judge=None, embeddings=None):
     # 默认后端在任何评分前初始化；缺依赖必须清楚失败，不能伪装为每行 Judge 错误。
+    lifecycle = "injected_scorer" if scorer is not None else (
+        "external_clients" if judge is not None or embeddings is not None else "per_attempt_event_loop")
     if scorer is None:
         scorer = make_scorer(config, judge=judge, embeddings=embeddings)
     cases, selected, jobs = [], 0, []
@@ -266,6 +269,7 @@ def _score(collection, config, *, scorer=None, judge=None, embeddings=None):
                 metrics=list(config.metrics), max_samples=config.max_samples,
                 max_retries=config.max_retries, retry_backoff_s=config.retry_backoff_s,
                 max_workers=config.max_workers, max_tokens=config.max_tokens, timeout_s=config.timeout_s,
+                judge_client_lifecycle=lifecycle,
                 judge_extra_body_configured=config.judge_extra_body is not None,
                 judge_parameters=safe_parameters(config.judge_extra_body),
                 embedding_model=config.embedding_model, denominator_rule=DENOMINATOR_RULE)
@@ -300,12 +304,13 @@ def main(argv=None, *, settings=None, services_factory=None, scorer=None, judge=
     score_parser.add_argument("--retry-backoff-s", type=float, help="指数退避起始秒数，默认 1")
     score_parser.add_argument("--max-workers", type=int, help="并发评分任务数，默认 4")
     score_parser.add_argument("--max-tokens", type=int, help="Judge 单次输出上限，默认 4096")
+    score_parser.add_argument("--no-env-file", action="store_true", help="只使用 CLI 和进程环境，跳过 Judge 配置文件")
     args = parser.parse_args(argv)
     secrets = ()
     try:
         # 在路径/配置校验前取得指定 key，确保这些错误的原因也可脱敏。
         if args.command == "score":
-            file_values = load_judge_env()
+            file_values = {} if args.no_env_file else load_judge_env()
 
             def pick(name, cli_value=None):
                 return (cli_value or os.environ.get(name) or file_values.get(name) or "").strip()

@@ -496,6 +496,24 @@ class ContentCheckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 check.safe_file(self.data / path)
 
+    def test_published_copies_require_same_filename_text_and_linked_faq(self):
+        online = self.data / "docs" / self.path.name
+        online.parent.mkdir()
+        online.write_text(self.text, encoding="utf-8")
+        write_csv(self.data / "faq.csv", check.FAQ_FIELDS, [self.faq])
+        self.assertNotIn("similarity", self.codes())
+        self.assertNotIn("faq_duplicate", self.codes())
+        # 同一线上来源重复两行仍属于错误。
+        write_csv(self.data / "faq.csv", check.FAQ_FIELDS, [self.faq, self.faq])
+        self.assertIn("faq_duplicate", self.codes())
+        write_csv(self.data / "faq.csv", check.FAQ_FIELDS, [dict(self.faq, answer="不同答案")])
+        self.assertIn("faq_duplicate", self.codes())
+        # 同名改写仍参与相似度与 FAQ 来源审计。
+        online.write_text(self.text + "新增说明。", encoding="utf-8")
+        write_csv(self.data / "faq.csv", check.FAQ_FIELDS, [self.faq])
+        self.assertIn("similarity", self.codes())
+        self.assertIn("faq_duplicate", self.codes())
+
 
 if __name__ == "__main__":
     unittest.main()

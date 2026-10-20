@@ -131,6 +131,19 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     debug: bool = False
 
+    @field_validator("product_hidden_skus", mode="before")
+    @classmethod
+    def normalize_hidden_skus(cls, value):
+        from ingest.product_metadata import parse_skus
+
+        if not isinstance(value, (list, tuple)):
+            return value  # 保留配置必须为数组的类型校验。
+        normalized = parse_skus(value)
+        # 与来源元数据遵循同一规则：仅接受规范小写 SKU，不猜测修正非法项。
+        if any(not parse_skus([item]) for item in value):
+            logger.warning("PRODUCT_HIDDEN_SKUS 含非法 SKU，已丢弃；仅接受最长 64 字符的小写字母、数字及单连字符")
+        return normalized
+
     @field_validator("image_base_url")
     @classmethod
     def validate_image_base_url(cls, value):

@@ -281,8 +281,10 @@ LLM_MAX_CONCURRENCY=50
 以下命令均在 `backend/` 执行，供自己在已准备好依赖的环境操作。CLI 默认会加载配置，`--dry-run` 也会加载配置，但不加载模型、不连接服务。
 
 ```bash
+# 仅离线演示：默认即 dry-run，不加载模型、不连接服务、不入库
 uv run python -m ingest.run --dir ../data/docs --dry-run
-uv run python -m ingest.run --dir ../data/docs
+# 要写入必须显式 --yes；正式发布请走 --staged → kb_switch --check → 切换，见 docs/知识库扩容与回滚.md
+uv run python -m ingest.run --dir ../data/docs --yes
 uv run python -m ingest.load_faq ../data/faq.csv
 uv run python -m ingest.migrate_db
 uv run python -m ingest.clear_cache
@@ -297,28 +299,18 @@ loader 支持 MD/TXT/PDF/DOCX，扫描 PDF 不做 OCR；PDF/DOCX 解析器延迟
 
 版本化迁移 `kb_migrate` 也不清理旧块，161→79 等历史脏数据应先单独执行 `--sync-delete --plan`、审阅后执行 `--sync-delete --yes`，再迁移。`--prune-missing` 会删除本次目录未扫描到的其他资料，属高风险操作，必须先用相同完整资料根目录执行 `--sync-delete --prune-missing --plan` 并核对删除清单。Milvus stats 的 `row_count` 可含墓碑，不能断言有效行数“应为 79”；应以 Strong iterator 的有效主键、内容与当次切块清单比对。详细流程见[知识库扩容与回滚](知识库扩容与回滚.md)。
 
-资料标题与介绍精简后，默认子块由 81 变为 79，父块仍为 41。已有库需要先按这 19 份资料的 doc_id 清理旧块，避免遗留旧标题与旧正文。在 `backend/` 下执行以下清理与导入命令；完成后重启后端以重建内存 FAQ 索引。
+资料标题与介绍精简后，默认子块由 81 变为 79，父块仍为 41。已有库需要清理这 19 份资料的旧块，避免遗留旧标题与旧正文。
+
+> 已废弃：旧版本文档曾推荐用 `MilvusClient` 直接 `filter="doc_id in ..."` 手工删除旧块，并通过 `get_settings()`（会读取 `.env`）连接。迁移为 alias 后，这种做法不稳定，且绕过了发布锁、`--sync-delete` 的精确主键删除与计划预演，请勿再使用。
+
+清理旧块请在 `backend/` 下先做只读预演，审阅删除清单后再加 `--yes` 执行；`--prune-missing` 属高风险操作，必须先单独执行其 `--plan` 并逐项核对。完成后导入 FAQ、清理缓存并重启后端以重建内存 FAQ 索引。正式发布建议走 `--staged` → `kb_switch --check` → 切换流程，详见[知识库扩容与回滚](知识库扩容与回滚.md)。
 
 ```bash
 cd backend
-uv run python - <<'PY'
-import json
-from app.config import get_settings
-from ingest.loaders import load_directory
-from pymilvus import MilvusClient
-
-settings = get_settings()
-client = MilvusClient(uri=settings.milvus_uri, timeout=settings.milvus_timeout_s)
-try:
-    if client.has_collection(collection_name="kb_chunks"):
-        doc_ids = [doc.doc_id for doc in load_directory("../data/docs")]
-        client.delete(collection_name="kb_chunks", filter="doc_id in " + json.dumps(doc_ids),
-                      timeout=settings.milvus_timeout_s)
-        client.flush(collection_name="kb_chunks", timeout=settings.milvus_timeout_s)
-finally:
-    client.close()
-PY
-uv run python -m ingest.run --dir ../data/docs
+uv run python -m ingest.run --dir ../data/docs --sync-delete --plan    # 只读预演，输出待删主键
+uv run python -m ingest.run --dir ../data/docs --sync-delete --yes     # 审阅清单后再执行写入
+# 高风险：仅当 ../data/docs 是该集合完整资料根目录时，先单独 --plan 审阅
+# uv run python -m ingest.run --dir ../data/docs --sync-delete --prune-missing --plan
 uv run python -m ingest.load_faq ../data/faq.csv
 uv run python -m ingest.clear_cache
 ```

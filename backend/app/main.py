@@ -318,7 +318,7 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         async def after_chat(result):
             if conversation_id is not None:
                 await accounts.save(user["id"], conversation_id, "assistant", result.answer, result.route,
-                                    (source.model_dump() for source in result.sources))
+                                    (source.model_dump() for source in result.sources), request_id=result.request_id)
 
         return user, before_chat, after_chat
 

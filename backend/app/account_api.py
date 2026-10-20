@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.auth import SESSION_COOKIE, clear_cookie, set_cookie, validate_password_length
 from app.rate_limit import client_ip
+from app.message_limits import MAX_CONTENT_CHARS, MAX_ELAPSED_MS, MAX_SOURCES, bounded_message
+from app.schemas import Route, Source
 
 
 class PasswordBody(BaseModel):
@@ -27,6 +29,21 @@ class ConversationCreate(BaseModel):
 
 class ConversationRename(BaseModel):
     title: str = Field(max_length=100)
+
+
+class AssistantMessageBody(BaseModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    content: str = Field(max_length=MAX_CONTENT_CHARS)
+    route: Route | None = None
+    sources: list[Source] | None = Field(default=None, max_length=MAX_SOURCES)
+    elapsed_ms: int | None = Field(default=None, strict=True, ge=0, le=MAX_ELAPSED_MS)
+
+    @field_validator("request_id")
+    @classmethod
+    def reject_blank(cls, value):
+        if not value.strip():
+            raise ValueError("请求标识不能为空白")
+        return value
 
 
 def account_router(settings, accounts, quota):
@@ -84,6 +101,16 @@ def account_router(settings, accounts, quota):
     async def rename(conversation_id: str, body: ConversationRename, request: Request):
         user = await accounts.current(request, required=True)
         return await accounts.call("rename_conversation", user["id"], conversation_id, body.title)
+
+    @router.post("/conversations/{conversation_id}/messages")
+    async def save_assistant(conversation_id: str, body: AssistantMessageBody, request: Request):
+        user = await accounts.current(request, required=True)
+        content, route, sources = bounded_message(body.content, body.route,
+            (source.model_dump() for source in body.sources) if body.sources is not None else None,
+            body.elapsed_ms, body.request_id)
+        await accounts.call("append_message", user["id"], conversation_id, "assistant", content, route, sources,
+                            elapsed_ms=body.elapsed_ms, request_id=body.request_id)
+        return {}
 
     @router.delete("/conversations/{conversation_id}")
     async def delete_conversation(conversation_id: str, request: Request):

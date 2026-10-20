@@ -35,12 +35,12 @@ class ProductMetadataTests(unittest.TestCase):
         self.assertEqual(parse_skus([None, "A-1", "a-1", "a-1"]), ["a-1"])
         self.assertEqual(parse_skus({"a-1": True}), [])
 
-    def test_manifest_source_paths_legacy_fallback_and_conflict(self):
+    def test_manifest_source_paths_filename_fallback_and_conflict(self):
         self.write_manifest(self.root / "one", [("guide.md", "a-1;b-2"), ("policy.md", "")])
         index = ProductSourceIndex([self.root])
         self.assertEqual(source_skus("folder/guide.md", index), ["a-1", "b-2"])
         self.assertEqual(source_skus(str(self.root / "one/guide.md"), index), ["a-1", "b-2"])
-        self.assertEqual(source_skus("product_tinglan_s1.md", index), ["tinglan-s1"])
+        self.assertEqual(source_skus("product_tinglan-s1.md", index), ["tinglan-s1"])
         self.assertEqual(source_skus("product_qiguang-l6.md", index), ["qiguang-l6"])
         for name in ("policy.md", "product_catalog.md", "product_guide_lamps.md", "logistics_a-1.md"):
             self.assertEqual(source_skus(name, index), [])
@@ -118,3 +118,33 @@ class ProductMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已有集合缺少 skus"):
             store.upsert([chunk], FakeEmbedder().encode([chunk.child_text]))
         self.assertEqual(old.rows, {})
+
+    def test_store_without_metadata_refuses_skus_schema_before_upsert(self):
+        chunk = split_document(Document("a", "标题", "内容。", "a.md", "product"))[0]
+        for alias in (False, True):
+            with self.subTest(alias=alias):
+                client = FakeMilvusClient()
+                client.created = {"collection_name": "kb_chunks_v1" if alias else "kb_chunks"}
+                client.has_collection = lambda **kw: not alias
+                client.list_aliases = lambda **kw: {"aliases": ["kb_chunks"] if alias else []}
+                client.describe_collection = lambda **kw: {"fields": [{"name": "skus"}]}
+                store = MilvusStore(client=client, data_type=FakeDataType)
+                with self.assertRaisesRegex(ValueError, "staged 构建并带 --with-skus"):
+                    store.upsert([chunk], FakeEmbedder().encode([chunk.child_text]))
+                self.assertEqual(client.rows, {})
+                self.assertEqual(client.batches, [])
+                self.assertFalse(store._ready)
+
+    def test_store_existing_matching_schemas_can_upsert(self):
+        base = split_document(Document("a", "标题", "内容。", "a.md", "product"))[0]
+        for with_skus in (False, True):
+            with self.subTest(with_skus=with_skus):
+                chunk = replace(base, skus=("a-1",)) if with_skus else base
+                client = FakeMilvusClient()
+                client.created = {"collection_name": "kb_chunks"}
+                fields = [{"name": "chunk_id"}] + ([{"name": "skus"}] if with_skus else [])
+                client.describe_collection = lambda **kw: {"fields": fields}
+                store = MilvusStore(client=client, data_type=FakeDataType, skus_metadata=with_skus)
+                store.upsert([chunk], FakeEmbedder().encode([chunk.child_text]))
+                row = client.rows[chunk.chunk_id]
+                self.assertEqual(row.get("skus"), '["a-1"]' if with_skus else None)

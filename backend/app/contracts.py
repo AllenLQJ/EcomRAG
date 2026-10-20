@@ -53,11 +53,11 @@ class RetrievedDoc(BaseModel):
     def normalize_skus(cls, value):
         import json
         from ingest.product_metadata import parse_skus
-        if isinstance(value, str) and (value.startswith("[") or value == "null"):
+        if isinstance(value, str) and (value.lstrip().startswith("[") or value.strip() == "null"):
             try:
                 value = json.loads(value)
             except ValueError:
-                return []
+                return None
         return None if value is None else parse_skus(value)
 
 

@@ -361,7 +361,9 @@ def compare_documents(report, documents, baselines, limit):
     cached = {str(doc["path"]): products.text_ngrams(doc["text"]) for doc in documents + baselines}
     pairs = list(combinations(documents, 2))
     pairs.extend((left, right) for left in documents for right in baselines
-                 if left["category"] == right["category"] and left["path"].resolve() != right["path"].resolve())
+                 if left["category"] == right["category"] and left["path"].resolve() != right["path"].resolve()
+                 # 同名且正文一致的是已提升副本；异名相似或同名改写仍检查。
+                 and not (left["path"].name == right["path"].name and left["text"] == right["text"]))
     for left, right in pairs:
         a, b = cached[str(left["path"])], cached[str(right["path"])]
         score = len(a & b) / len(a | b) if a or b else 1.0
@@ -408,6 +410,7 @@ def check_content(root, facts_path, *, data_dir=None, similarity_threshold=SIMIL
     root, facts_path = Path(root), Path(facts_path)
     data = Path(data_dir) if data_dir is not None else PROJECT_ROOT / "data"
     report = Report()
+    published_faqs = set()
     fact_rows = report.read_csv(facts_path, FACT_FIELDS) if facts_path.exists() else []
     if not facts_path.exists():
         report.add("info", "skipped", facts_path, "事实表不存在，跳过规则来源；数字仍核对商品规格")
@@ -477,7 +480,18 @@ def check_content(root, facts_path, *, data_dir=None, similarity_threshold=SIMIL
             check_forbidden(report, path, text, product_rules=product_rules)
             check_skus(report, path, text, product_rows)
         if not standalone:
+            start = len(report.faqs)
             check_faqs(report, group, facts, docs)
+            # 仅当 FAQ 映射的来源文档已逐字提升，才允许同一 FAQ 的线上副本。
+            links = report.read_csv(group / "faq_manifest.csv", FAQ_MANIFEST_FIELDS)
+            published_questions = set()
+            for link in links:
+                doc = docs.get(link["source_file"])
+                online = data / "docs" / Path(link["source_file"]).name
+                if doc and online.is_file() and safe_file(online).read_text(encoding="utf-8-sig") == doc["text"]:
+                    published_questions.add(link["question"])
+            published_faqs.update(tuple(row[key] for key in FAQ_FIELDS)
+                                  for row in report.faqs[start:] if row["question"] in published_questions)
     baselines = []
     for folder in (data / "docs", data / "docs_generated"):
         if not folder.is_dir():
@@ -498,7 +512,11 @@ def check_content(root, facts_path, *, data_dir=None, similarity_threshold=SIMIL
                 validate_faq_values(row, index)
             except ValueError as exc:
                 report.add("error", "faq_validation", existing, str(exc))
-            report.faqs.append(dict(row, file=f"{existing}:{index}"))
+            signature = tuple(row[key] for key in FAQ_FIELDS)
+            if signature in published_faqs:
+                published_faqs.remove(signature)  # 只允许一份线上副本，线上自身重复仍报错。
+            else:
+                report.faqs.append(dict(row, file=f"{existing}:{index}"))
     elif not existing.exists():
         report.add("info", "skipped", existing, "现有 FAQ 不存在，跳过")
     for left, right in combinations(report.faqs, 2):

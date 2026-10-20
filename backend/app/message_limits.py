@@ -11,6 +11,32 @@ MAX_SOURCES = 8
 MAX_SOURCES_BYTES = 8 * 1024
 MAX_MESSAGE_BYTES = 32 * 1024
 MAX_CONVERSATION_MESSAGES = 200
+MAX_ELAPSED_MS = 60 * 60 * 1000
+
+
+def bounded_elapsed_ms(value):
+    if value is not None and (type(value) is not int or not 0 <= value <= MAX_ELAPSED_MS):
+        raise AppError(INVALID_ARGUMENT, 400, "耗时须为0–3600000毫秒的整数")
+    return value
+
+
+def message_metadata(sources, elapsed_ms=None, request_id=None):
+    # 旧 sources 数组保持可读；新消息复用该 JSON 列承载元数据，无需 DDL。
+    if elapsed_ms is None and request_id is None:
+        return sources
+    metadata = dict(sources=sources)
+    if elapsed_ms is not None:
+        metadata["elapsed_ms"] = bounded_elapsed_ms(elapsed_ms)
+    if request_id is not None:
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
+            raise AppError(INVALID_ARGUMENT, 400, "请求标识非法")
+        metadata["request_id"] = request_id
+    return metadata
+
+
+def check_message_size(content, route, metadata):
+    if len(json_bytes(dict(role="assistant", content=content, route=route, sources=metadata))) > MAX_MESSAGE_BYTES:
+        raise AppError(INVALID_ARGUMENT, 400, "消息体积超出上限")
 
 
 def json_bytes(value):
@@ -48,10 +74,11 @@ def bounded_sources(sources):
     return result
 
 
-def bounded_message(content, route=None, sources=None):
+def bounded_message(content, route=None, sources=None, elapsed_ms=None, request_id=None):
+    bounded_elapsed_ms(elapsed_ms)
     content, route = clipped(content, MAX_CONTENT_CHARS), clipped(route, 16) if route is not None else None
     sources = bounded_sources(sources)
     # 连 JSON 转义后的体积也受限；DB 中的原始 UTF-8 正文只会更小。
-    if len(json_bytes(dict(role="assistant", content=content, route=route, sources=sources))) > MAX_MESSAGE_BYTES:
-        raise AppError(INVALID_ARGUMENT, 400, "消息体积超出上限")
+    metadata = message_metadata(sources, elapsed_ms, request_id)
+    check_message_size(content, route, metadata)
     return content, route, sources

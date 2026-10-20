@@ -1,5 +1,6 @@
 import csv
 import io
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -128,6 +129,28 @@ class ContentMergeTests(unittest.TestCase):
             self.assertEqual(merge.main(["--out", str(self.out), "--faq-out", str(self.faq_out), "--dry-run"]), 0)
         with redirect_stderr(io.StringIO()):
             self.assertEqual(merge.main(["--out", str(self.data / "docs"), "--faq-out", str(self.faq_out)]), 1)
+
+    def test_promoted_inputs_merge_idempotently_and_faq_conflicts_still_fail(self):
+        first = self.run_merge()
+        for path in self.out.glob("*.md"):
+            shutil.copyfile(path, self.data / "docs" / path.name)
+        shutil.copyfile(self.faq_out, self.data / "faq.csv")
+        second = self.run_merge(force=True)
+        for key in ("documents", "parent_chunks", "child_chunks", "faqs", "faq_categories"):
+            self.assertEqual(first[key], second[key])
+        self.faq("docs_new/account_store/faq.csv", [("账号问题", "不同答案", "account")])
+        with self.assertRaisesRegex(ValueError, "FAQ 问题重复或内容冲突"):
+            self.run_merge(force=True)
+
+    def test_same_source_duplicate_faq_is_rejected(self):
+        self.faq("faq.csv", [("旧问题", "旧答案", "payment")] * 2)
+        with self.assertRaisesRegex(ValueError, "FAQ 问题重复或内容冲突"):
+            self.run_merge()
+        self.assertFalse(self.out.exists())
+        self.faq("faq.csv", [("旧问题", "旧答案", "payment")])
+        self.faq("docs_new/extra/faq.csv", [("账号问题", "账号答案", "account")])
+        with self.assertRaisesRegex(ValueError, "FAQ 问题重复或内容冲突"):
+            self.run_merge()
 
 
 if __name__ == "__main__":

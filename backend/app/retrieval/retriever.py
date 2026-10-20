@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import math
 import logging
+import re
+import threading
 from time import perf_counter
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, RetrievedDoc
@@ -43,6 +45,7 @@ class Retriever:
         self.rerank_fallback, self.local_rerank = rerank_fallback, local_rerank
         self.request_factory, self.rrf_factory = request_factory, rrf_factory
         self.skus_metadata = skus_metadata
+        self._skus_schema_lock = threading.Lock()
 
     def _connect(self):
         if self.client is None or self.request_factory is None or self.rrf_factory is None:
@@ -58,12 +61,39 @@ class Retriever:
                 self.rrf_factory = module.RRFRanker
         return self.client
 
-    @staticmethod
-    def _search(client, **kwargs):
+    def _search(self, client, **kwargs):
         try:
             return client.hybrid_search(**kwargs)
-        except OSError:
-            raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试") from None
+        except Exception as exc:
+            # alias 可在进程存活期间切回旧集合。只在明确的 skus 字段缺失错误后
+            # 核对当前 schema；连接、权限、超时等错误不进入降级重试。
+            message = str(exc).lower()
+            missing_skus = (
+                "skus" in kwargs["output_fields"]
+                and re.search(r"\bskus\b", message)
+                and re.search(r"\bfield", message)
+                and re.search(r"not found|not exist|does not exist|doesn't exist|"
+                              r"cannot (?:find|be found)|unknown field|non[- ]?existent field|not in schema", message)
+            )
+            if missing_skus:
+                with self._skus_schema_lock:
+                    if self.skus_metadata:
+                        try:
+                            schema = client.describe_collection(collection_name=self.collection_name,
+                                                                timeout=self.timeout_s)
+                        except OSError:
+                            raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试") from None
+                        if "skus" in {field["name"] for field in schema["fields"]}:
+                            raise
+                        self.skus_metadata = False
+                        logger.warning("product_skus_metadata_unavailable：集合 schema 缺少 skus；"
+                                       "本进程降级为不请求 skus，使用 manifest/文件名回退；"
+                                       "重建集合后重启应用以恢复元数据读取")
+                kwargs["output_fields"] = [field for field in kwargs["output_fields"] if field != "skus"]
+                return self._search(client, **kwargs)
+            if isinstance(exc, OSError):
+                raise AppError(DEPENDENCY_UNAVAILABLE, 503, "服务暂时不可用，请稍后再试") from None
+            raise
 
     def retrieve(self, queries: list[str], rerank_query: str, top_k: int = 5) -> list[RetrievedDoc]:
         if top_k <= 0 or not queries:
