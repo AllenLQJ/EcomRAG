@@ -15,6 +15,7 @@ from app.retrieval.embedder import BgeM3Embedder
 from app.retrieval.reranker import BgeReranker
 from app.retrieval.remote_reranker import RemoteReranker
 from app.retrieval.retriever import Retriever
+from app.products import ProductCards
 from ingest.loaders import resolve_data_path
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def _embedding_model(embed_path, batch_size):
 class Services:
     def __init__(self, settings, *, transport=None):
         self.settings = settings
+        self.products = ProductCards(settings)
         if not settings.rerank_enabled:
             logger.warning("重排已关闭：RRF 分不与 REFUSE_THRESHOLD 比较，仅在无检索结果时拒答")
         self._local_reranker = None
@@ -80,7 +82,8 @@ class Services:
                                    rerank_enabled=settings.rerank_enabled,
                                    rerank_candidates=settings.rerank_candidates,
                                    rerank_max_chars=settings.rerank_max_chars,
-                                   rerank_text_mode=settings.rerank_text_mode)
+                                   rerank_text_mode=settings.rerank_text_mode,
+                                   skus_metadata=settings.product_skus_metadata)
         if remote:
             self.retriever.rerank_fallback = settings.rerank_fallback
             self.retriever.local_rerank = self._fallback_local
@@ -167,6 +170,9 @@ class Services:
 
     async def generate_answer(self, question, docs, history):
         return await self.generator.generate_answer(question, docs, history)
+
+    def product_cards(self, docs):
+        return self.products.for_sources(docs)
 
     async def chat_general(self, question, history):
         return await self.generator.chat_general(question, history)

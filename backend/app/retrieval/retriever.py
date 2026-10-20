@@ -22,7 +22,7 @@ class Retriever:
                  rerank_enabled=True, rerank_candidates=10, rerank_max_chars=600,
                  rerank_text_mode="child",
                  rerank_fallback="rrf", local_rerank=None,
-                 timeout_s=10,
+                 timeout_s=10, skus_metadata=False,
                  request_factory=None, rrf_factory=None):
         if rerank_candidates <= 0:
             raise ValueError("重排候选数量必须大于零")
@@ -42,6 +42,7 @@ class Retriever:
         self.rerank_text_mode = rerank_text_mode
         self.rerank_fallback, self.local_rerank = rerank_fallback, local_rerank
         self.request_factory, self.rrf_factory = request_factory, rrf_factory
+        self.skus_metadata = skus_metadata
 
     def _connect(self):
         if self.client is None or self.request_factory is None or self.rrf_factory is None:
@@ -88,7 +89,8 @@ class Retriever:
             results = self._search(
                 client,
                 collection_name=self.collection_name, reqs=requests,
-                ranker=self.rrf_factory(k=60), limit=40, output_fields=OUTPUT_FIELDS,
+                ranker=self.rrf_factory(k=60), limit=40,
+                output_fields=OUTPUT_FIELDS + (["skus"] if self.skus_metadata else []),
                 timeout=self.timeout_s,
             )
             for hit in results[0] if results else []:
@@ -98,6 +100,7 @@ class Retriever:
                     title=entity["title"], source=entity["source"],
                     content=entity["parent_text"], snippet=entity["child_text"],
                     score=float(hit["distance"]),
+                    skus=entity.get("skus"),
                 )
                 previous = parents.get(doc.parent_id)
                 if previous is None or doc.score > previous.score:

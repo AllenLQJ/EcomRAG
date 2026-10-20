@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 
 from ingest.loaders import Document
 
@@ -16,6 +17,16 @@ class Chunk:
     title: str
     source: str
     category: str
+    skus: tuple[str, ...] | None = None
+
+
+def chunk_record(chunk):
+    """缺省元数据完全沿用旧行/旧发布清单；新字段存 JSON 字符串。"""
+    row = asdict(chunk)
+    skus = row.pop("skus")
+    if skus is not None:
+        row["skus"] = json.dumps(skus, ensure_ascii=False, separators=(",", ":"))
+    return row
 
 
 def split_text(text: str, size: int, overlap: int = 0) -> list[str]:
@@ -87,5 +98,6 @@ def split_document(
                 parent_id=parent_id, parent_text=parent_text,
                 doc_id=document.doc_id, title=document.title,
                 source=document.source, category=document.category,
+                skus=document.skus,
             ))
     return chunks

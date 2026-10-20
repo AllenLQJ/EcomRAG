@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ingest.product_metadata import ProductSourceIndex, parse_skus, source_skus
+
 EXTENSIONS = {".md", ".txt", ".pdf", ".docx"}
 CATEGORIES = {"after_sales", "logistics", "payment", "product", "promotion", "account", "store"}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +30,7 @@ class Document:
     text: str
     source: str
     category: str
+    skus: tuple[str, ...] | None = None
 
 
 def resolve_data_path(value: str | Path) -> Path:
@@ -74,14 +77,17 @@ def load_document(
         raise LoaderError(f"未知文档分类：{category}")
     source = source or path.name
     doc_id = hashlib.sha256(source.encode("utf-8")).hexdigest()[:24]
-    return Document(doc_id, title, text, source, category)
+    skus = tuple(parse_skus(metadata["skus"])) if "skus" in metadata else None
+    return Document(doc_id, title, text, source, category, skus)
 
 
-def load_directory(directory: str | Path) -> list[Document]:
+def load_directory(directory: str | Path, *, with_skus=False) -> list[Document]:
     """按相对路径排序读取支持的文件，保证文档标识稳定。"""
     directory = Path(directory)
     if not directory.is_dir():
         raise LoaderError(f"文档目录不存在：{directory}")
-    return [load_document(path, source=path.relative_to(directory).as_posix())
+    index = ProductSourceIndex([directory]) if with_skus else None
+    return [load_document(path, source=path.relative_to(directory).as_posix(),
+                          metadata={"skus": source_skus(str(path), index)} if with_skus else None)
             for path in sorted(directory.rglob("*"))
             if path.is_file() and path.suffix.lower() in EXTENSIONS]

@@ -1,7 +1,7 @@
 from typing import Literal
 from typing_extensions import TypedDict
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 from app.history import normalize_history
 
@@ -59,6 +59,16 @@ class TraceItem(BaseModel):
     fallback: Literal["rrf", "local"] | None = None
 
 
+class ProductCard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sku: str
+    name: str
+    category: str
+    highlights: list[str] = Field(min_length=1, max_length=2)
+    image_url: str | None = None
+
+
 class ChatResponse(BaseModel):
     request_id: str
     session_id: str
@@ -68,3 +78,12 @@ class ChatResponse(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     is_mock: bool = False
     trace: list[TraceItem] | None = None
+    products: list[ProductCard] | None = Field(default=None, max_length=3)
+
+    @model_serializer(mode="wrap")
+    def serialize_response(self, handler):
+        result = handler(self)
+        # 保留现有 strategy/trace 的 null 语义，只省略可选商品字段。
+        if not self.products:
+            result.pop("products", None)
+        return result

@@ -15,7 +15,7 @@ from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 from app.schemas import ChatRequest, ChatResponse, Source
 from app.services import dependency_error, unavailable
 from app.tracing import items, record
-from app.budget import request_budget
+from app.budget import deadline, request_budget
 
 logger = logging.getLogger(__name__)
 
@@ -314,4 +314,15 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                       snippet=doc.snippet[:60], score=doc.score)
                for i, doc in enumerate(docs, 1)
                if i in indices]
-    return response(generated.answer, "rag", sources, "direct")
+    result = response(generated.answer, "rag", sources, "direct")
+    cards = getattr(services, "product_cards", None)
+    if cards is not None:
+        cited_docs = [doc for i, doc in enumerate(docs, 1) if i in indices]
+        remaining = deadline.get() - asyncio.get_running_loop().time() - 0.05
+        if remaining > 0:
+            try:
+                async with asyncio.timeout(min(settings.product_cards_timeout_s, remaining)):
+                    result.products = await call(cards, cited_docs, executor=executor) or None
+            except Exception:
+                logger.warning("product_cards_unavailable")
+    return result

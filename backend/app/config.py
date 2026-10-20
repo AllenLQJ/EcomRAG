@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     mysql_user: str = "ecomrag"
     mysql_password: SecretStr = SecretStr("")
     mysql_root_password: SecretStr = SecretStr("")
+    image_base_url: str = ""
+    product_hidden_skus: list[str] = Field(default_factory=list)
+    product_manifest_paths: list[str] = Field(default_factory=lambda: [
+        "data/docs_new", "data/docs_staging/manifest.csv", "data/docs/manifest.csv"])
+    product_skus_metadata: bool = False
+    product_cards_timeout_s: float = Field(default=1, gt=0, allow_inf_nan=False)
     redis_url: str = "redis://127.0.0.1:6379/0"
     milvus_uri: str = "http://127.0.0.1:19530"
     milvus_timeout_s: float = Field(default=10, gt=0)
@@ -124,6 +130,24 @@ class Settings(BaseSettings):
     chat_log_enabled: bool = True
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     debug: bool = False
+
+    @field_validator("image_base_url")
+    @classmethod
+    def validate_image_base_url(cls, value):
+        value = value.strip().rstrip("/")
+        if value:
+            try:
+                HttpUrl(value)
+                parts = urlsplit(value)
+                valid = (parts.scheme in {"http", "https"} and parts.hostname
+                         and not parts.username and not parts.password and not parts.query
+                         and not parts.fragment and not any(char.isspace() for char in value))
+                parts.port
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("IMAGE_BASE_URL 必须为空或合法 HTTP(S) 基础地址")
+        return value
 
     @field_validator("auth_scrypt_n")
     @classmethod

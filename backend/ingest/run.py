@@ -28,12 +28,12 @@ def analyze_documents(documents, *, split_options=None):
 def ingest_directory(directory, *, dry_run: bool = True, split_options: dict | None = None,
                      batch_size: int = 16, embedder=None, store=None,
                      sync_delete=False, prune_missing=False, yes=False,
-                     staged=False, manager=None, version=None, rebuild=False) -> dict:
+                     staged=False, manager=None, version=None, rebuild=False, with_skus=False) -> dict:
     """读取、切块并可选入库；dry-run 全程仅使用标准库。"""
     started = perf_counter()
     if batch_size <= 0:
         raise ValueError("编码批大小必须大于零")
-    documents = load_directory(directory)
+    documents = load_directory(directory, with_skus=with_skus)
     if not documents:
         raise ValueError("目录中没有支持的文档")
     chunks, stats = analyze_documents(documents, split_options=split_options)
@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None, *, settings: Settings | None = None) -> 
     parser.add_argument("--prune-missing", action="store_true")
     parser.add_argument("--plan", action="store_true", help="与 --sync-delete 同用，只读 Milvus 并打印精确删除清单")
     parser.add_argument("--state-dir")
+    parser.add_argument("--with-skus", action="store_true", help="可选：读取 manifest skus 并写入新集合字段")
     args = parser.parse_args(argv)
     try:
         if settings is None:
@@ -108,11 +109,14 @@ def main(argv: list[str] | None = None, *, settings: Settings | None = None) -> 
                 "child_chunk_overlap": settings.child_chunk_overlap,
             },
         }
+        if args.with_skus:
+            options["with_skus"] = True
         if not dry_run or args.plan:
             from app.retrieval.embedder import BgeM3Embedder
             from app.retrieval.store import MilvusStore
 
-            options["store"] = MilvusStore(settings.milvus_uri, timeout_s=settings.milvus_timeout_s)
+            options["store"] = MilvusStore(settings.milvus_uri, timeout_s=settings.milvus_timeout_s,
+                                            **({"skus_metadata": True} if args.with_skus else {}))
             if not dry_run:
                 options["embedder"] = BgeM3Embedder(resolve_data_path(settings.bge_m3_path), settings.embed_batch_size)
         if args.staged:

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas import Intent, Strategy
 
@@ -39,8 +39,22 @@ class RetrievedDoc(BaseModel):
     content: str
     snippet: str
     score: float
+    # None 为旧索引无元数据；[] 为显式无关联商品，不再从文件名推断。
+    skus: list[str] | None = Field(default=None, exclude=True)
     # 请求内携带分数来源，避免并发请求共享 fallback 状态；不进入对外响应。
     score_provider: Literal["local", "remote", "fallback_local", "fallback_rrf"] | None = Field(default=None, exclude=True)
+
+    @field_validator("skus", mode="before")
+    @classmethod
+    def normalize_skus(cls, value):
+        import json
+        from ingest.product_metadata import parse_skus
+        if isinstance(value, str) and (value.startswith("[") or value == "null"):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return []
+        return None if value is None else parse_skus(value)
 
 
 class RouteDecision(BaseModel):
