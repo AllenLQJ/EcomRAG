@@ -1,0 +1,42 @@
+file,title,category,facts,skus
+product_guide_wireless_earphones.md,无线耳机选购：佩戴结构、模式与补电安排,product,PRD-03,tinglan-s2;tinglan-m1;tinglan-k1;tinglan-n2;tinglan-c2;tinglan-q1
+product_guide_desk_lamps.md,桌面台灯选购：安装、调光与供电匹配,product,,qiguang-l1;qiguang-l2;qiguang-l3;qiguang-l4;qiguang-l5;qiguang-l6
+product_guide_insulated_cups.md,保温杯选购：容量、杯高与测试条件,product,,muche-c1;muche-c2;muche-c3;muche-c4;muche-c5;muche-c6
+product_guide_bluetooth_speakers.md,蓝牙音箱选购：连接来源、摆放与续航口径,product,PRD-03,minglan-p1;minglan-p2;minglan-d1;minglan-d2;minglan-r1;minglan-a1
+product_guide_charging_devices.md,充电设备选购：电源位置、协议与多口分配,product,PRD-03,hengdian-p1;hengdian-p2;hengdian-p3;hengdian-a1;hengdian-a2;hengdian-a3
+product_guide_cables_accessories.md,数据线与配件选购：先画连接路径再看上限,product,,lianshu-c1;lianshu-c2;lianshu-c3;lianshu-h1;lianshu-a1
+product_guide_keyboards_mice.md,键盘鼠标选购：键位、握持与连接方式,product,,jianxing-k1;jianxing-k2;jianxing-k3;jianxing-m1;jianxing-m2;jianxing-m3
+product_guide_storage_bags.md,收纳包选购：物品清单、隔层与尺寸口径,product,,najing-p1;najing-p2;najing-l1;najing-t1
+product_guide_aroma_humidifiers.md,香薰加湿选购：先分清纯水与扩香用途,product,,muxi-h1;muxi-h2;muxi-a1
+product_troubleshoot_wireless_earphones.md,无线耳机排障：连接、声道与续航现象分流,product,RET-07;WAR-01;WAR-03;RET-01;REP-01,tinglan-s1;tinglan-s2;tinglan-c2
+product_troubleshoot_desk_lamps.md,桌面台灯排障：不亮、闪烁与调光误判,product,RET-07;WAR-01;WAR-03;REP-01,qiguang-l1;qiguang-l2;qiguang-l3;qiguang-l4;qiguang-l5;qiguang-l6
+product_troubleshoot_insulated_cups.md,保温杯排障：漏水、降温与外观问题,product,RET-02;RET-07;WAR-02;RET-04;RET-01;WAR-03;RET-05,muche-c1;muche-c3;muche-c4
+product_troubleshoot_bluetooth_speakers.md,蓝牙音箱排障：连接无声、输入与播放时间,product,RET-07;WAR-01;WAR-03;RET-01;REP-01,minglan-p2;minglan-d1;minglan-r1;minglan-a1
+product_troubleshoot_charging_devices.md,充电设备排障：慢充、口位与容量误读,product,RET-07;WAR-01;WAR-03;REP-01;PRD-03,hengdian-p1;hengdian-p2;hengdian-p3;hengdian-a2;hengdian-a3
+product_troubleshoot_cables_accessories.md,数据线与配件排障：慢传、黑屏与供电路径,product,RET-07;WAR-01;WAR-03;RET-04;REP-01,lianshu-c2;lianshu-c3;lianshu-h1
+product_troubleshoot_keyboards_mice.md,键盘鼠标排障：无输入、灵敏度与模式判断,product,RET-07;WAR-01;WAR-03;RET-04;REP-01,jianxing-k1;jianxing-k2;jianxing-k3;jianxing-m1;jianxing-m2;jianxing-m3
+product_troubleshoot_storage_bags.md,收纳包排障：装不下、拉链受阻与可见瑕疵,product,RET-02;WAR-02;WAR-03;RET-07;RET-01;RET-05,najing-p1;najing-p2;najing-l1;najing-t1
+product_troubleshoot_aroma_humidifiers.md,香薰加湿排障：不出雾、雾量变化与误加液体,product,RET-07;WAR-01;WAR-03;RET-04;REP-01,muxi-h1;muxi-h2;muxi-a1
+product_care_wireless_earphones.md,无线耳机保养：回盒、干燥与结构维护,product,PRD-03;RET-04;WAR-01;WAR-03;RET-07;REP-01,tinglan-m1;tinglan-k1;tinglan-b1;tinglan-n2
+product_care_desk_lamps.md,桌面台灯保养：断电清洁、安装与收纳,product,WAR-01;WAR-03;RET-04;RET-07;REP-01;PRD-03,qiguang-l1;qiguang-l2;qiguang-l3;qiguang-l4;qiguang-l5
+product_care_insulated_cups.md,保温杯保养：手洗、密封圈与热水携带,product,WAR-02;WAR-03;RET-04;RET-07;RET-01;RET-05,muche-c1;muche-c2;muche-c4;muche-c6
+product_care_bluetooth_speakers.md,蓝牙音箱保养：接口干燥与固定摆放,product,PRD-03;WAR-01;WAR-03;RET-04;RET-07;REP-01,minglan-p1;minglan-p2;minglan-d1;minglan-d2;minglan-r1;minglan-a1
+product_care_charging_devices.md,充电设备保养：通风、线材与电池异常,product,PRD-03;RET-04;WAR-01;WAR-03;RET-07;REP-01,hengdian-p1;hengdian-p2;hengdian-p3;hengdian-a2;hengdian-a3
+product_care_cables_accessories.md,数据线与配件保养：插头受力、走线与任务标记,product,WAR-01;WAR-03;RET-04;RET-07;REP-01,lianshu-c1;lianshu-c2;lianshu-c3;lianshu-h1;lianshu-a1
+product_care_keyboards_mice.md,键盘鼠标保养：结构边界与供电管理,product,PRD-03;RET-04;WAR-01;WAR-03;RET-07;REP-01,jianxing-k1;jianxing-k2;jianxing-k3;jianxing-m1;jianxing-m2;jianxing-m3
+product_care_storage_bags.md,收纳包保养：局部手洗、晾干与装载边界,product,WAR-02;WAR-03;RET-07;RET-01;RET-05,najing-p1;najing-p2;najing-l1;najing-t1
+product_care_aroma_humidifiers.md,香薰加湿保养：断电、用水与液体边界,product,PRD-03;WAR-01;WAR-03;RET-04;RET-07;REP-01,muxi-h1;muxi-h2;muxi-a1
+product_scene_commuting.md,通勤搭配：减少取放动作与随身负担,product,PRD-03,tinglan-n2;muche-c2;hengdian-p1;najing-p1
+product_scene_office_desktop.md,办公桌面搭配：安装、输入与扩展路径,product,,qiguang-l2;lianshu-h1;jianxing-k2;jianxing-m2
+product_scene_dormitory.md,宿舍用品选择：临时移位与共用空间,product,,tinglan-q1;qiguang-l3;muche-c4;najing-p2
+product_scene_business_travel.md,出差旅行搭配：主机补电、走线与分层整理,product,PRD-03,hengdian-p3;lianshu-c2;jianxing-m1;najing-t1
+product_scene_short_outdoor_trips.md,户外短途搭配：开放佩戴、饮水与分享播放,product,PRD-03,tinglan-b1;muche-c6;minglan-p2
+product_scene_home_reading.md,居家阅读搭配：纸面光线、饮水与床边声音,product,,muche-c1;qiguang-l6;minglan-a1
+product_scene_sports_fitness.md,运动健身用品选择：贴合、饮水与汗后整理,product,PRD-03,tinglan-k1;muche-c3;najing-p1
+product_scene_gift_selection.md,送礼选购思路：从使用习惯核对功能,product,RET-03,qiguang-l5;muche-c5;najing-p2;muxi-a1
+product_scene_student_study.md,学生学习用品搭配：先满足输入、照明和基础连接,product,,qiguang-l1;lianshu-c1;jianxing-k1;jianxing-m3
+product_scene_starter_setup.md,入门配置：先完成补电与日常聆听,product,PRD-03,tinglan-s1;hengdian-a1;lianshu-c1
+product_compare_tinglan_n2_c2.md,听岚 N2 与 C2：放置方式不同怎样选,product,PRD-03,tinglan-n2;tinglan-c2
+product_compare_muche_c2_c5.md,木澈 C2 与 C5：小容量杯的高度与测试差别,product,WAR-02,muche-c2;muche-c5
+product_compare_hengdian_p1_p2.md,衡电 P1 与 P2：容量增加后要接受哪些取舍,product,PRD-03,hengdian-p1;hengdian-p2
+product_compare_lianshu_c2_c3.md,联枢 C2 与 C3：供电同档时为何连接任务不同,product,,lianshu-c2;lianshu-c3
