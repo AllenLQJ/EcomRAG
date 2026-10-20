@@ -309,7 +309,7 @@ def test_collect_cli_uses_fake_services_and_existing_meta(tmp_path, monkeypatch)
     report = json.loads(out.read_text())
     assert report["meta"]["eval_file"]["sha256"] == hashlib.sha256(data).hexdigest()[:12]
     assert report["meta"]["git_commit"] == "abcdef1"
-    assert report["cases"][0]["contexts"][0]["text"] == "[1] 资料1\n父块完整内容"
+    assert report["cases"][0]["contexts"][0]["text"] == f"[1] 资料1\n{fake.retrieve.return_value[0].content}"
     assert report["cases"][0]["reference"] == "参考答案"
     assert report["cases"][0]["status"] == "applicable"
     assert report["route_stats"] == {"rag": 1} and report["failures"] == []

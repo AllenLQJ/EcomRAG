@@ -46,7 +46,8 @@ def test_all_routes_event_order_headers_and_final_contract(app_factory, route, c
         services.route.return_value = RouteDecision(intent='sensitive', rewritten_query='敏感请求')
     elif route in {'rag', 'low'}:
         services.knowledge()
-        services.retrieve.return_value = [document(1, .3), document(2, .9)] if route == 'rag' else []
+        services.retrieve.return_value = [document(1, .3), document(2, .9).model_copy(
+            update={'content': 'PRIVATE_ANSWER'})] if route == 'rag' else []
         services.generate_answer_stream = stream_parts('PRIVATE_', 'ANSWER[2]')
     else:
         services.chat_general_stream = stream_parts('PRIVATE_', 'ANSWER')
@@ -84,10 +85,11 @@ def test_all_routes_event_order_headers_and_final_contract(app_factory, route, c
 
 
 @pytest.mark.parametrize('allow,debug', [(False, False), (False, True), (True, False), (True, True)])
-def test_stream_trace_gate_and_unreferenced_highest_score(app_factory, allow, debug):
+def test_stream_trace_gate_and_unreferenced_answer_overlap(app_factory, allow, debug):
     app = app_factory(allow_trace=allow, speculative_retrieval=False)
     services = app.state.services.knowledge()
-    services.retrieve.return_value = [document(1, .4), document(2, .95)]
+    services.retrieve.return_value = [document(1, .95), document(2, .4).model_copy(
+        update={'content': '有明确说明。'})]
     services.generate_answer_stream = stream_parts('有明确说明。')
     with TestClient(app) as api:
         result = events(api.post('/api/v1/chat/stream', json={'session_id': 's', 'message': '参数', 'debug': debug}).text)[-1][1]

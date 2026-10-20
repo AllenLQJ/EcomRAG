@@ -161,7 +161,6 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
   const scroll = useAutoScroll(`${sessionId}-${messages.length}-${pending}-${progress?.text.length || 0}-${progress?.stage || ""}`);
   const name = storeName();
   const supportUrl = humanSupportUrl();
-  const shopAction = <ShopInfoButton onClick={() => setShopOpen(true)} />;
 
   useEffect(() => { document.title = `${name} · 客服中心`; }, [name]);
   useEffect(() => {
@@ -227,8 +226,8 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
     {playWelcome && <WelcomeSplash />}
     {desktop && <ResizableSidebar><ConversationHistory {...historyProps} /></ResizableSidebar>}
     <div className="flex min-w-0 flex-1 flex-col">
-    <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(true)} historyButton={historyButton} name={name} supportUrl={supportUrl} onReset={newConversation}
-      traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} shopAction={!mobile ? shopAction : undefined} />
+    <Header desktop={desktop} historyOpen={historyOpen} onHistory={() => setHistoryOpen(open => !open)} historyButton={historyButton} name={name} supportUrl={supportUrl} onReset={newConversation}
+      traceVisible={traceVisible} traceEnabled={showTrace} onToggleTrace={() => setTraceEnabled(enabled => !enabled)} />
     <main ref={chatArea} aria-hidden={historyOpen || undefined} className="flex min-h-0 flex-1 flex-col" aria-label="客服对话">
       {mobile && messages.length === 0 && welcome}
       <div ref={scroll.scrollRef} onScroll={scroll.onScroll} role="log" aria-label="聊天消息" aria-live="polite" aria-busy={pending} aria-relevant="additions" tabIndex={0}
@@ -250,7 +249,8 @@ export function ChatHome({ identity = guestIdentity(), onQuotaRefresh, playWelco
       {exhausted && <div role="status" className="mx-auto w-full max-w-chat px-4 py-2 text-sm text-fallback-text">
         {(quotaScope || identity.quota.role) === 'guest' ? <>访客今日次数已用完，登录后每天可提问 50 次。<button type="button" className="secondary-button ml-2" onClick={onLogin}>登录/注册</button></> : '今日提问次数已用完，请明天再试。'}
       </div>}
-      <Composer ref={input} blocked={exhausted || loggingOut} value={draft} onChange={setDraft} onSend={submit} pending={pending || Boolean(loggingOut)} shopAction={mobile ? shopAction : undefined} />
+      <Composer ref={input} blocked={exhausted || loggingOut} value={draft} onChange={setDraft} onSend={submit} pending={pending || Boolean(loggingOut)} />
+      <ShopInfoButton onClick={() => setShopOpen(true)} />
     </main>
     </div>
     {shopOpen && <ShopInfo onClose={() => setShopOpen(false)} onCategory={question => { setShopOpen(false); setDraft(question); window.setTimeout(() => input.current?.focus(), 0); }} />}

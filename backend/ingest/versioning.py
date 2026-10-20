@@ -26,6 +26,25 @@ def digest(value):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
+def validate_check_thresholds(min_hit5, min_primary_hit5):
+    for name, threshold in (("min-hit5", min_hit5), ("min-primary-hit5", min_primary_hit5)):
+        if name == "min-primary-hit5" and threshold is None:
+            continue
+        if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+            raise ValueError(f"{name} 必须在 [0, 1]")
+
+
+def validate_check_report(report, min_hit5, min_primary_hit5):
+    for key, label, threshold in (("hit5", "Hit@5", min_hit5),
+                                  ("primary_hit5", "Primary Hit@5", min_primary_hit5)):
+        if threshold is None:
+            continue
+        score = report[key]
+        # NaN 与任何数比较都为假，必须先要求有限值。
+        if not math.isfinite(score) or score < threshold:
+            raise ValueError(f"{label}={score:.3f} 无效或低于阈值 {threshold}，拒绝切换")
+
+
 def manifest(chunks, document_count):
     rows = {chunk.chunk_id: digest(chunk_record(chunk)) for chunk in chunks}
     if len(rows) != len(chunks) or not chunks:
@@ -204,18 +223,18 @@ class VersionManager:
         target.flush_load()
         return validate(target, record["manifest"])
 
-    def switch(self, version, *, yes=False, check=None, min_hit5=0.9):
+    def switch(self, version, *, yes=False, check=None, min_hit5=0.9, min_primary_hit5=None):
         self.valid_version(version)
-        if not math.isfinite(min_hit5) or not 0 <= min_hit5 <= 1:
-            raise ValueError("min-hit5 必须在 [0, 1]")
+        validate_check_thresholds(min_hit5, min_primary_hit5)
+        if min_primary_hit5 is not None and check is None:
+            raise ValueError("min-primary-hit5 必须提供 check")
         if not yes:
             return {"dry_run": True, "to": version, "current": self.current()}
         self.recover()
         self.verify(version)
         if check is not None:
             report = check(version)
-            if not math.isfinite(report["hit5"]) or report["hit5"] < min_hit5:
-                raise ValueError(f"Hit@5={report['hit5']:.3f} 低于阈值 {min_hit5}，拒绝切换")
+            validate_check_report(report, min_hit5, min_primary_hit5)
         previous = self.current()
         if previous == version:
             return {"current": version, "unchanged": True}

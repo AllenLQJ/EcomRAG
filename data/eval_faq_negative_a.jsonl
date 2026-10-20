@@ -1,0 +1,13 @@
+{"question":"木澈C2保温杯保修多久啊？","expected_route":"rag","category":"A","note":"句式近「耳机保修多久」，但问的是未覆盖的具体型号保修期"}
+{"question":"听岚M1关掉降噪单次能播多久？","expected_route":"rag","category":"A","note":"近S2关降噪续航问法，但问的是FAQ未写的M1"}
+{"question":"单笔满199是不是也能免运费？","expected_route":"rag","category":"A","note":"近免运费门槛问法，但换成FAQ未承诺的199元"}
+{"question":"木澈C3标称容量是多少毫升？","expected_route":"rag","category":"A","note":"近C1容量问句，但指向另一款杯"}
+{"question":"栖光L5带不带内置电池？","expected_route":"rag","category":"A","note":"近L1有无电池问法，但问的是折叠款L5"}
+{"question":"用花呗付的退款大概几天能到？","expected_route":"rag","category":"A","note":"近退款到账时长，但限定花呗渠道FAQ未写"}
+{"question":"偏远地区发快递大概要几天到？","expected_route":"rag","category":"A","note":"近普通地区配送天数，但改问偏远快递具体时效"}
+{"question":"下单后一小时不付款会不会自动关单？","expected_route":"rag","category":"A","note":"近未付款关单时长，但数字改成FAQ未写的一小时"}
+{"question":"纸质发票一般多久能寄到？","expected_route":"rag","category":"A","note":"近发票开出时效，但问纸质邮寄FAQ未覆盖"}
+{"question":"开通付费会员一年要交多少钱？","expected_route":"rag","category":"A","note":"近会员是否收费，但问具体年费金额FAQ没有"}
+{"question":"满50减10那张券运费算不算门槛？","expected_route":"rag","category":"A","note":"近券门槛是否含运费，但绑定具体券面额"}
+{"question":"听岚K1支不支持主动降噪？","expected_route":"rag","category":"A","note":"近S1有无主动降噪，但问的是另一款耳机"}
+{"question":"预售的鸣澜音箱大概多久能发出？","expected_route":"rag","category":"A","note":"近发货多久，但限定预售音箱具体发货日"}

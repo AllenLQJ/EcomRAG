@@ -5,6 +5,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from app.contracts import AppError, TIMEOUT
+from app.citations import align_citations, best_source, source_snippet
 from app.executor import BoundedExecutor
 from app.history import normalize_history
 from app.refusals import REFUSAL, SENSITIVE_REFUSAL
@@ -309,10 +310,12 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
     if no_answer:
         logger.info("chat_fallback reason=generator_no_answer")
         return response(REFUSAL, "fallback", strategy="direct", refuse_reason="no_answer")
-    generated = validate_citations(answer, len(docs))
-    indices = generated.cited_indices or {max(range(len(docs)), key=lambda i: docs[i].score) + 1}
+    contents = [doc.content for doc in docs]
+    generated, claims = align_citations(answer, contents)
+    indices = generated.cited_indices or {best_source(generated.answer, contents)}
     sources = [Source(index=i, doc_id=doc.doc_id, title=doc.title,
-                      snippet=doc.snippet[:60], score=doc.score)
+                      snippet=source_snippet(doc.content, "\n".join(claims.get(i, [generated.answer])),
+                                             rerank_query), score=doc.score)
                for i, doc in enumerate(docs, 1)
                if i in indices]
     result = response(generated.answer, "rag", sources, "direct")
@@ -326,4 +329,7 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                     result.products = await call(cards, cited_docs, generated.answer, executor=executor) or None
             except Exception as exc:
                 log_product_cards_unavailable(exc, "product_cards", log=logger)
+        else:
+            logger.info("product_cards_skipped reason=request_budget_exhausted",
+                        extra={"reason": "request_budget_exhausted", "stage": "product_cards"})
     return result

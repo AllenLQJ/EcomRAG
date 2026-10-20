@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { mockMobile } from '../test/media';
 import { Composer } from './Composer';
-import { ShopInfoButton } from './ShopInfoButton';
 
 function mount(initial = '', pending = false) {
   const onSend = vi.fn();
@@ -107,28 +106,6 @@ describe('Composer', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(group).not.toBeVisible();
   });
-  it('places the mobile shop action on the right of the disclosure and hides it only while expanded', async () => {
-    mockMobile();
-    const openShop = vi.fn(); const onSend = vi.fn();
-    render(<Composer value="" onChange={vi.fn()} onSend={onSend} pending={false} shopAction={<ShopInfoButton onClick={openShop} />} />);
-    const toggle = screen.getByRole('button', { name: '常见问题' });
-    const action = screen.getByRole('button', { name: '店铺信息' });
-    expect(action.parentElement).toBe(toggle.parentElement);
-    expect(action.parentElement).toHaveClass('composer-actions', 'flex', 'justify-between', 'sm:hidden');
-    expect(toggle.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(action); expect(openShop).toHaveBeenCalledOnce();
-    expect(onSend).not.toHaveBeenCalled();
-    await user.click(toggle);
-    expect(screen.queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
-    await user.click(toggle);
-    expect(screen.getByRole('button', { name: '店铺信息' })).toBeInTheDocument();
-    await user.click(toggle);
-    await user.click(screen.getByRole('button', { name: '运费怎么算' }));
-    expect(screen.getByRole('button', { name: '店铺信息' })).toBeInTheDocument();
-    expect(onSend).toHaveBeenCalledOnce();
-  });
-
   it('keeps all desktop quick questions and the original placeholder across breakpoint changes', () => {
     const setMobile = mockMobile(false);
     const { input } = mount();

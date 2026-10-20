@@ -13,7 +13,8 @@ class GeneratedAnswer:
 CODE = re.compile(
     r"^ {0,3}(?P<fence>`{3,})[^\n]*\n.*?(?:^ {0,3}(?P=fence)`*[ \t]*(?:\n|$)|\Z)"
     r"|(?P<ticks>`+)(?!`).*?(?P=ticks)(?!`)", re.MULTILINE | re.DOTALL)
-CITATION = re.compile(r"\[([0-9０-９]+)\]|【([0-9０-９]+)】|［([0-9０-９]+)］")
+_INDICES = r"[0-9０-９]+(?:[ \t]*[,，、][ \t]*[0-9０-９]+)*"
+CITATION = re.compile(rf"\[({_INDICES})\]|【({_INDICES})】|［({_INDICES})］")
 DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 NO_ANSWER = re.compile(r"N\s*O\s*_\s*A\s*N\s*S\s*W\s*E\s*R", re.IGNORECASE)
 WIDTH_FOLD = {char: char - 0xFEE0 for char in range(0xFF01, 0xFF5F)}
@@ -62,14 +63,17 @@ def validate_citations(answer, count):
 
     def replace(match):
         # 避免不可信输出中的超长整数字符串触发 int 限制。
-        digits = next(group for group in match.groups() if group is not None).translate(DIGITS).lstrip("0") or "0"
-        if len(digits) > len(str(count)):
-            return ""
-        index = int(digits)
-        if 1 <= index <= count:
-            cited.add(index)
-            return f"[{index}]"
-        return ""
+        group = next(group for group in match.groups() if group is not None)
+        markers = []
+        for value in re.split(r"[ \t]*[,，、][ \t]*", group):
+            digits = value.translate(DIGITS).lstrip("0") or "0"
+            if len(digits) > len(str(count)):
+                continue
+            index = int(digits)
+            if 1 <= index <= count:
+                cited.add(index)
+                markers.append(f"[{index}]")
+        return "".join(markers)
 
     parts, end = [], 0
     for code in CODE.finditer(answer):

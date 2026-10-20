@@ -8,7 +8,9 @@ from app.llm.generator import clean_generated_answer
 
 class AnswerStreamTests(unittest.TestCase):
     def test_no_answer_marker_is_buffered_for_every_split(self):
-        for text in ('NO_ANSWER', ' n o _ a n s w e r ', '**NO_ANSWER**[1]。', 'ＮＯ＿ＡＮＳＷＥＲ', 'ｎ ｏ ＿ ａ ｎ ｓ ｗ ｅ ｒ'):
+        for text in ('NO_ANSWER', ' n o _ a n s w e r ', '**NO_ANSWER**[1]。',
+                     '**NO_ANSWER**[1, 2]。', 'NO_ANSWER【１，２】',
+                     'ＮＯ＿ＡＮＳＷＥＲ', 'ｎ ｏ ＿ ａ ｎ ｓ ｗ ｅ ｒ'):
             for split in range(len(text) + 1):
                 buffer = AnswerBuffer()
                 parts = [buffer.feed(text[:split]), buffer.feed(text[split:]), buffer.feed('', final=True)]

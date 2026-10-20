@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObjec
 import type { Conversation } from '../lib/storage';
 import { groupConversations, relativeTime } from '../lib/conversationTime';
 import { useConversationClock } from '../hooks/useConversationClock';
+import { HistoryIcon } from './Brand';
 
 interface Props {
   conversations: Conversation[];
@@ -31,7 +32,7 @@ export function ConversationHistory({ conversations, currentId, onNew, onSelect,
       setConfirmation(null);
       focusNew();
     };
-    // Capture before the drawer's Escape handler, including when focus is on its close button.
+    // Capture before the drawer's Escape handler, including focus on its sidebar toggle.
     document.addEventListener('keydown', cancel, true);
     return () => document.removeEventListener('keydown', cancel, true);
   }, [confirmation, focusNew]);
@@ -118,8 +119,9 @@ export function HistoryDrawer({ onClose, trigger, ...props }: DrawerProps) {
   return <div className="fixed inset-0 z-50 flex">
     <button type="button" aria-label="关闭历史遮罩" tabIndex={-1} onClick={onClose} className="absolute inset-0 bg-ink/30" />
     <div ref={dialog} id="history-drawer" role="dialog" aria-modal="true" aria-label="历史对话抽屉"
-      className="relative flex h-full w-[280px] max-w-[85vw] flex-col border-r border-line bg-canvas">
-      <button type="button" aria-label="关闭历史" onClick={onClose} className="mx-4 mt-2 min-h-11 shrink-0 self-end rounded-card px-3 text-sm text-muted">关闭</button>
+      className="relative flex h-full w-[280px] max-w-[85vw] flex-col border-r border-line bg-canvas pt-14 sm:pt-16">
+      <button type="button" aria-label="历史" aria-expanded="true" aria-controls="history-drawer" onClick={onClose}
+        className="history-toggle absolute left-4 top-1.5 sm:left-6 sm:top-2.5"><HistoryIcon /></button>
       <div className="min-h-0 flex-1"><ConversationHistory {...props} /></div>
     </div>
   </div>;

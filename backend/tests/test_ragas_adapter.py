@@ -44,7 +44,8 @@ def test_collector_matches_generator_order_and_preserves_default_response(stream
     history = [{"role": "user", "content": "历史问题"}]
     request = ChatRequest(session_id="fixed", message="问题", history=history)
     fake = FakeServices().knowledge()
-    docs = [document(score=0.8), document(2, 0.01), document(3, 0.7)]
+    docs = [document(i, score).model_copy(update={"content": "父块完整内容。答案。"})
+            for i, score in [(1, 0.8), (2, 0.01), (3, 0.7)]]
     fake.retrieve.return_value = docs
     fake.generate_answer.return_value = GeneratedAnswer("答案[2]", {2})
     collected, deltas = [], []
@@ -65,8 +66,8 @@ def test_collector_matches_generator_order_and_preserves_default_response(stream
     assert event["intent"] == "knowledge" and event["refuse_reason"] is None
     assert event["history"] == history and event["answer"] == "答案[2]" and event["route"] == "rag"
     assert event["contexts"] == [
-        {"index": 1, "doc_id": "d1", "title": "资料1", "score": 0.8, "text": "[1] 资料1\n父块完整内容"},
-        {"index": 2, "doc_id": "d3", "title": "资料3", "score": 0.7, "text": "[2] 资料3\n父块完整内容"}]
+        {"index": 1, "doc_id": "d1", "title": "资料1", "score": 0.8, "text": f"[1] 资料1\n{docs[0].content}"},
+        {"index": 2, "doc_id": "d3", "title": "资料3", "score": 0.7, "text": f"[2] 资料3\n{docs[2].content}"}]
     assert event["sources"] == [{"index": 2, "doc_id": "d3", "title": "资料3", "score": 0.7}]
     prompt = Generator(None, "fake")._rag_messages("问题", [docs[0], docs[2]], history)
     assert block("资料", "\n\n".join(context["text"] for context in event["contexts"])) in prompt[1]["content"]
@@ -126,11 +127,14 @@ def test_sensitive_metadata_and_legacy_unknown_are_distinguished():
         assert not_applicable_category({**legacy, **fields}) == "sensitive"
 
 
-def test_default_does_not_read_context_content():
+def test_default_reads_body_for_alignment_without_exporting_collected_contexts():
+    reads = []
+
     class GuardDocument(SimpleNamespace):
         @property
         def content(self):
-            raise AssertionError("默认路径不得为采集读取全文")
+            reads.append(True)
+            return "父块完整内容。说明。"
 
     fake = FakeServices().knowledge()
     fake.retrieve.return_value = [GuardDocument(doc_id="d", title="标题", snippet="摘要", score=0.8,
@@ -138,6 +142,9 @@ def test_default_does_not_read_context_content():
     result = asyncio.run(run_chat(ChatRequest(session_id="s", message="问题"),
                                  settings=Settings(_env_file=None, speculative_retrieval=False), services=fake))
     assert result.route == "rag"
+    assert reads  # 引用校验和展示片段现在都必须使用模型读取的正文。
+    assert result.sources[0].snippet == "说明。"
+    assert "contexts" not in result.model_dump()
 
 
 @pytest.mark.parametrize("endpoint", ["/api/v1/chat", "/api/v1/chat/stream"])

@@ -14,11 +14,29 @@
 }
 
 @layer components {
-  /* Keep the information panel light and readable in either system theme. */
-  .product-card-info, .sources-panel { @apply bg-track text-ink; }
-  .product-card-toggle:focus-visible, .sources-toggle:focus-visible { outline-offset: -2px; }
+  /* Sources, product details and trace share the compact white disclosure style. */
+  .disclosure-panel { @apply rounded-card border border-line bg-card text-ink; }
+  .disclosure-trigger {
+    @apply flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md py-3 text-left text-[13px] font-medium;
+    list-style: none;
+  }
+  .disclosure-trigger::-webkit-details-marker { display: none; }
+  .disclosure-trigger:focus-visible { outline-offset: -2px; }
+  .disclosure-marker {
+    @apply inline-block shrink-0 bg-current;
+    width: .65em;
+    height: .75em;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+  }
+  [aria-expanded='true'] > .disclosure-marker,
+  details[open] > .disclosure-trigger > .disclosure-marker { transform: rotate(90deg); }
   .app-shell { height: 100vh; height: 100dvh; min-height: 320px; }
-  .composer-footer { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .composer-footer {
+    /* A 44px floating action and a 16px gap get their own space below the form. */
+    --shop-products-height: 2.75rem;
+    --shop-products-gap: 1rem;
+    padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + var(--shop-products-height) + var(--shop-products-gap));
+  }
   .entry-page {
     @apply flex flex-col items-center justify-center bg-canvas px-4 py-10 font-sans text-ink;
     min-height: 100vh;
@@ -49,10 +67,17 @@
   .password-rule-unmet { @apply font-medium text-fallback-text; }
   .password-rule-satisfied { @apply text-cache-text; }
   .chat-header { --header-control-size: 2.75rem; }
-  .shop-info-button { @apply inline-flex shrink-0 items-center justify-center rounded-card border border-outline bg-card px-3 text-base font-semibold text-ink hover:border-ink sm:px-4 sm:text-lg; min-height: var(--header-control-size, 2.75rem); }
-  @media (prefers-color-scheme: dark) {
-    .shop-info-button { @apply bg-ink text-canvas border-muted; }
-    .shop-info-button:hover { @apply border-canvas; }
+  .history-toggle { @apply flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-card text-muted hover:text-ink; }
+  .shop-products-button {
+    @apply fixed z-30 inline-flex min-h-11 shrink-0 items-center justify-center gap-2.5 whitespace-nowrap rounded-full border-[1.5px] border-ink bg-card px-4 py-2 font-serif text-[17px] font-semibold leading-tight text-ink;
+    right: max(24px, calc(env(safe-area-inset-right) + 16px));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    letter-spacing: 3px;
+    transition: transform 150ms ease, background-color 150ms ease, color 150ms ease;
+  }
+  .shop-products-dot { @apply h-[7px] w-[7px] shrink-0 rounded-full bg-spark; }
+  @media (hover: hover) {
+    .shop-products-button:hover { @apply bg-ink text-card; transform: translateY(-2px); }
   }
   .entry-footer { @apply mt-4 text-center text-xs leading-relaxed text-general-dot; }
   @media (max-width: 639px) {

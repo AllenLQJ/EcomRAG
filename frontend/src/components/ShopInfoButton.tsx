@@ -1,6 +1,6 @@
-/** One shop action for the header and the mobile composer disclosure row. */
+/** One floating shop entry, outside the composer controls at every viewport width. */
 export function ShopInfoButton({ onClick }: { onClick: () => void }) {
-  return <button type="button" className="shop-info-button" onClick={onClick} aria-haspopup="dialog">
-    店铺信息
+  return <button type="button" className="shop-products-button" onClick={onClick} aria-haspopup="dialog">
+    <span>店铺商品</span><span aria-hidden="true" className="shop-products-dot" />
   </button>;
 }

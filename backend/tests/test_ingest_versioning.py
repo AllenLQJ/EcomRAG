@@ -454,6 +454,69 @@ class VersionTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIsNone(self.manager.current())
 
+    def test_cli_primary_gate_rejects_low_or_nonfinite_scores_before_switch(self):
+        self.build()
+        self.manager.switch("kb_chunks_v1", yes=True)
+        self.build("kb_chunks_v2")
+        events = list(self.client.events)
+        for yes in ([], ["--yes"]):
+            for primary in (0.0, 0.89, float("nan"), float("inf")):
+                with self.subTest(yes=yes, primary=primary), \
+                        patch("ingest.kb_common.smoke_check", return_value={"hit5": 1.0, "primary_hit5": primary}), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+                    result = switch_main(["--to", "kb_chunks_v2", "--check", "--min-primary-hit5", "0.9",
+                                          "--state-dir", self.tmp.name, *yes],
+                                         settings=SimpleNamespace(), store=self.store)
+                self.assertEqual(result, 1)
+                self.assertIn("Primary Hit@5", errors.getvalue())
+                self.assertEqual(self.manager.current(), "kb_chunks_v1")
+        self.assertEqual([event for event in self.client.events if "alias" in event[0]],
+                         [event for event in events if "alias" in event[0]])
+
+    def test_cli_primary_gate_boundary_and_default_compatibility(self):
+        for index, (threshold, primary) in enumerate(((None, 0.0), ("0.9", 0.9), ("0", 0.0))):
+            for yes in ([], ["--yes"]):
+                with self.subTest(threshold=threshold, yes=yes):
+                    version = f"kb_chunks_v{index}{int(bool(yes))}"
+                    self.build(version)
+                    previous = self.manager.current()
+                    args = ["--to", version, "--check", "--state-dir", self.tmp.name, *yes]
+                    if threshold is not None:
+                        args.extend(["--min-primary-hit5", threshold])
+                    output = io.StringIO()
+                    with patch("ingest.kb_common.smoke_check", return_value={"hit5": 1.0, "primary_hit5": primary}), \
+                            contextlib.redirect_stdout(output):
+                        result = switch_main(args, settings=SimpleNamespace(), store=self.store)
+                    self.assertEqual(result, 0)
+                    self.assertEqual(self.manager.current(), version if yes else previous)
+                    self.assertEqual(json.loads(output.getvalue().splitlines()[0])["check"]["primary_hit5"], primary)
+
+    def test_cli_primary_gate_requires_check_and_valid_threshold(self):
+        for yes in ([], ["--yes"]):
+            for threshold in ("-0.1", "1.1", "nan", "inf", "-inf"):
+                with self.subTest(threshold=threshold, yes=yes), \
+                        patch("ingest.kb_common.smoke_check") as check, \
+                        contextlib.redirect_stderr(io.StringIO()) as errors:
+                    result = switch_main(["--to", "kb_chunks_v1", "--check",
+                                          "--min-primary-hit5=" + threshold, "--state-dir", self.tmp.name, *yes],
+                                         settings=SimpleNamespace(), store=self.store)
+                self.assertEqual(result, 1)
+                self.assertIn("min-primary-hit5", errors.getvalue())
+                check.assert_not_called()
+            with contextlib.redirect_stderr(io.StringIO()) as errors:
+                result = switch_main(["--to", "kb_chunks_v1", "--min-primary-hit5", "0.9",
+                                      "--state-dir", self.tmp.name, *yes], settings=SimpleNamespace(), store=self.store)
+            self.assertEqual(result, 1)
+            self.assertIn("--check", errors.getvalue())
+        self.assertIsNone(self.manager.current())
+
+    def test_primary_gate_does_not_bypass_any_hit_gate(self):
+        self.build()
+        with self.assertRaisesRegex(ValueError, "Hit@5"):
+            self.manager.switch("kb_chunks_v1", yes=True, min_primary_hit5=0.9,
+                                check=lambda _: {"hit5": 0.5, "primary_hit5": 1.0})
+        self.assertIsNone(self.manager.current())
+
     def test_cli_check_yes_keeps_shared_connection_for_current_and_alias(self):
         self.build()
         self.build("kb_chunks_v2")

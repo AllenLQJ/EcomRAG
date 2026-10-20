@@ -91,7 +91,10 @@ describe('history drawer', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await user.click(trigger);
     const dialog = screen.getByRole('dialog', { name: '历史对话抽屉' });
-    const close = within(dialog).getByRole('button', { name: '关闭历史' });
+    const close = within(dialog).getByRole('button', { name: '历史' });
+    expect(within(dialog).queryByRole('button', { name: '关闭历史' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('关闭')).not.toBeInTheDocument();
+    expect(close).toHaveClass('history-toggle', 'absolute', 'left-4', 'top-1.5');
     expect(close).toHaveFocus();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(document.body.style.overflow).toBe('hidden');
@@ -107,7 +110,7 @@ describe('history drawer', () => {
     await user.click(screen.getByRole('button', { name: '关闭历史遮罩' }));
     expect(trigger).toHaveFocus();
     await user.click(trigger);
-    await user.click(screen.getByRole('button', { name: '关闭历史' }));
+    await user.click(screen.getByRole('button', { name: '历史' }));
     expect(trigger).toHaveFocus();
     await user.click(trigger);
     view.unmount();
@@ -163,21 +166,25 @@ describe('history drawer', () => {
 });
 
 describe('drawer accessibility during confirmation', () => {
-  it('leaves the history trigger outside hidden/inert ancestors and only hides main content', () => {
+  it('keeps the active sidebar toggle inside the dialog and restores the original trigger', () => {
     mockMobile(); seed();
     render(<App />);
     const trigger = screen.getByRole('button', { name: '历史' });
     fireEvent.click(trigger);
-    expect(screen.getByRole('button', { name: '历史' })).toBe(trigger);
-    expect(trigger.closest('[aria-hidden="true"], [inert]')).toBeNull();
+    const activeToggle = screen.getByRole('button', { name: '历史' });
+    expect(activeToggle).not.toBe(trigger);
+    expect(activeToggle.closest('[role="dialog"]')).toBe(screen.getByRole('dialog'));
+    expect(activeToggle.closest('[aria-hidden="true"], [inert]')).toBeNull();
+    expect(trigger).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('banner')).not.toHaveAttribute('aria-hidden');
     const main = screen.getByRole('main', { hidden: true });
     expect(main).toHaveAttribute('aria-hidden', 'true');
     expect(main).toHaveAttribute('inert');
-    fireEvent.click(screen.getByRole('button', { name: '关闭历史' }));
+    fireEvent.click(activeToggle);
     expect(main).not.toHaveAttribute('aria-hidden');
     expect(main).not.toHaveAttribute('inert');
     expect(trigger).toHaveFocus();
+    expect(trigger).not.toHaveAttribute('aria-hidden');
   });
   it('uses the first Escape to cancel deletion and the second to close the drawer', async () => {
     mockMobile(); seed();
@@ -189,7 +196,7 @@ describe('drawer accessibility during confirmation', () => {
     await user.click(within(nav).getByRole('button', { name: '删除对话：最新' }));
     expect(screen.getByRole('group', { name: '确认删除：最新' })).toBeInTheDocument();
     // Escape must cancel even with focus outside the navigation subtree.
-    screen.getByRole('button', { name: '关闭历史' }).focus();
+    screen.getByRole('button', { name: '历史' }).focus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('group')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog')).toBeInTheDocument();

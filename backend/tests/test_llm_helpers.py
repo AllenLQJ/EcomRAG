@@ -168,7 +168,7 @@ class LlmHelperTests(unittest.TestCase):
         for term in ("配送范围", "能否寄到某地", "奇怪", "sensitive > knowledge > general"):
             self.assertIn(term, router)
         examples = [line[2:].strip() for line in router.splitlines() if line.startswith("- ")]
-        self.assertEqual(len(examples), 12)
+        self.assertEqual(len(examples), 14)
         rows = [json.loads(line) for line in (Path(__file__).resolve().parents[2] / "data/eval.jsonl").read_text().splitlines()]
         self.assertTrue(set(examples).isdisjoint(row["question"] for row in rows))
         general = load("general")

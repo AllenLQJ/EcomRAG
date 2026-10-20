@@ -4,8 +4,8 @@ import { traceStageName, traceSummary } from '../lib/format';
 export function Trace({ trace }: { trace: TraceItem[] | null }) {
   if (!trace?.length) return null;
   const max = Math.max(1, ...trace.map(item => item.ms));
-  return <details className="rounded-card border border-line bg-card px-4">
-    <summary className="min-h-11 cursor-pointer rounded-md py-3 text-[13px] font-medium">链路 · {trace.length} 个阶段</summary>
+  return <details className="disclosure-panel px-4">
+    <summary className="disclosure-trigger"><span aria-hidden="true" className="disclosure-marker" />链路 · {trace.length} 个阶段</summary>
     <ol className="space-y-3 pb-4" aria-label="链路阶段">
       {trace.map((item, index) => <li key={`${item.stage}-${index}`} className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[80px_minmax(0,1fr)_72px]">
         <span className="break-all font-mono">{traceStageName(item.stage)}</span>

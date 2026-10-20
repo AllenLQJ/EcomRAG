@@ -1,4 +1,4 @@
-import { forwardRef, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useId, useLayoutEffect, useRef, useState } from 'react';
 import { characterCount } from '../lib/format';
 import { Chevron, SendIcon } from './Brand';
 import { useMobile } from '../hooks/useMobile';
@@ -11,11 +11,10 @@ interface Props {
   onSend: (value: string) => void;
   pending: boolean;
   blocked?: boolean;
-  shopAction?: ReactNode;
 }
 
 export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer(
-  { value, onChange, onSend, pending, blocked = false, shopAction }, forwardedRef,
+  { value, onChange, onSend, pending, blocked = false }, forwardedRef,
 ) {
   const mobile = useMobile();
   const [quickOpen, setQuickOpen] = useState(false);
@@ -44,7 +43,6 @@ export const Composer = forwardRef<HTMLTextAreaElement, Props>(function Composer
           onClick={() => setQuickOpen(open => !open)} className="inline-flex min-h-11 items-center gap-2 rounded-md text-[13px] text-muted disabled:opacity-50">
           常见问题<Chevron open={quickOpen} />
         </button>
-        {!quickOpen && shopAction}
       </div>}
       <div id={`${id}-quick`} aria-label="快捷问题" hidden={mobile && !quickOpen}>
         <div className="-mx-1 mb-2 flex flex-wrap gap-2 px-1">

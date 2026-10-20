@@ -61,7 +61,7 @@ class StoreDataTests(unittest.TestCase):
 
     def test_evaluation_sets_do_not_use_fiction_labels(self):
         paths = sorted((ROOT / "data").glob("*.jsonl"))
-        self.assertEqual([path.name for path in paths], ["eval.jsonl", "eval_colloquial.jsonl", "eval_multiturn.jsonl", "eval_ragas_gold.jsonl"])
+        self.assertEqual([path.name for path in paths], ["eval.jsonl", "eval_colloquial.jsonl", "eval_faq_negative_a.jsonl", "eval_faq_negative_b.jsonl", "eval_faq_negative_c.jsonl", "eval_multiturn.jsonl", "eval_ragas_gold.jsonl"])
         for path in paths:
             with self.subTest(path=path.name):
                 text = path.read_text(encoding="utf-8")

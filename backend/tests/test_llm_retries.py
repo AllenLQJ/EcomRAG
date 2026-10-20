@@ -258,7 +258,8 @@ def test_5xx_and_network_retries_have_independent_counts():
     assert [call.args[0] for call in sleep.await_args_list] == [0.5, 0.5]
 
 
-def test_router_and_generator_both_retry_timeouts():
+@pytest.mark.parametrize("supported", [True, False])
+def test_router_and_generator_both_retry_timeouts(supported):
     from app.llm.router import Router
     from app.llm.generator import Generator
     calls = []
@@ -273,12 +274,17 @@ def test_router_and_generator_both_retry_timeouts():
         configured = settings(speculative_retrieval=False)
         client = LLMClient(configured, transport=httpx.MockTransport(handler), sleep=AsyncMock())
         services = FakeServices()
+        if supported:
+            # 此测试关注重试；编号必须由正文支持，不能依赖旧的仅校验范围行为。
+            services.retrieve.return_value = [services.retrieve.return_value[0].model_copy(update={"content": ANSWER})]
         services.route = Router(client, "router").route
         services.generate_answer = Generator(client, "generate").generate_answer
         try:
             result = await run_chat(ChatRequest(session_id="two-stages", message=QUESTION),
                                     settings=configured, services=services)
-            assert result.route == "rag" and result.answer == ANSWER + "[1]"
+            assert result.route == "rag" and result.answer == ANSWER + ("[1]" if supported else "")
+            # 不相关正文会剔除编号；来源列表仍按回答重叠度回退，但不向正文强行补号。
+            assert [source.index for source in result.sources] == [1]
         finally:
             await client.aclose()
     asyncio.run(run())

@@ -12,8 +12,11 @@ describe('source disclosure', () => {
     render(<Sources sources={sources} selection={null} />);
     const section = screen.getByRole('region', { name: '引用来源' });
     const toggle = within(section).getByRole('button', { name: '引用来源（2）' });
-    expect(section).toHaveClass('sources-panel');
-    expect(toggle).toHaveClass('sources-toggle', 'min-h-11', 'w-full', 'text-left');
+    expect(section).toHaveClass('disclosure-panel', 'px-4');
+    expect(toggle).toHaveClass('disclosure-trigger');
+    expect(toggle.firstElementChild).toHaveClass('disclosure-marker');
+    expect(toggle.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+    expect(toggle.querySelector('svg')).toBeNull();
     expect(toggle).toHaveAttribute('type', 'button');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toHaveAttribute('hidden');
@@ -32,11 +35,9 @@ describe('source disclosure', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getAllByRole('article')).toHaveLength(2);
     expect(screen.getByText('摘要 1')).toBeVisible();
-    expect(toggle.querySelector('svg')).toHaveClass('rotate-180');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText('摘要 1')).not.toBeVisible();
-    expect(toggle.querySelector('svg')).not.toHaveClass('rotate-180');
   });
 
   it.each(['{Enter}', ' '])('supports Tab focus and native activation with %j', async key => {
@@ -92,6 +93,16 @@ describe('source disclosure', () => {
 });
 
 describe('source card summaries', () => {
+  it('shows the full parent passage including a fact beyond the old 60-character prefix', async () => {
+    const snippet = '这段文字说明申请退款时需要先核对订单信息和原支付渠道，并保留完整的申请记录，以便客服及时处理相关问题，具体到账时间说明如下：退款会在三个工作日内原路到账。';
+    render(<Sources sources={[{ index: 2, doc_id: 'refund', title: '退款说明', snippet, score: .9 }]} selection={null} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: '引用来源（1）' }));
+    const paragraph = screen.getByText(snippet);
+    expect(paragraph).toBeVisible();
+    expect(paragraph).not.toHaveClass('line-clamp-3');
+    expect(paragraph).toHaveTextContent('退款会在三个工作日内原路到账。');
+  });
+
   it('cleans Markdown and duplicate titles for display without mutating API data', async () => {
     const source: Source = Object.freeze({ index: 1, doc_id: 'returns', title: '灵码退货条件',
       snippet: '# 灵码退货条件 | 退货申请\n## 屏幕划痕与外观瑕疵的退货条件\n> - 上传照片。  ... ……', score: .9 });

@@ -10,7 +10,11 @@ export function cleanSourceSnippet(title: string, snippet: string): string {
   }).filter(line => line && !/^(?:[-*_]\s*){3,}$/.test(line));
 
   const heading = normalizeTitle(title);
-  while (heading && lines.length && normalizeTitle(lines[0]).startsWith(heading)) lines.shift();
+  while (heading && lines.length) {
+    const first = normalizeTitle(lines[0]);
+    if (first !== heading && !(lines.length > 1 && first.startsWith(`${heading}|`))) break;
+    lines.shift();
+  }
   const text = lines.join(' ').replace(/\s+/g, ' ')
     .replace(/(?:\.{3,}|…+)(?:\s*(?:\.{3,}|…+))*/g, '…').trim();
   return text && !/^[.…\s]+$/.test(text) ? text : '暂无摘要，请结合回答中的引用查看相关说明。';

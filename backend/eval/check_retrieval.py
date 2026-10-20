@@ -5,11 +5,10 @@ import argparse
 import asyncio
 import inspect
 import json
-from pathlib import Path
 from time import perf_counter
 
 from ingest.loaders import resolve_data_path
-from ingest.eval_expectations import expected_documents
+from ingest.eval_expectations import expected_documents, matches_expected_document
 from app.retrieval.rewrite import merge_reranked, needs_rewrite_rerank
 
 
@@ -55,7 +54,7 @@ async def evaluate_async(rows, retriever, *, refuse_threshold: float | None) -> 
             rerank_ms = None
         if route == "rag":
             match = next(((rank, doc) for rank, doc in enumerate(docs, 1)
-                          if Path(doc.source).name in expected), None)
+                          if matches_expected_document(doc, expected)), None)
             rag.append({
                 "question": question, "expected_doc": row["expected_doc"],
                 "hit_at_5": match is not None,

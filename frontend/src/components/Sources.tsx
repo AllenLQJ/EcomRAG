@@ -29,25 +29,22 @@ export function Sources({ sources, selection }: Props) {
   }, [open, highlighted, selection]);
 
   if (sources.length === 0) return null;
-  return <section aria-label="引用来源" className="sources-panel min-w-0 rounded-card border border-line p-3 dark:border-muted">
+  return <section aria-label="引用来源" className="disclosure-panel min-w-0 px-4">
     <h3>
       <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}
-        className="sources-toggle flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold">
+        className="disclosure-trigger">
+        <span aria-hidden="true" className="disclosure-marker" />
         <span className="min-w-0 flex-1 truncate">引用来源（{sources.length}）</span>
-        <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-          className={`h-4 w-4 shrink-0 ${open ? 'rotate-180' : ''}`}>
-          <path d="m4 6 4 4 4-4" />
-        </svg>
       </button>
     </h3>
-    <div id={id} hidden={!open} className="pt-2">
+    <div id={id} hidden={!open} className="pb-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {sources.map((source, position) => <article key={`${source.index}-${position}`} tabIndex={-1}
           aria-label={`引用 ${source.index}：${source.title}`}
           ref={node => { if (node) cards.current.set(source.index, node); else cards.current.delete(source.index); }}
           className={`min-w-0 scroll-m-4 rounded-card border bg-card px-4 py-3 outline-none ${highlighted === source.index ? 'border-accent ring-2 ring-accent' : 'border-line'} focus-visible:ring-2 focus-visible:ring-accent`}>
           <h3 className="flex items-baseline gap-2 text-[13px] font-medium"><span className="shrink-0 font-mono text-xs text-accent">[{source.index}]</span>{source.title}</h3>
-          <p className="mt-1.5 line-clamp-3 break-words text-sm leading-relaxed text-body-muted">{cleanSourceSnippet(source.title, source.snippet)}</p>
+          <p className="mt-1.5 break-words text-sm leading-relaxed text-body-muted">{cleanSourceSnippet(source.title, source.snippet)}</p>
         </article>)}
       </div>
     </div>

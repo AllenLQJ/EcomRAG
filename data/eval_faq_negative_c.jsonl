@@ -1,0 +1,14 @@
+{"question":"质量问题能不能不能不退货直接换同款，运费又是谁出？","expected_route":"rag","category":"C","note":"否定换货诉求+运费，单条售后 FAQ 无法同时完整覆盖"}
+{"question":"退款一直不到账是不是就没办法了，外观问题能不能不传开箱视频？","expected_route":"rag","category":"C","note":"到账异常反问+材料减免，跨退款与材料两条 FAQ"}
+{"question":"耳机还没满保修期是不是就不能修，自己拆过还能不能走保？","expected_route":"rag","category":"C","note":"保修期限误解+拆机后果，需结合保修政策而非单句 FAQ"}
+{"question":"现货能不能不能不按预售拖，发出后普通地区几天能到？","expected_route":"rag","category":"C","note":"发货时效否定+配送天数，多意图物流问"}
+{"question":"实付满不了99能不能免运费，偏远地区是不是同样不算？","expected_route":"rag","category":"C","note":"免运门槛否定+偏远例外，单条运费 FAQ 答不全"}
+{"question":"不支持货到付款的话能不能私下转账，超时关单了还能不能接着付？","expected_route":"rag","category":"C","note":"支付方式反问+关单后续，涉支付安全与订单状态"}
+{"question":"个人发票抬头填不了完整信息怎么办，开出来一般要多久？","expected_route":"rag","category":"C","note":"抬头异常+出票时效，两段发票流程"}
+{"question":"付款后地址改不了了是不是就没救，还能不能只改收件人电话？","expected_route":"rag","category":"C","note":"改址失败反问+局部字段，超出单条改址 FAQ"}
+{"question":"听岚S1没有主动降噪是不是就不能日常用，S2关降噪续航又多久？","expected_route":"rag","category":"C","note":"功能否定误解+跨型号续航，需 rag 产品资料"}
+{"question":"栖光L1没内置电池能不能应急挪着用，木澈C1容量到底够不够出门？","expected_route":"rag","category":"C","note":"台灯供电限制+保温杯选型，一句话两品类"}
+{"question":"优惠券叠不了是不是就没用了，过期了还能不能退回来接着用？","expected_route":"rag","category":"C","note":"叠加否定+过期返还，跨多条促销 FAQ"}
+{"question":"积分能不能不能不换券直接当现金抵，会员开通到底收不收费？","expected_route":"rag","category":"C","note":"积分抵现否定诉求+会员收费，双意图"}
+{"question":"游客次数用完登不了号还能不能继续问，命中常见问题还扣不扣次？","expected_route":"rag","category":"C","note":"配额用尽反问+计次规则，账号 FAQ 单条不够"}
+{"question":"非工作时间客服回不了留言怎么办，投诉建议从哪提多久能回？","expected_route":"rag","category":"C","note":"客服时段+投诉入口时效，店铺两事并问"}

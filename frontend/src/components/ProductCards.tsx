@@ -1,7 +1,13 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { ProductCard } from '../api/types';
 import { normalizeProducts } from '../api/products';
 import { productImageUrl } from '../lib/productImages';
+
+// Keep these queries aligned with the grid's sm/lg breakpoints (covered by tests).
+const TWO_COLUMNS = '(min-width: 640px)';
+const THREE_COLUMNS = '(min-width: 1024px)';
+const viewportColumns = () => window.matchMedia?.(THREE_COLUMNS).matches ? 3
+  : window.matchMedia?.(TWO_COLUMNS).matches ? 2 : 1;
 
 function ProductImage({ product }: { product: ProductCard }) {
   const src = productImageUrl(product.image_url, product.sku);
@@ -20,24 +26,24 @@ function ProductImage({ product }: { product: ProductCard }) {
   </div>;
 }
 
-function ProductCardItem({ product }: { product: ProductCard }) {
-  const [expanded, setExpanded] = useState(false);
+function ProductCardItem({ product, expanded, onToggle }: {
+  product: ProductCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const detailsId = useId();
-  return <li className="flex min-w-0 flex-col overflow-hidden rounded-card border border-line dark:border-muted">
+  return <li className="disclosure-panel flex min-w-0 flex-col overflow-hidden">
     <ProductImage product={product} />
-    <div className="product-card-info min-w-0 break-words p-3">
+    <div className="product-card-info min-w-0 break-words px-4">
       <h3>
         <button type="button" aria-expanded={expanded} aria-controls={detailsId}
-          className="product-card-toggle flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold"
-          onClick={() => setExpanded(value => !value)}>
+          className="disclosure-trigger"
+          onClick={onToggle}>
+          <span aria-hidden="true" className="disclosure-marker" />
           <span className="min-w-0 flex-1 truncate" title={product.name}>{product.name}</span>
-          <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-            className={`h-4 w-4 shrink-0 ${expanded ? 'rotate-180' : ''}`}>
-            <path d="m4 6 4 4 4-4" />
-          </svg>
         </button>
       </h3>
-      <div id={detailsId} hidden={!expanded} className="space-y-2 pt-2">
+      <div id={detailsId} hidden={!expanded} className="space-y-2 pb-4">
         <p className="text-xs text-muted">{product.category}</p>
         <ul className="list-disc space-y-1 break-words pl-4 text-xs leading-relaxed text-body-muted">
           {product.highlights.map((highlight, index) => <li key={index}>{highlight}</li>)}
@@ -47,13 +53,47 @@ function ProductCardItem({ product }: { product: ProductCard }) {
   </li>;
 }
 
-export function ProductCards({ products }: { products?: ProductCard[] }) {
-  const cards = normalizeProducts(products);
-  if (!cards) return null;
+function ProductGrid({ cards }: { cards: ProductCard[] }) {
+  const [layout, setLayout] = useState(() => ({ columns: viewportColumns(), expandedRows: new Set<string>() }));
+  useEffect(() => {
+    const two = window.matchMedia?.(TWO_COLUMNS);
+    const three = window.matchMedia?.(THREE_COLUMNS);
+    const update = () => {
+      const columns = three?.matches ? 3 : two?.matches ? 2 : 1;
+      // A different column count changes row membership; start the new rows collapsed.
+      setLayout(previous => previous.columns === columns ? previous : { columns, expandedRows: new Set<string>() });
+    };
+    update();
+    two?.addEventListener('change', update);
+    three?.addEventListener('change', update);
+    return () => {
+      two?.removeEventListener('change', update);
+      three?.removeEventListener('change', update);
+    };
+  }, []);
+  const rows: ProductCard[][] = [];
+  for (let start = 0; start < cards.length; start += layout.columns) {
+    rows.push(cards.slice(start, start + layout.columns));
+  }
+  const toggleRow = (rowKey: string) => setLayout(previous => {
+    const expandedRows = new Set(previous.expandedRows);
+    if (expandedRows.has(rowKey)) expandedRows.delete(rowKey);
+    else expandedRows.add(rowKey);
+    return { ...previous, expandedRows };
+  });
   return <section aria-label="资料关联商品" className="min-w-0 max-w-full">
     <p className="mb-2 text-xs text-muted dark:text-outline">资料关联商品</p>
-    <ul className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {cards.map(product => <ProductCardItem key={product.sku} product={product} />)}
+    <ul className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {rows.flatMap(row => {
+        const rowKey = row.map(product => product.sku).join(',');
+        return row.map(product => <ProductCardItem key={product.sku} product={product}
+          expanded={layout.expandedRows.has(rowKey)} onToggle={() => toggleRow(rowKey)} />);
+      })}
     </ul>
   </section>;
+}
+
+export function ProductCards({ products }: { products?: ProductCard[] }) {
+  const cards = normalizeProducts(products);
+  return cards ? <ProductGrid cards={cards} /> : null;
 }

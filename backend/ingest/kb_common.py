@@ -7,7 +7,7 @@ import sys
 from contextlib import nullcontext
 
 from ingest.loaders import resolve_data_path
-from ingest.eval_expectations import expected_documents
+from ingest.eval_expectations import expected_documents, matches_expected_document
 
 
 def cli_settings():
@@ -50,9 +50,12 @@ def smoke_check(version, settings, *, eval_file="data/eval_ragas_gold.jsonl", li
     for row in rows:
         docs = retriever.retrieve([row["question"]], row["question"], top_k=5)[:5]
         expected = expected_documents(row["expected_doc"], required=True)
-        hit = any(doc.source in expected or doc.doc_id in expected for doc in docs)
-        results.append({"question": row["question"], "expected_doc": row["expected_doc"], "hit5": hit})
+        any_hit = any(matches_expected_document(doc, expected) for doc in docs)
+        primary_hit = any(matches_expected_document(doc, expected[:1]) for doc in docs)
+        results.append({"question": row["question"], "expected_doc": row["expected_doc"],
+                        "hit5": any_hit, "any_hit": any_hit, "primary_hit": primary_hit})
     return {"hit5": sum(row["hit5"] for row in results) / len(results),
+            "primary_hit5": sum(row["primary_hit"] for row in results) / len(results),
             "queries": len(results), "results": results}
 
 
@@ -65,6 +68,8 @@ def command(kind, argv=None, *, settings=None, store=None):
         parser.add_argument("--to", required=True)
         parser.add_argument("--check", action="store_true")
         parser.add_argument("--min-hit5", type=float, default=0.9)
+        parser.add_argument("--min-primary-hit5", type=float, default=None,
+                            help="可选主文档 Hit@5 门禁，须配合 --check")
         parser.add_argument("--eval-file", default="data/eval_ragas_gold.jsonl")
         parser.add_argument("--check-limit", type=int, default=20)
     if kind == "drop":
@@ -73,7 +78,11 @@ def command(kind, argv=None, *, settings=None, store=None):
     try:
         settings = settings or cli_settings()
         from app.retrieval.store import MilvusStore
-        from ingest.versioning import VersionManager
+        from ingest.versioning import VersionManager, validate_check_thresholds, validate_check_report
+        if kind == "switch":
+            validate_check_thresholds(args.min_hit5, args.min_primary_hit5)
+            if args.min_primary_hit5 is not None and not args.check:
+                raise ValueError("--min-primary-hit5 必须配合 --check")
         store = store or MilvusStore(settings.milvus_uri, timeout_s=settings.milvus_timeout_s)
         manager = VersionManager(store, alias=args.alias, state_dir=args.state_dir)
         with manager.locked() if args.yes else nullcontext():
@@ -93,15 +102,10 @@ def command(kind, argv=None, *, settings=None, store=None):
                         print(json.dumps({"check": report}, ensure_ascii=False), flush=True)
                         return report
                     if not args.yes:
-                        import math
-                        if not math.isfinite(args.min_hit5) or not 0 <= args.min_hit5 <= 1:
-                            raise ValueError("min-hit5 必须在 [0, 1]")
                         manager.verify(args.to)
-                        hit5 = check(args.to)["hit5"]
-                        # NaN 与任何数比较都为假，必须先要求有限值，避免把无效检查当成通过。
-                        if not math.isfinite(hit5) or hit5 < args.min_hit5:
-                            raise ValueError("Hit@5 无效或低于阈值，拒绝切换")
-                result = manager.switch(args.to, yes=args.yes, check=check, min_hit5=args.min_hit5)
+                        validate_check_report(check(args.to), args.min_hit5, args.min_primary_hit5)
+                result = manager.switch(args.to, yes=args.yes, check=check, min_hit5=args.min_hit5,
+                                        min_primary_hit5=args.min_primary_hit5)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:

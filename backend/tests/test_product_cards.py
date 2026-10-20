@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -489,11 +490,34 @@ def test_optional_card_deadline_preserves_answer(app_factory, caplog, stream):
 
 
 @pytest.mark.parametrize("stream", [False, True])
+def test_exhausted_card_budget_logs_skip_without_calling_cards(app_factory, caplog, monkeypatch, stream):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    services.product_cards = Mock(side_effect=AssertionError("补卡预算耗尽时不得查询"))
+    # 只控制补卡处看到的预算，不触发整个请求的真实超时。
+    monkeypatch.setattr("app.pipeline.deadline", SimpleNamespace(get=lambda: 0))
+    with caplog.at_level(logging.INFO, logger="app.pipeline"), TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="no-card-budget", message="PRIVATE_BUDGET_QUESTION"))
+    assert response.status_code == 200
+    result = events(response.text)[-1][1] if stream else response.json()
+    assert result["answer"] == "说明[1]" and result["route"] == "rag" and "products" not in result
+    services.product_cards.assert_not_called()
+    skips = [record for record in caplog.records if record.getMessage().startswith("product_cards_skipped")]
+    assert len(skips) == 1
+    assert skips[0].levelno == logging.INFO
+    assert skips[0].reason == "request_budget_exhausted" and skips[0].stage == "product_cards"
+    assert "reason=request_budget_exhausted" in skips[0].getMessage()
+    assert "PRIVATE_BUDGET_QUESTION" not in repr(skips[0].__dict__)
+
+
+@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("answer,expected", [("回答[2]", "item-2"), ("回答", "item-1")])
 def test_http_and_sse_use_final_citations(app_factory, tmp_path, stream, answer, expected):
     app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
     services = app.state.services.knowledge()
-    services.retrieve.return_value = [doc(["item-1"]), doc(["item-2"], index=2)]
+    services.retrieve.return_value = [doc([sku], index=i).model_copy(update={"content": "回答。"})
+                                      for i, sku in [(1, "item-1"), (2, "item-2")]]
     services.generate_answer.return_value = GeneratedAnswer(answer, {1})  # 文本引用优先于元数据。
     service, repo = cards(tmp_path, [product("item-1"), product("item-2")])
     services.product_cards = Mock(wraps=service.for_sources)
@@ -506,6 +530,39 @@ def test_http_and_sse_use_final_citations(app_factory, tmp_path, stream, answer,
     assert [card["sku"] for card in result["products"]] == [expected]
     repo.fetch.assert_called_once_with(None)  # 冷名称索引与来源行在同一次查询读取。
     assert services.product_cards.call_args.args[1] == answer
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("markers", ["[1, 2]", "[1]"])
+def test_aligned_sources_still_supplement_cards_from_answer_mentions(app_factory, tmp_path, stream, markers):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    rows = charging_products()
+    fact = f"{rows[0]['name']}、{rows[1]['name']}均使用通用 C 型接口。"
+    services.retrieve.return_value = [
+        doc([rows[-1]["sku_id"]]).model_copy(update={"content": "耳机支持主动降噪。"}),
+        doc([rows[0]["sku_id"]], index=2).model_copy(update={"content": "欢迎咨询店铺。" * 20 + fact})]
+    services.generate_answer.return_value = GeneratedAnswer(fact + markers, {1})
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="aligned-cards", message="介绍一下充电设备"))
+    assert response.status_code == 200
+    if stream:
+        rows_sse = events(response.text)
+        assert rows_sse[-1][0] == "done"
+        assert {event for event, _ in rows_sse} <= {"meta", "status", "delta", "done"}
+        result = rows_sse[-1][1]
+    else:
+        result = response.json()
+    assert result["answer"] == fact + ("[2]" if markers == "[1, 2]" else "")
+    assert [source["index"] for source in result["sources"]] == [2]
+    assert result["sources"][0]["snippet"] == fact
+    assert [card["sku"] for card in result["products"]] == [rows[0]["sku_id"], rows[1]["sku_id"]]
+    assert [source.doc_id for source in services.product_cards.call_args.args[0]] == ["d2"]
+    assert services.product_cards.call_args.args[1] == result["answer"]
+    repo.fetch.assert_called_once_with(None)
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -568,6 +625,8 @@ def test_catalog_answer_six_cards_in_answer_order(app_factory, tmp_path, stream,
     services.retrieve.return_value = [doc(source="data/docs/product_catalog.md", index=i) for i in (1, 2)]
     names = [row["name"].removeprefix("灵码") if omit_brand else row["name"] for row in rows]
     answer = "、".join(names) + "。[1][2]"
+    services.retrieve.return_value = [source.model_copy(update={"content": "、".join(names) + "。"})
+                                      for source in services.retrieve.return_value]
     services.generate_answer.return_value = GeneratedAnswer(answer, {1, 2})
     service, repo = cards(tmp_path, list(reversed(rows)))
     services.product_cards = Mock(wraps=service.for_sources)
@@ -608,6 +667,64 @@ def test_names_longest_boundary_category_and_ambiguity():
         "灵码衡电 P1 充电宝") == ["bank"]
 
 
+@pytest.mark.parametrize("visible_name,hidden_name,answer", [
+    ("栖光 L1", "栖光 L1 台灯", "栖光 L1 台灯"),
+    ("栖光 L1 阅读灯", "栖光 L1", "栖光 L1"),
+    ("栖光 L1 台灯", "栖光 L1 台灯", "栖光 L1 台灯"),
+])
+def test_hidden_names_do_not_occupy_intervals_or_create_ambiguity(visible_name, hidden_name, answer):
+    index = ProductNameIndex([product("visible", name=visible_name, series="栖光"),
+                              product("hidden", name=hidden_name, series="栖光")])
+    assert index.match(answer, hidden_skus={"hidden"}) == ["visible"]
+
+
+def test_hidden_long_name_does_not_block_visible_short_name_with_cold_or_warm_index(tmp_path):
+    rows = [product("visible", name="栖光 L1"), product("hidden", name="栖光 L1 台灯")]
+    service, repo = cards(tmp_path, rows, product_hidden_skus=["hidden"])
+    sources = [doc([]).model_copy(update={"content": "栖光 L1 台灯"})]
+    for warm in (False, True):
+        repo.fetch.reset_mock()
+        assert [card.sku for card in service.for_sources(sources, "栖光 L1 台灯")] == ["visible"]
+        repo.fetch.assert_called_once_with(["visible"] if warm else None)
+
+
+def test_mentions_require_cited_series_or_name_in_cited_body_with_cold_and_warm_index(tmp_path):
+    rows = [product("anchor", name="栖光 L1 台灯", series="栖光"),
+            product("same-series", name="栖光 L3 台灯", series="栖光"),
+            product("named", name="听岚 S1 无线耳机", series="听岚"),
+            product("unrelated", name="栖光Pro L9 台灯", series="栖光Pro")]
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    sources = [doc(["anchor"]).model_copy(update={"content": "同时介绍听岚 S1 无线耳机。",
+                    "title": "栖光Pro L9 台灯", "snippet": "栖光Pro L9 台灯"})]
+    answer = "栖光 L3、听岚 S1 无线耳机、栖光Pro L9 台灯"
+    for _ in range(2):
+        repo.fetch.reset_mock()
+        assert [card.sku for card in service.for_sources(sources, answer)] == ["anchor", "same-series", "named"]
+        assert repo.fetch.call_count == 1
+
+
+@pytest.mark.parametrize("skus", [None, [], ["missing"], ["hidden"]])
+def test_answer_only_products_without_visible_cited_anchor_are_not_supplemented(tmp_path, skus):
+    rows = [product("hidden", name="栖光 L1 台灯", series="栖光"),
+            product("visible", name="栖光 L3 台灯", series="栖光")]
+    service, _ = cards(tmp_path, rows, product_hidden_skus=["hidden"])
+    for _ in range(2):
+        assert service.for_sources([doc(skus)], "栖光 L3 台灯") == []
+        assert service.for_sources([], "栖光 L3 台灯") == []
+
+
+@pytest.mark.parametrize("changed_sku", ["anchor", "extra"])
+def test_series_eligibility_uses_fresh_rows_for_both_anchors_and_mentions(tmp_path, changed_sku):
+    rows = [product("anchor", name="栖光 L1 台灯", series="栖光"),
+            product("extra", name="栖光 L3 台灯", series="栖光")]
+    service, repo = cards(tmp_path, rows)
+    sources, answer = [doc(["anchor"])], "栖光 L3 台灯"
+    assert [card.sku for card in service.for_sources(sources, answer)] == ["anchor", "extra"]
+    repo.fetch.return_value = [{**row, "series": "新系列"} if row["sku_id"] == changed_sku else row
+                               for row in rows]
+    assert [card.sku for card in service.for_sources(sources, answer)] == ["anchor"]
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_lamp_alias_answer_six_cards_with_two_cited_skus(app_factory, tmp_path, stream):
     rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 内置电池台灯")
@@ -617,6 +734,9 @@ def test_lamp_alias_answer_six_cards_with_two_cited_skus(app_factory, tmp_path, 
     services.retrieve.return_value = [doc([row["sku_id"]], index=i)
                                       for i, row in enumerate(rows[:2], 1)]
     answer = "、".join(f"栖光 L{i}（款式介绍）" for i in range(1, 7)) + "。[1][2]"
+    # 正文只出现两个已引用型号，其余四款必须由同系列规则补齐。
+    services.retrieve.return_value = [source.model_copy(update={"content": f"栖光 L{i}（款式介绍）。"})
+                                      for i, source in enumerate(services.retrieve.return_value, 1)]
     services.generate_answer.return_value = GeneratedAnswer(answer, {1, 2})
     service, repo = cards(tmp_path, list(reversed(rows)))
     services.product_cards = Mock(wraps=service.for_sources)
@@ -643,6 +763,116 @@ def test_series_model_aliases_distinguish_series_and_require_series():
     assert index.match("木澈 C2、听岚 C2、联枢 C2、衡电 P1、听岚 S1、木澈 C4") == [
         "muche-c2", "tinglan-c2", "lianshu-c2", "hengdian-p1", "tinglan-s1", "muche-c4"]
     assert index.match("C2、P1、S1、C4") == []
+
+
+@pytest.mark.parametrize("separator", ["、", "，", ",", "和", "及", "与"])
+def test_shorthand_model_list_adds_five_cards_with_cold_and_warm_index(tmp_path, separator):
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in range(1, 7)]
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    answer = "灵码栖光 " + separator.join(f"L{i}" for i in (1, 2, 3, 4, 6))
+    sources = [doc(["qiguang-l1"]).model_copy(update={"content": "灵码栖光 L1 台灯。"})]
+    expected = [f"qiguang-l{i}" for i in (1, 2, 3, 4, 6)]
+    for warm in (False, True):
+        repo.fetch.reset_mock()
+        assert [card.sku for card in service.for_sources(sources, answer)] == expected
+        repo.fetch.assert_called_once_with(expected if warm else None)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_shorthand_five_card_answer_over_http_and_sse(app_factory, tmp_path, stream):
+    app = app_factory(speculative_retrieval=False, chat_log_enabled=False)
+    services = app.state.services.knowledge()
+    services.retrieve.return_value = [doc(["qiguang-l1"]).model_copy(
+        update={"content": "灵码栖光 L1 台灯属于栖光系列。"})]
+    answer = "灵码栖光 L1、L2、L3、L4、L6[1]"
+    services.generate_answer.return_value = GeneratedAnswer(answer, {1})
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in range(1, 7)]
+    service, repo = cards(tmp_path, list(reversed(rows)))
+    services.product_cards = Mock(wraps=service.for_sources)
+    with TestClient(app) as api:
+        response = api.post("/api/v1/chat" + ("/stream" if stream else ""),
+                            json=dict(session_id="shorthand-lamps", message="介绍栖光系列台灯"))
+    assert response.status_code == 200
+    body = events(response.text)[-1][1] if stream else response.json()
+    assert body["answer"] == answer
+    assert [card["sku"] for card in body["products"]] == [f"qiguang-l{i}" for i in (1, 2, 3, 4, 6)]
+    repo.fetch.assert_called_once_with(None)
+
+
+@pytest.mark.parametrize("cite_second_series", [False, True])
+def test_shorthand_switches_series_without_bypassing_source_eligibility(tmp_path, cite_second_series):
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in (1, 2, 3)]
+    rows += [product(f"muche-c{i}", series="木澈", name=f"木澈 C{i} 保温杯") for i in (1, 2, 3)]
+    answer = "灵码栖光 L1、L2，灵码木澈 C1及C2与C3，栖光 L3和L2"
+    assert ProductNameIndex(rows).match(answer) == ["qiguang-l1", "qiguang-l2", "muche-c1", "muche-c2", "muche-c3", "qiguang-l3"]
+    anchors = ["qiguang-l1"] + (["muche-c1"] if cite_second_series else [])
+    sources = [doc(anchors).model_copy(update={"content": "栖光 L1 台灯。"})]
+    service, _ = cards(tmp_path, list(reversed(rows)))
+    expected = (anchors + ["qiguang-l2", "muche-c2", "muche-c3", "qiguang-l3"] if cite_second_series
+                else ["qiguang-l1", "qiguang-l2", "qiguang-l3"])
+    for _ in range(2):
+        assert [card.sku for card in service.for_sources(sources, answer)] == expected
+
+
+def test_shorthand_ignores_unknown_models_and_resolves_different_letter_codes():
+    rows = [product(model.lower(), series="栖光", name=f"栖光 {model} 台灯")
+            for model in ("L1", "L2", "C3", "K1")]
+    assert ProductNameIndex(rows).match("栖光 L99、L1、L404、L2和C3及K1") == ["l1", "l2", "c3", "k1"]
+
+
+@pytest.mark.parametrize("hidden", [["qiguang-l2", "qiguang-l3"], ["qiguang-l1"]])
+def test_shorthand_hidden_models_are_skipped_without_losing_series_context(tmp_path, hidden):
+    rows = [product(f"qiguang-l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in (1, 2, 3, 4, 6)]
+    service, repo = cards(tmp_path, rows, product_hidden_skus=hidden)
+    sources = [doc(["qiguang-l6"])]
+    expected = ["qiguang-l6"] + [f"qiguang-l{i}" for i in (1, 2, 3, 4) if f"qiguang-l{i}" not in hidden]
+    for warm in (False, True):
+        repo.fetch.reset_mock()
+        assert [card.sku for card in service.for_sources(sources, "栖光 L1、L2、L3、L4")] == expected
+        repo.fetch.assert_called_once_with(expected if warm else None)
+
+
+def test_shorthand_ambiguous_models_are_not_guessed():
+    rows = [product("l1", series="栖光", name="栖光 L1 台灯"),
+            product("l2-a", series="栖光", name="栖光 L2 台灯"),
+            product("l2-b", series="栖光", name="栖光 L2 阅读灯"),
+            product("l3", series="栖光", name="栖光 L3 台灯")]
+    index = ProductNameIndex(rows)
+    assert index.match("栖光 L1、L2、L3") == ["l1", "l3"]
+    assert index.match("栖光 L1、L2、L3", hidden_skus={"l2-b"}) == ["l1", "l2-a", "l3"]
+
+
+@pytest.mark.parametrize("answer,expected", [
+    ("L2、L3", []),
+    ("栖光 L1。L2、L3", ["l1"]),
+    ("栖光 L1；L2、L3", ["l1"]),
+    ("栖光 L1，支持 L2、L3", ["l1"]),
+    ("栖光 L1、L2x、L3", ["l1"]),
+    ("栖光 L1、L2_、L3", ["l1"]),
+    ("栖光 L1、L2 的亮度可调，L3", ["l1", "l2"]),
+])
+def test_shorthand_context_does_not_extend_past_a_contiguous_model_list(answer, expected):
+    rows = [product(f"l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in (1, 2, 3)]
+    assert ProductNameIndex(rows).match(answer) == expected
+
+
+@pytest.mark.parametrize("maximum", [1, 3, 6])
+def test_shorthand_preserves_source_priority_deduplication_and_card_limit(tmp_path, maximum):
+    rows = [product(f"l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in range(1, 7)]
+    service, _ = cards(tmp_path, rows, product_cards_max=maximum)
+    for _ in range(2):
+        result = service.for_sources([doc(["l6"])], "栖光 L1、L2、L3、L4、L6及L2")
+        assert [card.sku for card in result] == ["l6", "l1", "l2", "l3", "l4"][:maximum]
+
+
+@pytest.mark.parametrize("source_list", [False, True])
+def test_shorthand_requires_names_in_cited_body_without_a_cited_sku(tmp_path, source_list):
+    rows = [product(f"l{i}", series="栖光", name=f"栖光 L{i} 台灯") for i in (1, 2, 3)]
+    service, _ = cards(tmp_path, rows)
+    source = doc([]).model_copy(update={"content": "栖光 L1、L2、L3" if source_list else "栖光 L1 台灯"})
+    for _ in range(2):
+        assert [card.sku for card in service.for_sources([source], "栖光 L1、L2、L3")] == (
+            ["l1", "l2", "l3"] if source_list else ["l1"])
 
 
 def test_alias_model_boundary_full_name_priority_and_first_mention():
@@ -685,11 +915,13 @@ def test_sources_first_dedup_and_skip_invalid_hidden_missing(tmp_path):
     rows[1]["specs"] = {"输出规格": "售价 199 元"}
     service, repo = cards(tmp_path, rows, product_cards_max=3, product_hidden_skus=[rows[2]["sku_id"]])
     answer = "、".join(row["name"] for row in rows)
-    result = service.for_sources([doc(["missing", rows[-1]["sku_id"], rows[2]["sku_id"]])], answer)
+    source = doc(["missing", rows[-1]["sku_id"], rows[2]["sku_id"]]).model_copy(update={"content": answer})
+    result = service.for_sources([source], answer)
     assert [card.sku for card in result] == [rows[-1]["sku_id"], rows[0]["sku_id"], rows[3]["sku_id"]]
     repo.fetch.assert_called_once_with(None)
     repo.fetch.reset_mock()
-    assert [card.sku for card in service.for_sources([doc([rows[-1]["sku_id"]])], answer)] == [
+    assert [card.sku for card in service.for_sources([
+        source.model_copy(update={"skus": [rows[-1]["sku_id"]]})], answer)] == [
         rows[-1]["sku_id"], rows[0]["sku_id"], rows[3]["sku_id"]]
     assert repo.fetch.call_count == 1
     assert rows[2]["sku_id"] not in repo.fetch.call_args.args[0]
@@ -701,20 +933,22 @@ def test_name_cache_ttl_only_caches_names_and_refreshes_rows(tmp_path, monkeypat
     rows = charging_products()
     service, repo = cards(tmp_path, rows)
     answer = rows[0]["name"]
-    assert service.for_sources([], answer)[0].highlights[0] == "设备类型：充电宝"
+    sources = [doc([]).model_copy(update={"content": answer})]
+    assert service.for_sources(sources, answer)[0].highlights[0] == "设备类型：充电宝"
     repo.fetch.assert_called_once_with(None)
     repo.fetch.reset_mock()
     # 同名的新鲜规格；不复用旧行。
     repo.fetch.return_value = [{**rows[0], "specs": {"设备类型": "便携充电宝"}}]
     now[0] = 159.999
-    assert service.for_sources([], answer)[0].highlights == ["设备类型：便携充电宝"]
+    assert service.for_sources(sources, answer)[0].highlights == ["设备类型：便携充电宝"]
     repo.fetch.assert_called_once_with([rows[0]["sku_id"]])
     repo.fetch.return_value = []
-    assert service.for_sources([], answer) == []  # 已删除，不等待 TTL。
+    assert service.for_sources(sources, answer) == []  # 已删除，不等待 TTL。
     repo.fetch.return_value = [{**rows[0], "name": "灵码新名称 P1 充电宝"}]
-    assert service.for_sources([], answer) == []  # 改名后不能沿用旧名称补卡。
+    assert service.for_sources(sources, answer) == []  # 改名后不能沿用旧名称补卡。
     now[0] = 160.0
-    assert service.for_sources([], "新名称 P1 充电宝")[0].sku == rows[0]["sku_id"]
+    sources = [doc([]).model_copy(update={"content": "新名称 P1 充电宝"})]
+    assert service.for_sources(sources, "新名称 P1 充电宝")[0].sku == rows[0]["sku_id"]
     assert repo.fetch.call_args.args == (None,)
     assert repo.fetch.call_count == 4  # 每请求恰好一次。
     repo.fetch.reset_mock()
@@ -727,7 +961,8 @@ def test_product_cards_max_applies_to_sources_and_mentions(tmp_path, maximum):
     rows = [product(f"lamp-{i}", name=f"灵码栖光 L{i} 台灯") for i in range(14)]
     service, _ = cards(tmp_path, rows, product_cards_max=maximum)
     assert len(service.for_sources([doc([row["sku_id"] for row in rows])])) == maximum
-    assert len(service.for_sources([], "、".join(row["name"] for row in rows))) == maximum
+    answer = "、".join(row["name"] for row in rows)
+    assert len(service.for_sources([doc([]).model_copy(update={"content": answer})], answer)) == maximum
 
 
 def test_max_setting_environment_default_bounds_and_response_contract(monkeypatch):
@@ -767,6 +1002,8 @@ def test_catalog_query_failure_preserves_answer(app_factory, tmp_path, caplog, e
     services = app.state.services.knowledge()
     services.retrieve.return_value = [doc(source="product_catalog.md")]
     answer = charging_products()[0]["name"] + "。[1]"
+    services.retrieve.return_value = [source.model_copy(update={"content": answer.removesuffix("[1]")})
+                                      for source in services.retrieve.return_value]
     services.generate_answer.return_value = GeneratedAnswer(answer, {1})
     service, repo = cards(tmp_path, [])
     repo.fetch.side_effect = error
@@ -799,8 +1036,9 @@ def test_concurrent_name_refresh_and_queries_stay_one_per_request(tmp_path):
     rows = charging_products()
     service, repo = cards(tmp_path, rows)
     answer = "、".join(row["name"] for row in rows)
+    sources = [doc([]).model_copy(update={"content": answer})]
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda _: service.for_sources([], answer), range(16)))
+        results = list(pool.map(lambda _: service.for_sources(sources, answer), range(16)))
     assert all([card.sku for card in result] == [row["sku_id"] for row in rows] for result in results)
     assert repo.fetch.call_count == 16
     assert sum(call.args == (None,) for call in repo.fetch.call_args_list) == 1

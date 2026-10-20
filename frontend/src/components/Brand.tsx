@@ -12,6 +12,12 @@ export function AssistantAvatar() {
   return <LogoMark className="h-8 w-8" variant="c-dialog" />;
 }
 
+export function HistoryIcon() {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M4 4h16v16H4zM9 4v16m4-11h4m-4 4h4" />
+  </svg>;
+}
+
 export function SendIcon() {
   return <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
     <path d="M9 14V4m0 0L4.5 8.5M9 4l4.5 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />

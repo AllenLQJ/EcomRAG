@@ -1,14 +1,15 @@
-import type { ReactNode, RefObject } from 'react';
-import { LogoMark } from './Brand';
+import type { RefObject } from 'react';
+import { HistoryIcon, LogoMark } from './Brand';
 
-interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void; historyButton: RefObject<HTMLButtonElement>; name: string; supportUrl?: string; onReset: () => void; traceVisible: boolean; traceEnabled: boolean; onToggleTrace: () => void; shopAction?: ReactNode }
+interface Props { desktop: boolean; historyOpen: boolean; onHistory: () => void; historyButton: RefObject<HTMLButtonElement>; name: string; supportUrl?: string; onReset: () => void; traceVisible: boolean; traceEnabled: boolean; onToggleTrace: () => void }
 
-export function Header({ desktop, historyOpen, onHistory, historyButton, name, supportUrl, onReset, traceVisible, traceEnabled, onToggleTrace, shopAction }: Props) {
-  return <header className="chat-header flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-card px-4 py-1 sm:grid sm:min-h-16 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-6 sm:py-2">
+export function Header({ desktop, historyOpen, onHistory, historyButton, name, supportUrl, onReset, traceVisible, traceEnabled, onToggleTrace }: Props) {
+  return <header className="chat-header flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-line bg-card px-4 py-1 sm:min-h-16 sm:px-6 sm:py-2">
     <div className="flex min-w-0 items-center gap-2 overflow-hidden sm:h-[var(--header-control-size)] sm:gap-3">
       {!desktop && <button ref={historyButton} type="button" aria-label="历史" aria-expanded={historyOpen} aria-controls={historyOpen ? 'history-drawer' : undefined}
-        onClick={onHistory} className="flex min-h-11 min-w-11 items-center justify-center rounded-card text-muted hover:text-ink">
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 4h16v16H4zM9 4v16m4-11h4m-4 4h4" /></svg>
+        aria-hidden={historyOpen || undefined} tabIndex={historyOpen ? -1 : undefined}
+        onClick={onHistory} className="history-toggle">
+        <HistoryIcon />
       </button>}
       <LogoMark className="h-8 w-8 sm:h-[var(--header-control-size)] sm:w-[var(--header-control-size)]" />
       <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
@@ -16,7 +17,6 @@ export function Header({ desktop, historyOpen, onHistory, historyButton, name, s
         <span className="hidden shrink-0 text-lg leading-none text-muted lg:inline">客服中心</span>
       </div>
     </div>
-    {shopAction && <div className="header-shop-action hidden justify-center sm:flex">{shopAction}</div>}
     <div className="flex min-w-0 max-w-[55%] shrink-0 flex-wrap items-center justify-end gap-1 sm:max-w-none sm:gap-x-2">
       {traceVisible && <button type="button" aria-pressed={traceEnabled} onClick={onToggleTrace}
         className="min-h-11 rounded-full px-2 text-xs text-muted hover:text-ink aria-pressed:bg-line aria-pressed:text-ink sm:px-3">查看链路</button>}

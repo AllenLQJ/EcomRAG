@@ -68,12 +68,13 @@ def test_expected_doc_matches_ingest_stable_id():
 
 @pytest.mark.parametrize("answer,hit", [("案例说明[2]", True), ("原规则[1]", True),
                                        ("不相关[3]", False),
-                                           # 无有效引用时流水线回退到最高分来源（文档化规则），此处即期望文档 original.md。
+                                           # 无有效引用时并列重叠度按原顺序选择 original.md。
                                            ("没有有效引用[99]", True)])
 def test_source_hit_accepts_any_expected_document_using_only_cited_sources(answer, hit):
     expected = ["original.md", "case.md"]
     services = FakeServices().knowledge()
-    services.retrieve.return_value = [document(1, 0.99), document(2, 0.98), document(3, 0.97)]
+    services.retrieve.return_value = [document(i, score).model_copy(update={"content": content})
+        for i, score, content in [(1, 0.99, "原规则。"), (2, 0.98, "案例说明。"), (3, 0.97, "不相关。")]]
     services.generate_answer.return_value = GeneratedAnswer(answer, set())
     report = asyncio.run(run_eval.evaluate(
         [{"question": "引用", "expected_route": "rag", "expected_doc": expected}],

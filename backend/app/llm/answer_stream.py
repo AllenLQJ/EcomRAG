@@ -33,7 +33,7 @@ class AnswerBuffer:
         meaningful = CITATION.sub("", self.opening)
         # 尚未闭合的引用不能以其中数字提前排除 NO_ANSWER（例如标记后分两次到达 [1、]）。
         if not final:
-            meaningful = re.sub(r"[\[【［][0-9０-９]*$", "", meaningful)
+            meaningful = re.sub(r"[\[【［][0-9０-９ ,，、\t]*$", "", meaningful)
         if any(char.isalnum() for char in meaningful):
             self.started = True
             ready, self.opening = self.opening, ""

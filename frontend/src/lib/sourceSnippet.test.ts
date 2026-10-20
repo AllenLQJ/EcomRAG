@@ -31,4 +31,10 @@ describe('source snippet display', () => {
   it('keeps useful content when the title is empty', () => {
     expect(cleanSourceSnippet('', '> 请先提交申请。')).toBe('请先提交申请。');
   });
+
+  it('preserves a fact sentence that starts with the source title', () => {
+    const fact = '栖光 L1 额定功率为 6 瓦，支持三档色温。';
+    expect(cleanSourceSnippet('栖光 L1', fact)).toBe(fact);
+    expect(cleanSourceSnippet('栖光 L1', '栖光 L1 | 额定功率 6 瓦')).toBe('栖光 L1 | 额定功率 6 瓦');
+  });
 });

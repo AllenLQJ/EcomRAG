@@ -208,25 +208,25 @@ describe('quota, account and shop integration', () => {
     fireEvent.click(close);
     expect(screen.queryByRole('dialog', { name: '登录/注册' })).not.toBeInTheDocument();
   });
-  it('moves a single shop action across the existing mobile breakpoint and opens one shared dialog', async () => {
+  it('keeps one floating shop action through resizes and expanded quick questions', async () => {
     const resize = mockMobile(false);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock(); await mount();
-    expect(screen.getAllByRole('button', { name: '店铺信息' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: '店铺信息' }));
-    expect(screen.getAllByRole('dialog', { name: '店铺信息' })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: '关闭店铺信息' }));
+    expect(screen.getAllByRole('button', { name: '店铺商品' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '店铺商品' }));
+    expect(screen.getAllByRole('dialog', { name: '店铺商品' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '关闭店铺商品' }));
     act(() => resize(true));
-    expect(screen.getAllByRole('button', { name: '店铺信息' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: '店铺信息' }).closest('.composer-actions')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '店铺商品' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '店铺商品' }).closest('header, footer')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '常见问题' }));
-    expect(screen.queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '店铺商品' })).toBeVisible();
     act(() => resize(false));
-    expect(within(screen.getByRole('banner')).getByRole('button', { name: '店铺信息' })).toBeInTheDocument();
+    expect(within(screen.getByRole('banner')).queryByRole('button', { name: '店铺商品' })).not.toBeInTheDocument();
     act(() => resize(true));
-    expect(screen.queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '店铺商品' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: '常见问题' }));
-    fireEvent.click(screen.getByRole('button', { name: '店铺信息' }));
-    expect(screen.getAllByRole('dialog', { name: '店铺信息' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '店铺商品' }));
+    expect(screen.getAllByRole('dialog', { name: '店铺商品' })).toHaveLength(1);
   });
   it.each(['0', '1'])('shows an origin-specific chat error (stream=%s)', async stream => {
     vi.stubEnv('VITE_STREAM', stream);
@@ -241,11 +241,11 @@ describe('quota, account and shop integration', () => {
     mockMobile(mobile);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock();
     await mount();
-    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /店铺商品/ })).toBeInTheDocument();
     ask(); await screen.findByText('闲聊');
-    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /店铺商品/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '新对话' }));
-    expect(screen.getByRole('button', { name: /店铺信息/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /店铺商品/ })).toBeInTheDocument();
   });
   it.each([false, true])('shows and refreshes quota after successful and failed questions (user=%s)', async signedIn => {
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1');
@@ -292,24 +292,26 @@ describe('quota, account and shop integration', () => {
     fireEvent.click(screen.getByRole('button', { name: '以访客进入' }));
     expect(screen.getByRole('button', { name: '打开对话：游客旧历史' })).toBeInTheDocument();
   });
-  it.each([false, true])('shop facts render and a category fills the draft without sending (mobile=%s)', async mobile => {
+  it.each([false, true])('shows the brand and categories without policy sections and fills only the draft (mobile=%s)', async mobile => {
     mockMobile(mobile);
     sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); const mock = accountMock(); await mount();
-    const entry = screen.getByRole('button', { name: '店铺信息' });
-    expect(entry).toHaveClass('shop-info-button');
-    expect(document.querySelector('.shop-entry')).toBeNull();
-    if (mobile) {
-      expect(entry.closest('.composer-actions')).toHaveClass('justify-between', 'sm:hidden');
-      expect(within(screen.getByRole('banner')).queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
-    } else {
-      expect(entry.closest('header')).toBe(screen.getByRole('banner'));
-      expect(entry.parentElement).toHaveClass('header-shop-action', 'sm:flex');
-      expect(within(screen.getByRole('navigation', { name: '历史对话' })).queryByRole('button', { name: '店铺信息' })).not.toBeInTheDocument();
-    }
+    const entry = screen.getByRole('button', { name: '店铺商品' });
+    expect(entry).toHaveClass('shop-products-button');
+    expect(entry.closest('header, footer, form, nav')).toBeNull();
+    const headerLogo = screen.getByRole('banner').querySelector('img')!;
     fireEvent.click(entry);
-    const shop = screen.getByRole('dialog', { name: '店铺信息' });
-    expect(within(shop).getByText(shopInfo.disclaimer)).toBeInTheDocument();
-    for (const fact of [...shopInfo.support, ...shopInfo.promises]) expect(within(shop).getByText(fact)).toBeInTheDocument();
+    const shop = screen.getByRole('dialog', { name: '店铺商品' });
+    expect(within(shop).queryByRole('heading', { name: '店铺商品' })).not.toBeInTheDocument();
+    expect(within(shop).getByRole('heading', { name: shopInfo.name })).toHaveClass('font-serif');
+    expect(within(shop).getByText(shopInfo.intro)).toBeVisible();
+    const brand = shop.querySelector('.shop-products-brand')!;
+    expect(brand.querySelector('img')).toHaveAttribute('src', headerLogo.getAttribute('src'));
+    expect(brand.firstElementChild?.tagName).toBe('IMG');
+    expect(brand.parentElement?.nextElementSibling).toHaveTextContent('商品品类');
+    expect(within(shop).queryByText(shopInfo.disclaimer)).not.toBeInTheDocument();
+    expect(within(shop).queryByText('客服信息')).not.toBeInTheDocument();
+    expect(within(shop).queryByText('服务承诺')).not.toBeInTheDocument();
+    for (const fact of [...shopInfo.support, ...shopInfo.promises]) expect(within(shop).queryByText(fact)).not.toBeInTheDocument();
     for (const category of shopInfo.categories) expect(within(shop).getByRole('button', { name: category })).toBeInTheDocument();
     fireEvent.click(within(shop).getByRole('button', { name: shopInfo.categories[0] }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -325,5 +327,33 @@ describe('quota, account and shop integration', () => {
     await user.tab({ shift: true }); expect(within(dialog).getByRole('button', { name: '登录' })).toHaveFocus();
     await user.tab(); expect(within(dialog).getByRole('button', { name: '关闭登录/注册' })).toHaveFocus();
     await user.keyboard('{Escape}'); expect(trigger).toHaveFocus();
+  });
+  it.each([false, true])('keeps shop dialog keyboard focus inside and restores the floating entry (mobile=%s)', async mobile => {
+    mockMobile(mobile);
+    sessionStorage.setItem(GUEST_ENTRY_KEY, '1'); accountMock(); await mount();
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: '店铺商品' });
+    expect(trigger).toHaveAttribute('type', 'button');
+    expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(trigger.querySelector('.shop-products-dot')).toHaveAttribute('aria-hidden', 'true');
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    const dialog = screen.getByRole('dialog', { name: '店铺商品' });
+    const close = within(dialog).getByRole('button', { name: '关闭店铺商品' });
+    expect(close).toHaveTextContent('关闭');
+    expect(close.parentElement).toHaveClass('justify-between', 'items-start');
+    expect(close).toHaveFocus();
+    expect(trigger.closest('[inert]')).not.toBeNull();
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole('button', { name: shopInfo.categories[shopInfo.categories.length - 1] })).toHaveFocus();
+    await user.tab();
+    expect(close).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(trigger.closest('[inert]')).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole('button', { name: '关闭店铺商品' }));
+    expect(trigger).toHaveFocus();
   });
 });

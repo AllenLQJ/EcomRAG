@@ -23,7 +23,7 @@ describe('conversation history navigation', () => {
     expect(button).not.toHaveAttribute('tabindex', '-1');
     expect(button).not.toHaveAttribute('aria-hidden');
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8');
-    const hoverOnly = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/)?.[1];
+    const hoverOnly = css.match(/@media \(hover: hover\) \{(\n  \.history-rename[\s\S]*?)\n\}/)?.[1];
     expect(hoverOnly).toContain('.history-rename, .history-delete { opacity: 0; }');
     expect(hoverOnly).toContain('.group:hover .history-rename');
     expect(hoverOnly).toContain('.group:focus-within .history-rename');

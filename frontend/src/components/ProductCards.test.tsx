@@ -1,11 +1,25 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import theme from '../../tailwind.config';
+import { mockViewportWidth } from '../test/media';
 import { product, productAnswer } from '../test/products';
 import { ChatMessage } from './ChatMessage';
 import { ProductCards } from './ProductCards';
 
+function expectExpanded(buttons: HTMLElement[], indices: number[]) {
+  buttons.forEach((button, index) => {
+    const expanded = indices.includes(index);
+    expect(button).toHaveAttribute('aria-expanded', String(expanded));
+    const details = document.getElementById(button.getAttribute('aria-controls')!);
+    if (expanded) expect(details).toBeVisible();
+    else expect(details).not.toBeVisible();
+  });
+}
+
 describe('product cards', () => {
+  beforeEach(() => { mockViewportWidth(390); });
+
   it.each([undefined, []])('adds no markup without products: %j', products => {
     const { container } = render(<ProductCards products={products} />);
     expect(container).toBeEmptyDOMElement();
@@ -45,19 +59,25 @@ describe('product cards', () => {
     expect(screen.queryByText(product().highlights[1])).not.toBeInTheDocument();
   });
 
-  it('uses a single column on narrow screens and a light information panel in both color schemes', () => {
+  it('uses a single column on narrow screens and the same disclosure style as trace', () => {
     const { container } = render(<ProductCards products={[product()]} />);
     const grid = screen.getAllByRole('list')[0];
     expect(grid).toHaveClass('grid', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
-    expect(container.querySelector('.product-card-info')).toBeInTheDocument();
+    expect(grid.firstElementChild).toHaveClass('disclosure-panel');
+    expect(container.querySelector('.product-card-info')).toHaveClass('px-4');
+    const toggle = screen.getByRole('button', { name: product().name });
+    expect(toggle).toHaveClass('disclosure-trigger');
+    expect(toggle.firstElementChild).toHaveClass('disclosure-marker');
+    expect(toggle.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+    expect(toggle.querySelector('svg')).toBeNull();
   });
 
-  it('keeps six equal-width square-image cards aligned at the top without stretching expanded peers', () => {
+  it('keeps six square-image cards equal in height within each row', () => {
     render(<ProductCards products={Array.from({ length: 6 }, (_, index) => product(`lamp-${index}`))} />);
     const section = screen.getByRole('region', { name: '资料关联商品' });
     expect(section).toHaveClass('min-w-0', 'max-w-full');
     const grid = within(section).getAllByRole('list')[0];
-    expect(grid).toHaveClass('grid', 'items-start', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
+    expect(grid).toHaveClass('grid', 'items-stretch', 'grid-cols-1', 'sm:grid-cols-2', 'lg:grid-cols-3');
     expect(grid).not.toHaveClass('auto-rows-fr');
     expect(grid.children).toHaveLength(6);
     Array.from(grid.children).forEach(card => {
@@ -97,7 +117,7 @@ describe('product cards', () => {
     expect(screen.getByAltText(product().name)).toHaveAttribute('src', 'https://other.example/main.webp');
   });
 
-  it('toggles category and highlights independently with unique accessible controls', async () => {
+  it('keeps separate mobile rows and separate grids independent with unique accessible controls', async () => {
     const user = userEvent.setup();
     const products = [product('lamp-1'), product('lamp-2')];
     render(<><ProductCards products={products} /><ProductCards products={[product('lamp-1')]} /></>);
@@ -118,18 +138,100 @@ describe('product cards', () => {
     expect(panel).not.toBeVisible();
   });
 
-  it.each(['{Enter}', ' '])('supports native keyboard activation with %j', async key => {
+  it.each([[390, 1], [639, 1], [640, 2], [641, 2], [1023, 2], [1024, 3], [1440, 3]])(
+    'shares expansion and collapse only within each %i px row (%i columns), including the final partial row',
+    async (width, columns) => {
+      mockViewportWidth(width);
+      const user = userEvent.setup();
+      render(<ProductCards products={Array.from({ length: 7 }, (_, index) => product(`lamp-${index}`))} />);
+      const buttons = screen.getAllByRole('button');
+      const first = Array.from({ length: columns }, (_, index) => index);
+      const second = first.map(index => index + columns);
+      expectExpanded(buttons, []);
+      await user.click(buttons[columns - 1]);
+      expectExpanded(buttons, first);
+      await user.click(buttons[columns]);
+      expectExpanded(buttons, [...first, ...second]);
+      await user.click(buttons[0]);
+      expectExpanded(buttons, second);
+      await user.click(buttons[6]);
+      expectExpanded(buttons, [...second, 6]);
+      await user.click(buttons[6]);
+      expectExpanded(buttons, second);
+    },
+  );
+
+  it('regroups and collapses on column-count changes while preserving state within the same breakpoint', async () => {
+    const resize = mockViewportWidth(1280);
     const user = userEvent.setup();
-    render(<ProductCards products={[product()]} />);
-    const button = screen.getByRole('button', { name: product().name });
+    render(<ProductCards products={Array.from({ length: 7 }, (_, index) => product(`lamp-${index}`))} />);
+    const buttons = screen.getAllByRole('button');
+    await user.click(buttons[1]);
+    expectExpanded(buttons, [0, 1, 2]);
+    act(() => resize(900));
+    expectExpanded(buttons, []);
+    await user.click(buttons[1]);
+    expectExpanded(buttons, [0, 1]);
+    act(() => resize(800));
+    expectExpanded(buttons, [0, 1]);
+    act(() => resize(639));
+    expectExpanded(buttons, []);
+    await user.click(buttons[1]);
+    expectExpanded(buttons, [1]);
+    act(() => resize(640));
+    expectExpanded(buttons, []);
+    await user.click(buttons[2]);
+    expectExpanded(buttons, [2, 3]);
+    act(() => resize(1024));
+    expectExpanded(buttons, []);
+    await user.click(buttons[5]);
+    expectExpanded(buttons, [3, 4, 5]);
+    act(() => resize(1300));
+    expectExpanded(buttons, [3, 4, 5]);
+    expect(screen.getAllByRole('button')).toEqual(buttons);
+  });
+
+  it('does not reuse expanded rows for different products', async () => {
+    mockViewportWidth(1280);
+    const user = userEvent.setup();
+    const products = Array.from({ length: 6 }, (_, index) => product(`lamp-${index}`));
+    const { rerender } = render(<ProductCards products={products} />);
+    await user.click(screen.getAllByRole('button')[1]);
+    expectExpanded(screen.getAllByRole('button'), [0, 1, 2]);
+    rerender(<ProductCards products={products.slice(1)} />);
+    expectExpanded(screen.getAllByRole('button'), []);
+  });
+
+  it('uses the same breakpoints as the CSS grid and removes change listeners on unmount', () => {
+    expect(theme.theme.screens).toMatchObject({ sm: '640px', lg: '1024px' });
+    const queries: { addEventListener: ReturnType<typeof vi.fn>; removeEventListener: ReturnType<typeof vi.fn> }[] = [];
+    vi.stubGlobal('matchMedia', vi.fn((media: string) => {
+      const query = { media, matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+      queries.push(query);
+      return query;
+    }));
+    const { unmount } = render(<ProductCards products={[product()]} />);
+    const subscribed = queries.filter(query => query.addEventListener.mock.calls.length);
+    expect(subscribed).toHaveLength(2);
+    expect(window.matchMedia).toHaveBeenCalledWith('(min-width: 640px)');
+    expect(window.matchMedia).toHaveBeenCalledWith('(min-width: 1024px)');
+    unmount();
+    subscribed.forEach(query => expect(query.removeEventListener).toHaveBeenCalledWith(
+      'change', query.addEventListener.mock.calls[0][1]));
+  });
+
+  it.each(['{Enter}', ' '])('supports native keyboard activation with %j', async key => {
+    mockViewportWidth(1280);
+    const user = userEvent.setup();
+    render(<ProductCards products={Array.from({ length: 4 }, (_, index) => product(`lamp-${index}`))} />);
+    const buttons = screen.getAllByRole('button');
+    const button = buttons[0];
     await user.tab();
     expect(button).toHaveFocus();
     await user.keyboard(key);
-    expect(button).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('桌面台灯')).toBeVisible();
+    expectExpanded(buttons, [0, 1, 2]);
     await user.keyboard(key);
-    expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText('桌面台灯')).not.toBeVisible();
+    expectExpanded(buttons, []);
   });
 
   it('keeps legacy assistant markup unchanged when products is absent and places cards below the answer', () => {

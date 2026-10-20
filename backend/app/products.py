@@ -1,4 +1,4 @@
-"""RAG 引用及回答提及的可选商品卡片；每请求最多一次商品查询。"""
+"""RAG 引用及有来源依据的回答提及商品卡片；每请求最多一次商品查询。"""
 from __future__ import annotations
 
 import importlib
@@ -37,12 +37,15 @@ COMMERCIAL = re.compile(r"价格|售价|单价|原价|优惠|促销|折扣|库�
 NAME_INDEX_TTL_S = 60
 # 商品表没有品牌列；只省略已知品牌，不从任意名称截字推测品牌/系列。
 BRAND_PREFIXES = ("灵码",)
+MODEL_CODE = r"[A-Za-z]+[0-9]+(?![A-Za-z0-9_])"
+MODEL_CONTINUATION = re.compile(rf"\s*[,，、和及与]\s*(?P<model>{MODEL_CODE})")
 
 
 class ProductNameIndex:
     def __init__(self, rows):
         aliases = {}
         model_aliases = {}
+        series_names = set()
         for row in rows:
             sku, name = row.get("sku_id"), row.get("name")
             if not parse_skus([sku]) or not safe_text(name, 160):
@@ -64,21 +67,45 @@ class ProductNameIndex:
                 if model:
                     alias = f"{series} {model[1]}"
                     model_aliases.setdefault(alias, set()).add(sku)
+                    series_names.add(series)
         self.aliases = aliases
         self.model_aliases = model_aliases
+        ordered_series = sorted(series_names, key=lambda value: (-len(value), value))
+        series_pattern = "|".join(re.escape(series) for series in ordered_series)
+        self.series_model = (re.compile(rf"(?<![A-Za-z0-9_])(?P<series>{series_pattern})\s+(?P<model>{MODEL_CODE})")
+                             if series_pattern else None)
 
-    def match(self, answer):
+    def _shorthand_matches(self, answer, hidden):
+        if self.series_model is None:
+            return
+        for anchor in self.series_model.finditer(answer):
+            end = anchor.end()
+            while continuation := MODEL_CONTINUATION.match(answer, end):
+                # 只沿紧邻的型号列表继承系列；新系列、说明文字、句号等都会终止当前列表。
+                # 不存在、隐藏或歧义的型号只跳过该项，不改变后续型号的系列上下文。
+                alias = f"{anchor['series']} {continuation['model']}"
+                skus = self.model_aliases.get(alias, set()) - hidden
+                if skus:
+                    yield 2, continuation.start("model"), continuation.end("model"), skus
+                end = continuation.end()
+
+    def match(self, answer, *, hidden_skus=()):
         answer = " ".join(answer.split())
+        hidden = set(hidden_skus)
         matches = []
         for priority, aliases in enumerate((self.aliases, self.model_aliases)):
             for alias, skus in aliases.items():
+                skus = skus - hidden
+                if not skus:
+                    continue
                 # ASCII 型号不能嵌在另一型号里，例如 S1 / S10、XS1 / S1。
                 pattern = ((r"(?<![A-Za-z0-9_])" if re.match(r"[A-Za-z0-9_]", alias) else "")
                            + re.escape(alias)
                            + (r"(?![A-Za-z0-9_])" if re.search(r"[A-Za-z0-9_]$", alias) else ""))
                 for match in re.finditer(pattern, answer):
                     matches.append((priority, match.start(), match.end(), skus))
-        # 全称优先于系列型号，再取最长不重叠匹配；歧义也占位，不退成短名称。
+        matches.extend(self._shorthand_matches(answer, hidden))
+        # 全称、显式系列型号、继承型号依次优先；各级取最长不重叠匹配，歧义也占位。
         selected = []
         for _, start, end, skus in sorted(matches, key=lambda item: (item[0], item[1] - item[2], item[1])):
             if not any(start < right and end > left for left, right, _ in selected):
@@ -124,6 +151,11 @@ def log_product_cards_unavailable(exc, stage, *, log=logger):
 
 def safe_text(value, limit):
     return isinstance(value, str) and 0 < len(value.strip()) <= limit and not COMMERCIAL.search(value)
+
+
+def series_name(row):
+    value = row.get("series")
+    return " ".join(value.split()) if safe_text(value, 32) else ""
 
 
 class ProductRepo:
@@ -213,6 +245,7 @@ class ProductCards:
     def _rows_and_mentions(self, candidates, answer):
         if not answer.strip():
             return self.repo.fetch(candidates), []
+        hidden = set(self.settings.product_hidden_skus)
         # 锁只保护小型名称快照及刷新，防止冷缓存并发请求重复全表刷新。
         with self.name_lock:
             if self.name_index is None or monotonic() >= self.name_index_expires:
@@ -220,20 +253,20 @@ class ProductCards:
                 index = ProductNameIndex(rows)
                 self.name_index = index
                 self.name_index_expires = monotonic() + NAME_INDEX_TTL_S
-                return rows, index.match(answer)
+                return rows, index.match(answer, hidden_skus=hidden)
             index = self.name_index
-        mentions = index.match(answer)
-        hidden = set(self.settings.product_hidden_skus)
-        skus = list(dict.fromkeys(candidates + [sku for sku in mentions if sku not in hidden]))
+        mentions = index.match(answer, hidden_skus=hidden)
+        skus = list(dict.fromkeys(candidates + mentions))
         rows = self.repo.fetch(skus)
         # 缓存只用于找候选；删除、改名和规格变化仍用本次查询验证。
-        fresh_mentions = set(ProductNameIndex(rows).match(answer))
+        fresh_mentions = set(ProductNameIndex(rows).match(answer, hidden_skus=hidden))
         return rows, [sku for sku in mentions if sku in fresh_mentions]
 
     def for_sources(self, docs, answer=""):
         stage = {"stage": "source_lookup"}
         token = _card_stage.set(stage)
         try:
+            docs = list(docs)
             candidates = []
             hidden = set(self.settings.product_hidden_skus)
             for doc in docs:
@@ -248,6 +281,15 @@ class ProductCards:
             fetched, mentions = self._rows_and_mentions(candidates, answer)
             rows = {row["sku_id"]: row for row in fetched}
             stage["stage"] = "build_card"
+            if mentions:
+                # 回答中的名称本身不是商品依据；只按本次引用正文或已引用 SKU 的真实系列补卡。
+                # 系列取本次查询的新鲜行，不使用名称缓存中的旧系列，也不从型号/品类猜测。
+                cited_series = {series_name(rows[sku]) for sku in candidates if sku in rows} - {""}
+                index = ProductNameIndex(fetched)
+                source_mentions = {sku for doc in docs
+                                   for sku in index.match(doc.content, hidden_skus=hidden)}
+                mentions = [sku for sku in mentions
+                            if sku in source_mentions or series_name(rows.get(sku, {})) in cited_series]
             cards = []
             for sku in dict.fromkeys(candidates + mentions):
                 if sku in hidden:

@@ -60,11 +60,11 @@ def test_configured_top_k_reaches_sequential_and_speculative_retrieval(speculati
 
 
 @pytest.mark.parametrize("answer,cited,indices", [("回答[2]", {2}, [2]), ("回答", set(), [1]),
-                                                 ("重复[2][2]与[1]", {1, 2}, [1, 2]),
+                                                 ("回答[2][2]，回答[1]", {1, 2}, [1, 2]),
                                                  ("回答[2]", {1}, [2])])
 def test_rag_sources_preserve_original_indices(answer, cited, indices):
     services = FakeServices().knowledge()
-    docs = [document(), document(2)]
+    docs = [document(i).model_copy(update={"content": "回答。"}) for i in (1, 2)]
     services.retrieve.return_value = docs
     services.generate_answer.return_value = GeneratedAnswer(answer, cited)
     result = run(services, allow_trace=True)
@@ -79,11 +79,14 @@ def test_rag_sources_preserve_original_indices(answer, cited, indices):
 
 
 @pytest.mark.parametrize("answer,expected", [("事实[1]", [1]), ("事实[3]", [3]),
-                                           ("没有引用", [2]), ("无效[0][4][999]", [2]),
-                                           ("代码里的 `[1]` 不算引用", [2])])
-def test_sources_use_actual_citations_or_highest_score_only(answer, expected):
+                                           ("没有引用", [3]), ("无效[0][4][999]", [3]),
+                                           ("代码里的 `[1]` 不算引用", [3])])
+def test_sources_use_supported_citations_or_answer_overlap(answer, expected):
     services = FakeServices().knowledge()
-    services.retrieve.return_value = [document(score=0.036), document(2, score=0.995), document(3, score=0.02)]
+    services.retrieve.return_value = [
+        document(score=0.036).model_copy(update={"content": "事实。"}),
+        document(2, score=0.995).model_copy(update={"content": "事实。"}),
+        document(3, score=0.02).model_copy(update={"content": "事实。没有引用。无效。代码里的不算引用。"})]
     services.generate_answer.return_value = GeneratedAnswer(answer, set())
     result = run(services, rag_context_min_score=0)  # 单独验证引用过滤；上下文筛分另测默认值。
     assert result.route == "rag"
@@ -91,6 +94,44 @@ def test_sources_use_actual_citations_or_highest_score_only(answer, expected):
     assert [source.doc_id for source in result.sources] == [f"d{i}" for i in expected]
     if answer.startswith("无效"):
         assert result.answer == "无效"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("markers", ["", "[1][99]"])
+def test_alignment_fallback_and_parent_fact_snippet(stream, markers):
+    services = FakeServices().knowledge()
+    fact = "退款会在三个工作日内原路到账。"
+    docs = [document(1, .99).model_copy(update={"content": "台灯支持三档色温。"}),
+            document(2, .4).model_copy(update={"content": "欢迎咨询店铺服务。" * 20 + fact,
+                                              "snippet": "与退款事实无关的子块摘要"})]
+    services.retrieve.return_value = docs
+    services.generate_answer.return_value = GeneratedAnswer(fact + markers, {1})
+    deltas, captured = [], []
+
+    async def delta(text):
+        deltas.append(text)
+
+    result = asyncio.run(run_chat(
+        ChatRequest(session_id="alignment", message="退款何时到账"), services=services,
+        settings=Settings(_env_file=None, speculative_retrieval=False), collector=captured.append,
+        **({"on_delta": delta} if stream else {})))
+    assert result.answer == fact
+    assert [(source.index, source.doc_id, source.snippet) for source in result.sources] == [(2, "d2", fact)]
+    assert captured[0]["answer"] == fact and captured[0]["sources"][0]["index"] == 2
+    assert captured[0]["contexts"][1]["text"] == f"[2] 资料2\n{docs[1].content}"
+    if stream:
+        assert "".join(deltas) == fact + markers  # done 中的最终回答替换临时增量，无新增事件。
+
+
+def test_retained_citations_do_not_add_uncited_answer_overlap_fallback():
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = [
+        document(1).model_copy(update={"content": "签收后七天内可退货。"}),
+        document(2).model_copy(update={"content": "签收后七天内可退货。退款三个工作日到账。"})]
+    services.generate_answer.return_value = GeneratedAnswer("签收后七天内可退货[1]。退款三个工作日到账。", set())
+    result = run(services)
+    assert [source.index for source in result.sources] == [1]
+    assert result.sources[0].snippet == "签收后七天内可退货。"
 
 
 @pytest.mark.parametrize("score,expected", [(None, "fallback"), (0.05, "fallback"), (0.088, "fallback"), (0.1396, "fallback"),
@@ -153,7 +194,8 @@ def test_context_always_keeps_highest_even_below_context_minimum_and_not_first()
 
 def test_generator_and_response_share_renumbered_filtered_sources():
     services = FakeServices().knowledge()
-    services.retrieve.return_value = [document(score=0.995), document(2, 0.036), document(3, 0.2)]
+    services.retrieve.return_value = [document(score=0.995), document(2, 0.036),
+                                      document(3, 0.2).model_copy(update={"content": "已知事实。"})]
     llm = AsyncMock()
     llm.complete.return_value = "已知事实[2]"
     services.generate_answer = Generator(llm, "fake-model").generate_answer
@@ -187,6 +229,7 @@ def test_generator_no_answer_returns_fixed_fallback_and_safe_reason(marker, prov
                                    "已知部分[1]，其余资料里没有。"])
 def test_partial_answers_remain_rag_and_never_leak_internal_marker(answer):
     services = FakeServices().knowledge()
+    services.retrieve.return_value = [document().model_copy(update={"content": "已知部分。"})]
     services.generate_answer.return_value = GeneratedAnswer(answer, {1})
     result = run(services)
     assert result.route == "rag" and result.sources[0].index == 1

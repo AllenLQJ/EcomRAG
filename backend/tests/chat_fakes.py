@@ -7,7 +7,7 @@ from app.llm.generator import GeneratedAnswer
 
 def document(index=1, score=0.8):
     return RetrievedDoc(parent_id=f"p{index}", doc_id=f"d{index}", title=f"资料{index}",
-                        source=f"doc{index}.md", content="父块完整内容", snippet="子块摘要", score=score)
+                        source=f"doc{index}.md", content="父块完整内容。说明。", snippet="子块摘要", score=score)
 
 
 class FakeServices:
