@@ -1,0 +1,15 @@
+question,source_file,facts
+注册灵码账号要绑手机号吗，用户名有什么限制？,account_register_login.md,ACC-01
+访客的提问次数用完了，还能继续问吗？,account_guest_and_quota.md,QUO-01;QUO-02;QUO-03
+答案直接命中了常见问题，也会扣提问次数吗？,account_guest_and_quota.md,QUO-02
+换了设备还能看到之前聊过的内容吗？,account_history.md,HIS-01
+密码忘了，客服能帮我重置吗？,account_password_and_deletion.md,ACC-03;HIS-01
+我的聊天别人能看见吗，想删掉该怎么做？,account_privacy.md,PRV-01;HIS-02;ACC-04
+退出登录是不是就把账号和聊天都注销了？,account_faq_cases.md,ACC-02;ACC-04
+有人自称客服，要我共享屏幕才能领退款，能照做吗？,account_security_anti_scam.md,SEC-01;SVC-02;PAY-03
+演示站注册时，能直接用我平时常用的密码吗？,account_security_password_tips.md,ACC-01;STO-01
+灵码是真实商家，还是用来演示的店铺？,store_about.md,STO-01
+想去线下看看，灵码门店在哪儿？,store_about.md,STO-02;SVC-02
+商品展示图能当作实拍效果来判断吗？,store_about.md,PRD-02
+晚上给客服留言，通常什么时候会处理？,store_service.md,SVC-01;SVC-02;SVC-03
+想反映服务问题，投诉建议从哪提交，多久回复？,store_service.md,SVC-04;PAY-03

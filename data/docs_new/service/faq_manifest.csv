@@ -13,12 +13,12 @@ question,source_file,facts
 退款明细里没有把用券抵扣退成钱，是少退了吗？,after_sales_refund_arrival_selfcheck.md,REF-04
 售后被拒了，还能补材料请客服再核对吗？,after_sales_rejected_application_next.md,RET-02;RET-07
 联枢 C1 接显示器没画面，能不能直接按故障报修？,after_sales_quality_misuse_cases.md,RET-07;WAR-01
-我人在外地，让家人代收算不算签收？,logistics_proxy_receipt_rules.md,DEL-08
+家人或代收点代收后过了几天我才开箱，质量问题退货的7天从哪天算？,logistics_proxy_receipt_rules.md,DEL-08;RET-01;RET-02
 下单后通知缺货，我不想等补货了怎么办？,logistics_presale_shortage_flow.md,DEL-10
 能不能直接寄到港澳台或海外？,logistics_mainland_address_scope.md,DEL-01;DEL-07
 只到了部分商品，是不是仓库漏发了？,logistics_split_parcel_receipt_case.md,DEL-06;TRK-03
 显示待揽收，能证明快递已经拿走包裹了吗？,logistics_tracking_status_guide.md,ORD-03;TRK-01
-用券后商品实付不足99元，把运费也算进去能免运吗？,logistics_shipping_threshold_cases.md,SHP-01;SHP-02
+免运看优惠后实付、用券门槛看优惠前金额，是同一个算法吗？,logistics_shipping_threshold_cases.md,SHP-01;SHP-02;CPN-02
 偏远地区急着用，能不能加钱指定送达时段？,logistics_remote_area_checklist.md,DEL-05;DEL-04;SHP-04
 地址校验不通过，删掉地区只填详细地址行吗？,logistics_address_error_cases.md,DEL-01;DEL-07
 非质量原因拒收，退回运费要不要我承担？,logistics_refused_parcel_followup.md,DEL-09
