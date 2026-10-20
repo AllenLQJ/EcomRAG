@@ -2,3 +2,6 @@
 # 安装后用 uv pip freeze 生成 requirements-eval.lock.txt 固定版本。
 ragas
 langchain-openai
+# ragas 0.4.3 仍导入 langchain_community.chat_models.vertexai，该模块在 langchain-community 0.4 已删除，
+# 且 ragas 未给出上限约束；实测不加此限制会 import ragas 失败。
+langchain-community<0.4
