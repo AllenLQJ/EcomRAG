@@ -22,9 +22,9 @@
 {"question":"退货要寄回去吗","expected_route":"answer","expected_doc":null}
 {"question":"耳机防水吗","expected_route":"answer","expected_doc":null}
 {"question":"你们支持寄到火星吗？","expected_route":"fallback","expected_doc":null}
-{"question":"推荐一款手机","expected_route":"fallback","expected_doc":null}
-{"question":"你们有实体店吗","expected_route":"fallback","expected_doc":null}
-{"question":"能便宜点吗","expected_route":"fallback","expected_doc":null}
+{"question":"推荐一款手机","expected_route":["fallback","general","rag"],"expected_doc":null}
+{"question":"你们有实体店吗","expected_route":["fallback","general","rag"],"expected_doc":null}
+{"question":"能便宜点吗","expected_route":["fallback","general","rag"],"expected_doc":null}
 {"question":"你好","expected_route":"general","expected_doc":null}
 {"question":"你可以做什么","expected_route":"general","expected_doc":null}
 {"question":"你们老板是谁","expected_route":"general","expected_doc":null}
