@@ -6,7 +6,7 @@
 
 后端使用 Python 3.11、FastAPI、Pydantic v2、httpx，依赖由 uv 管理；LLM 客户端直接使用 httpx 的 OpenAI 兼容协议，切块使用自有 `ingest/splitter.py`，不通过 LangChain 编排。前端是 React 18、TypeScript 5、Vite 5、Tailwind CSS 3.4、react-markdown 9。依赖服务为 Milvus Standalone 2.5.10（内嵌 etcd、本地存储）、MySQL 8.0、Redis 7.4，无独立 MinIO 服务。
 
-开发与演示采用本机 M1 / 16 GB，公网入口采用 Cloudflare 固定隧道，后端只监听 `127.0.0.1:8010`，前端开发端口为 `3000`。启动步骤见[根 README](../README.md)，前端操作见[前端 README](../frontend/README.md)。本文描述代码能力与配置约定，真实环境效果需按第 7 节验证。
+公网入口采用固定隧道（临时隧道不支持流式），后端只监听 `127.0.0.1:8010`，前端开发端口为 `3000`。启动步骤见[根 README](../README.md)，前端操作见[前端 README](../frontend/README.md)。本文描述代码能力与配置约定，真实环境效果需按第 7 节验证。
 
 ## 2. 总体架构与在线链路
 
@@ -144,7 +144,7 @@ trace 仅在请求 `debug=true` 且 `ALLOW_TRACE=true` 时返回，否则为 nul
 完整接口、错误码与数据表见 [账号与历史接口说明](账号与历史接口说明.md)，这里只列上线必须知道的事实。
 
 - **登录方式**：用户名 + 密码。用户名 3–20 位 ASCII 字母、数字、下划线，不区分大小写；密码 8–64 位，不能与用户名相同、不能纯数字或常见弱口令。同一账号连续失败 5 次锁定 15 分钟；登录状态 7 天。
-- **配额**：游客 `GUEST_DAILY_LIMIT=5`、账号 `USER_DAILY_LIMIT=50`，按 `RATE_LIMIT_DAY_TZ_OFFSET_HOURS=8`（北京时间）自然日零点重置；FAQ、缓存命中同样计次。旧的 `RATE_LIMIT_PER_DAY` 兜底仍按 UTC 自然日，两者独立。
+- **配额**：游客 `GUEST_DAILY_LIMIT=5`、账号 `USER_DAILY_LIMIT=50`，按 `RATE_LIMIT_DAY_TZ_OFFSET_HOURS=8`（固定偏移，即 UTC+8，不采用夏令时）自然日零点重置；FAQ、缓存命中同样计次。旧的 `RATE_LIMIT_PER_DAY` 兜底仍按 UTC 自然日，两者独立。
 - **服务器端历史**：仅登录账号；每账号最多 100 个对话。游客历史只在本机浏览器。
 - **注销账号**：登录后在侧边栏“注销账号”并输入密码确认，立即删除账号和全部历史，不可恢复。
 - **登录失败提示**：不存在的账号返回 401/40102“账号不存在”，密码错误返回 401/40103“密码错误”。这是产品负责人明确要求的可区分反馈，**已接受账号枚举风险**；取舍与缓解（假哈希、锁定）见接口说明。
@@ -640,9 +640,9 @@ uv pip install --python .venv-eval/bin/python -r requirements-eval.txt
 
 ## 8. 部署、防滥用与已知限制
 
-### 8.1 本机与 Cloudflare 固定隧道
+### 8.1 本机、反向代理与固定隧道
 
-部署链路为：固定域名 → Cloudflare named tunnel → 本机 Web 服务（托管 frontend/dist 并反代 /api）→ `127.0.0.1:8010`。临时隧道不支持本项目所需 SSE 流式，采用固定隧道（依据既有 `docs/演示准备.md` 的部署约定，未在此次联网复测）。仓库没有提供 cloudflared ingress、Nginx 站点或一键部署脚本，下列片段是按接口要求给出的部署示例。
+部署链路为：固定域名 → 固定隧道 → 本机 Web 服务（托管 frontend/dist 并反代 /api）→ `127.0.0.1:8010`。临时隧道不支持本项目所需 SSE 流式，采用固定隧道（依据既有 `docs/演示准备.md` 的部署约定，未在此次联网复测）。仓库没有提供穿透客户端配置、Nginx 站点或一键部署脚本，下列片段是按接口要求给出的部署示例。
 
 后端启动：
 
@@ -652,7 +652,7 @@ uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8010 --no-p
 
 前端 `npm run build` 后由 Web 服务托管 dist，固定隧道指向该服务的本地地址；只公开 API 时可直接指向 8010。不要用 Vite 开发代理替代生产反代。Compose 各依赖只绑定回环端口；当前 Compose 没有 backend、Caddy 或 Nginx 服务，也未配置 restart 策略，运行维护需自行安排。
 
-Nginx 的 API 示例（入口须只接受受信隧道流量）：
+Nginx 的 API 示例（入口须只接受受信隧道流量；下面假定入口会写入已校验的 `CF-Connecting-IP`，其他入口改用实际头名）：
 
 ```nginx
 location /api/ {
@@ -671,11 +671,11 @@ location /api/ {
 
 ### 8.2 真实 IP 与限流
 
-Cloudflare 固定隧道配置 `TRUST_PROXY_HEADERS=true`、`CLIENT_IP_HEADER=cf-connecting-ip`，TRUSTED_PROXIES 包含实际本地代理 socket 地址，默认 `["127.0.0.1","::1"]`。**只有后端仅监听 127.0.0.1 且入口受可信代理保护时才开启**；中间代理须保留 Cloudflare 验证后的头且不允许绕过入口伪造。`--no-proxy-headers` 禁止 Uvicorn 提前改写 socket 对端，由应用统一校验白名单。
+固定隧道若提供已校验的访客 IP 头，配置 `TRUST_PROXY_HEADERS=true`、`CLIENT_IP_HEADER` 为该头名（例如 `cf-connecting-ip`），TRUSTED_PROXIES 包含实际本地反向代理的 socket 地址，默认 `["127.0.0.1","::1"]`。**只有后端仅监听 127.0.0.1 且入口受可信反向代理保护时才开启**；中间代理须保留已校验的访客 IP 头，且不允许绕过入口伪造。`--no-proxy-headers` 禁止 Uvicorn 提前改写 socket 对端，由应用统一校验白名单。
 
 只有开关开启且 socket 对端位于白名单才读选定头；X-Forwarded-For 只取首个字段，CF-Connecting-IP 必须单个合法 IP。缺失、空白、非法头或不可信对端回退 socket 地址，不改读另一种头；白名单支持 IP/IPv4/IPv6 CIDR，空数组不信任任何代理，非法网段拒绝加载配置。
 
-限流默认按 IP 和 session 各自累计固定分钟与 UTC 自然日窗口，默认 50/分钟、200/日；分钟超限为 42901，日超限为 42902，日限额优先提示，超限请求也计数。`RATE_LIMIT_IP_ENABLED=false` 只停用 IP 桶，session 桶继续生效。本机 FRP/Caddy 尚未透传可信访客 IP，`deploy/start-local.sh` 临时关闭共享 IP 桶，避免压测占用其他手机的额度；接通真实 IP 后应恢复双重限流。Redis 使用 INCR+EXPIRE 事务；故障后本进程保留已有本地计数继续限制。回退计数最多 10000 个窗口 key，按过期与 LRU 淘汰，重启清空；多 worker 各自计数，整体限额可能放大，高基数也可能提前淘汰旧计数。session 可自行更换，仅按 session 限流不能代替按真实来源防刷。
+限流默认按 IP 和 session 各自累计固定分钟与 UTC 自然日窗口，默认 50/分钟、200/日；分钟超限为 42901，日超限为 42902，日限额优先提示，超限请求也计数。`RATE_LIMIT_IP_ENABLED=false` 只停用 IP 桶，session 桶继续生效。本机穿透与 Caddy 尚未透传可信访客 IP，`deploy/start-local.sh` 临时关闭共享 IP 桶，避免压测与其他访客共用回环地址的额度；接通真实 IP 后应恢复双重限流。Redis 使用 INCR+EXPIRE 事务；故障后本进程保留已有本地计数继续限制。回退计数最多 10000 个窗口 key，按过期与 LRU 淘汰，重启清空；多 worker 各自计数，整体限额可能放大，高基数也可能提前淘汰旧计数。session 可自行更换，仅按 session 限流不能代替按真实来源防刷。
 
 ### 8.3 访客边界与功能范围
 
@@ -688,8 +688,8 @@ SSE、手机适配、多轮、浏览器历史和登录账号的服务器端历�
 ### 8.4 已知运行限制
 
 - 单机重排受模型全局锁保护，既有演示记录的知识库吞吐约每分钟 20 个；提高 LLM 并发不能解除该瓶颈，也不是对任意机器的性能保证。
-- 海外访问智谱可能有跨境网络抖动；12 秒单次超时、最多三次网络/超时重试仍受 40 秒总预算限制，不能保证每次都有三次重试机会。
-- 16 GB 机器内存紧张或 swap 较高时，既有记录中重排会从约 2.5 秒恶化到 20 秒以上；演示时关闭无关大应用、保持接电与不休眠，先预热并留出内存。以上性能观察来自 `docs/演示准备.md` 的实测记录。
+- 到当前模型服务的网络可能抖动；12 秒单次超时、最多三次网络/超时重试仍受 40 秒总预算限制，不能保证每次都有三次重试机会。
+- 演示机内存紧张或交换空间较高时，既有记录中重排会从约 2.5 秒恶化到 20 秒以上；演示时关闭无关大应用、保持接电与不休眠，先预热并留出内存。以上性能观察来自 `docs/演示准备.md` 的实测记录。
 - 降低候选数或关闭重排可减少工作量，但会改变质量与拒答语义，须重新评测；不能直接沿用 parent/fp16 的历史分数分布解释 child/fp32 阈值。
 - 知识覆盖仅为现有资料，NO_ANSWER 是第二道资料不足兜底；不把商品总览或历史回答当作完整店铺事实。
 - `deploy/start-local.sh` 临时关闭了 IP 限流（`RATE_LIMIT_IP_ENABLED=false`），因为真实访客 IP 透传还没做；接通后应恢复。
@@ -711,7 +711,7 @@ ECOMRAG_FRONTEND_DIR="$PWD/frontend/dist" ECOMRAG_IMAGES_DIR="$PWD/data/images" 
   caddy run --config deploy/Caddyfile --adapter caddyfile
 ```
 
-Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` 到 8010（关闭缓冲以保证 SSE），并按 `handle_path /images/*` 托管商品图片。仓库目前没有 `deploy/start-caddy.sh`。FRP 隧道等步骤见 [樱花FRP本机部署](樱花FRP本机部署.md)。打开 <http://127.0.0.1:8080> 验证：能登录、提问计次、商品问题出现卡片和图片。
+Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` 到 8010（关闭缓冲以保证 SSE），并按 `handle_path /images/*` 托管商品图片。仓库目前没有 `deploy/start-caddy.sh`。穿透隧道等步骤见 [内网穿透与本机部署](内网穿透与本机部署.md)。打开 <http://127.0.0.1:8080> 验证：能登录、提问计次、商品问题出现卡片和图片。
 
 ## 9. 变更与决策记录
 
