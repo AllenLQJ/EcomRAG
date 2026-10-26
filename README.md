@@ -2,7 +2,7 @@
 
 面向店铺「灵码」公开政策与商品咨询的访客客服。后端 Python 3.11 / FastAPI，前端 React 18 / TypeScript / Vite / Tailwind。
 
-在线链路：来源校验 → 配额/限流 → Redis 缓存 → FAQ（BM25 + bge-m3）→ LLM 路由 → Milvus 混合检索 → 重排 → 带 `[n]` 引用的生成；资料不足或敏感问题拒答。支持 SSE 流式回答、多轮上下文、用户名密码账号（游客每天 5 次、账号每天 50 次，按北京时间自然日计）、登录账号的服务器端历史、商品卡片，以及 Milvus 知识库版本化发布与回滚。
+在线链路：来源校验 → 配额/限流 → Redis 缓存 → FAQ（BM25 + bge-m3）→ LLM 路由 → Milvus 混合检索 → 重排 → 带 `[n]` 引用的生成；资料不足或敏感问题拒答。支持 SSE 流式回答、多轮上下文、用户名密码账号（游客每天 5 次、账号每天 50 次，按 `RATE_LIMIT_DAY_TZ_OFFSET_HOURS` 默认 8，即 UTC+8 的自然日计）、登录账号的服务器端历史、商品卡片，以及 Milvus 知识库版本化发布与回滚。
 
 完整的架构、接口、全部配置项与默认值、评测、部署说明和决策记录见 **[开发文档](docs/电商RAG智能客服-开发文档.md)**；前端见 [frontend/README.md](frontend/README.md)；演示流程与遇到的问题见 [docs/演示准备.md](docs/演示准备.md)。
 
@@ -85,7 +85,7 @@ npm run dev
 | `RATE_LIMIT_PER_MIN` / `RATE_LIMIT_PER_DAY` | 50 / 200 | 每 IP 与每会话的频率额度，日额度不是并发限制 |
 | `RATE_LIMIT_IP_ENABLED` | true | 是否额外按 IP 限流；关闭后仍保留每会话限流 |
 | `ALLOW_TRACE` | false | 开启后，请求带 `debug=true` 才返回链路 |
-| `TRUST_PROXY_HEADERS` / `CLIENT_IP_HEADER` | false / x-forwarded-for | 放在可信代理后才开启；Cloudflare 隧道用 `cf-connecting-ip` |
+| `TRUST_PROXY_HEADERS` / `CLIENT_IP_HEADER` | false / x-forwarded-for | 放在可信反向代理后才开启；入口若提供 `cf-connecting-ip` 则使用该头名 |
 
 前端变量见 [frontend/README.md](frontend/README.md)。`VITE_*` 会公开到浏览器，不能放密钥。
 
@@ -141,7 +141,7 @@ uv run python -m ingest.migrate_db                  # 数据库补列（幂等�
 
 详细说明与命令见开发文档 [3.5](docs/电商RAG智能客服-开发文档.md#35-账号配额与服务器历史)、[5.4](docs/电商RAG智能客服-开发文档.md#54-cli-配置来源与上线前置步骤)、[5.5](docs/电商RAG智能客服-开发文档.md#55-商品数据层商品卡片与图片)、[7.4](docs/电商RAG智能客服-开发文档.md#74-ragas-两阶段离线评估)、[8.5](docs/电商RAG智能客服-开发文档.md#85-本机-caddy-部署当前)。
 
-- **账号与历史**：用户名 + 密码登录；游客每天 5 次、账号每天 50 次（北京时间自然日，FAQ/缓存命中也计次）；登录账号的对话保存在服务器；可在侧边栏注销账号。登录失败区分“账号不存在/密码错误”是已接受账号枚举风险的产品取舍，见 [账号与历史接口说明](docs/账号与历史接口说明.md)。同源请求自动放行，跨站前端须配置 `CORS_ORIGINS`（不允许 `*`）。
+- **账号与历史**：用户名 + 密码登录；游客每天 5 次、账号每天 50 次（默认按 UTC+8 自然日，可由 `RATE_LIMIT_DAY_TZ_OFFSET_HOURS` 调整；FAQ/缓存命中也计次）；登录账号的对话保存在服务器；可在侧边栏注销账号。登录失败区分“账号不存在/密码错误”是已接受账号枚举风险的产品取舍，见 [账号与历史接口说明](docs/账号与历史接口说明.md)。同源请求自动放行，跨站前端须配置 `CORS_ORIGINS`（不允许 `*`）。
 - **商品卡片**：上线前必须执行 `migrate_products` 和 `load_products`（上文第 3 步）。图片由 Caddy 在同源 `/images` 托管，接口字段见 [商品卡片接口说明](docs/商品卡片接口说明.md) 与 [frontend/PRODUCT_CARDS.md](frontend/PRODUCT_CARDS.md)。
 - **知识库版本化**：`kb_migrate`（一次性，需停流量）→ `ingest.run --staged --yes` → `kb_switch --check` → `kb_switch --yes`，回滚为 `kb_switch --to kb_chunks_v0 --yes`，所有命令固定同一个 `--state-dir`。见 [知识库扩容与回滚](docs/知识库扩容与回滚.md)；FAQ 见 [FAQ维护与发布](docs/FAQ维护与发布.md)。
 - **内容工具**：`ingest.content_check`（一致性检查）、`ingest.content_merge`（合并到暂存目录），见 [内容集成与一致性检查](docs/内容集成与一致性检查.md)。当前语料：`data/docs` 156 篇，`data/faq.csv` 128 条。
@@ -149,9 +149,9 @@ uv run python -m ingest.migrate_db                  # 数据库补列（幂等�
 
 ## 部署
 
-本机 + Cloudflare 固定隧道（临时隧道不支持流式输出）。后端只监听 127.0.0.1，经本机反向代理托管 `frontend/dist` 并转发 `/api`，关闭缓存、压缩和代理缓冲，并配置真实 IP 头。详见开发文档第 8 节。
+本机 + 固定隧道（临时隧道不支持流式输出）。后端只监听 127.0.0.1，经本机反向代理托管 `frontend/dist` 并转发 `/api`，关闭缓存、压缩和代理缓冲，并配置真实 IP 头。详见开发文档第 8 节。
 
-当前樱花 FRP/Caddy 本机部署使用 `sh deploy/start-local.sh` 启动后端（在仓库根目录执行，监听 127.0.0.1:8010，使用 `backend/.venv`）；前端 `cd frontend && npm run build` 后由 Caddy（8080）托管 `frontend/dist`、反代 `/api` 并托管 `/images`，启动命令见开发文档 8.5（仓库没有 `deploy/start-caddy.sh`）。脚本显式设定上述容量为 50，避免旧 `.env` 中的小值覆盖默认值；不修改 `.env`。由于现有隧道尚未透传可验证的真实 IP，该脚本暂时关闭共享 IP 桶，仅按会话限流，避免手机和压测相互占用额度。session 不是可信身份，接入可信真实 IP 后应恢复 IP 限流。操作步骤见 [本机部署说明](docs/樱花FRP本机部署.md)。
+当前穿透服务与 Caddy 的本机部署使用 `sh deploy/start-local.sh` 启动后端（在仓库根目录执行，监听 127.0.0.1:8010，使用 `backend/.venv`）；前端 `cd frontend && npm run build` 后由 Caddy（8080）托管 `frontend/dist`、反代 `/api` 并托管 `/images`，启动命令见开发文档 8.5（仓库没有 `deploy/start-caddy.sh`）。脚本显式设定上述容量为 50，避免旧 `.env` 中的小值覆盖默认值；不修改 `.env`。由于现有隧道尚未透传可验证的真实 IP，该脚本暂时关闭共享 IP 桶，仅按会话限流，避免不同访客与压测共用回环地址的额度。session 不是可信身份，接入可信真实 IP 后应恢复 IP 限流。操作步骤见 [本机部署说明](docs/内网穿透与本机部署.md)。
 
 ## 常见问题
 
@@ -161,7 +161,7 @@ uv run python -m ingest.migrate_db                  # 数据库补列（幂等�
 - **前端连不上**：后端 8010、前端 3000；检查 `VITE_MOCK` 是否关闭。
 - **看不到链路**：需要前端入口（`?debug=1` 或 `VITE_SHOW_TRACE_TOGGLE=1`）、请求 `debug=true` 与后端 `ALLOW_TRACE=true` 同时满足。
 - **返回 502/空答案**：多半是模型参数问题，先跑 `uv run python -m eval.llm_ping`。
-- **变慢或频繁超时**：本机内存不足会让重排慢 10 倍；关闭无关应用、先预热。海外访问智谱的网络抖动见演示准备第六章。
+- **变慢或频繁超时**：本机内存不足会让重排慢 10 倍；关闭无关应用、先预热。到模型服务的网络抖动见演示准备第六章。
 
 已有用户名密码账号与服务器端历史，但没有个人订单查询或真实人工工单。对话原文保存在 MySQL，请自行管理访问与保留期限（`ingest.purge_chat_logs`）。
 

@@ -114,9 +114,9 @@ frontend/
 
 ## 公网部署与常见问题
 
-公网采用本机 + Cloudflare 固定 named tunnel，临时隧道不支持项目所需 SSE；生产链路和 Nginx 示例见[开发文档第 8 节](../docs/电商RAG智能客服-开发文档.md#8-部署防滥用与已知限制)。保留 Content-Type: text/event-stream、Cache-Control: no-cache、X-Accel-Buffering: no、Content-Encoding: identity，关闭 API 的缓存、压缩与缓冲，验证 meta 和 delta 实时到达。
+公网采用本机 + 固定隧道，临时隧道不支持项目所需 SSE；生产链路和 Nginx 示例见[开发文档第 8 节](../docs/电商RAG智能客服-开发文档.md#8-部署防滥用与已知限制)。保留 Content-Type: text/event-stream、Cache-Control: no-cache、X-Accel-Buffering: no、Content-Encoding: identity，关闭 API 的缓存、压缩与缓冲，验证 meta 和 delta 实时到达。
 
-后端只监听 127.0.0.1:8010，使用 --no-proxy-headers。可信固定隧道可设置 TRUST_PROXY_HEADERS=true、CLIENT_IP_HEADER=cf-connecting-ip，socket 对端还须在 TRUSTED_PROXIES（默认回环地址）；中间代理须保留验证后的 CF 头，禁止绕过入口伪造。缺失/非法头或对端不可信时回退 socket 地址，不能靠前端设置真实 IP。
+后端只监听 127.0.0.1:8010，使用 --no-proxy-headers。可信固定隧道可设置 TRUST_PROXY_HEADERS=true，并把 CLIENT_IP_HEADER 设为入口已校验的访客 IP 头（例如 cf-connecting-ip），socket 对端还须在 TRUSTED_PROXIES（默认回环地址）；中间代理须保留该已校验头，禁止绕过入口伪造。缺失/非法头或对端不可信时回退 socket 地址，不能靠前端设置真实 IP。
 
 - **3000 启动报占用**：strictPort=true，先释放端口。
 - **preview 能看页面但问答失败**：preview 无开发 API 代理，需生产反代或正确的 VITE_API_BASE/CORS。
@@ -124,7 +124,7 @@ frontend/
 - **人工入口不显示**：VITE_HUMAN_SUPPORT_URL 必须为完整 http(s) 地址；它只是外链，没有工单系统。
 - **历史刷新丢失**：仅完整回合会保存，首轮失败不进列表；存储异常只保留内存，不做跨设备同步。
 - **流式整段出现或中途失败**：查固定隧道和代理缓冲，流开始后的错误不会自动重复请求，使用重试入口。
-- **并发慢**：本机重排串行，既有记录约每分钟 20 个知识库问题；海外到智谱可能抖动，16 GB 内存压力下重排可从约 2.5 秒退化至 20 秒以上，前端超时不能消除这些瓶颈。
+- **并发慢**：本机重排串行，既有记录约每分钟 20 个知识库问题；到模型服务的网络可能抖动，内存压力下重排可从约 2.5 秒退化至 20 秒以上，前端超时不能消除这些瓶颈。
 
 ## 变更与决策记录
 

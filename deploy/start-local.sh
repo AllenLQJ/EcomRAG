@@ -1,5 +1,5 @@
 #!/bin/sh
-# 本机 FRP/Caddy 部署：显式覆盖旧 .env 中较小的并发配置，不修改密钥文件。
+# 本机穿透与 Caddy 部署：显式覆盖旧 .env 中较小的并发配置，不修改密钥文件。
 set -eu
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$project_root/backend"
