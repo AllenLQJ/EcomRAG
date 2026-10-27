@@ -1,0 +1,210 @@
+src,dst,rel,level,rule,detail,cable
+hengdian-a1,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-s1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-s2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-m1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-k1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-b1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-n2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-c2,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a2,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a3,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p1,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p2,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-p3,tinglan-q1,CAN_POWER,接口层面匹配（受电需求未注明）,R2_interface_only,接口均为 C 型；受电端未注明电压电流,受电端自带充电线（另一端接口未注明）
+hengdian-a1,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,qiguang-l1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,qiguang-l2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,qiguang-l3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a2,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a3,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p1,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p2,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p3,qiguang-l4,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a1,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,qiguang-l5,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 7.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a2,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a3,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p1,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p2,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p3,qiguang-l6,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a1,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,muxi-h1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,muxi-h2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a2,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a3,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p1,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p2,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-p3,muxi-a1,NOT_COMPATIBLE,接口不一致,R3_connector_mismatch,受电端为 DC圆孔 12 伏，店内供电商品只有 C/A 口,
+hengdian-a1,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-d1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-d2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-r1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,minglan-a1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 10 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,jianxing-k2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,jianxing-m2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 2.5 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,hengdian-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,hengdian-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,hengdian-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,hengdian-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 22.5 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,hengdian-p1,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,hengdian-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,hengdian-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 35 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,hengdian-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,hengdian-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 20 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p3,hengdian-p2,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 受电 18 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,hengdian-p3,CAN_POWER,规格层面部分匹配（输出低于受电端输入上限）,R1b_power_below_input,C 口单口最高 20 瓦 < 受电端输入上限 45 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a2,hengdian-p3,CAN_POWER,规格层面部分匹配（输出低于受电端输入上限）,R1b_power_below_input,C 口单口最高 35 瓦 < 受电端输入上限 45 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a3,hengdian-p3,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 受电 45 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p1,hengdian-p3,CAN_POWER,规格层面部分匹配（输出低于受电端输入上限）,R1b_power_below_input,C 口单口最高 20 瓦 < 受电端输入上限 45 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-p2,hengdian-p3,CAN_POWER,规格层面部分匹配（输出低于受电端输入上限）,R1b_power_below_input,C 口单口最高 22.5 瓦 < 受电端输入上限 45 瓦,受电端自带充电线（另一端接口未注明）
+hengdian-a1,ext-laptop-45w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 45 瓦,
+hengdian-a2,ext-laptop-45w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 35 瓦 < 需求 45 瓦,
+hengdian-a3,ext-laptop-45w,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 需求 45 瓦,需线材同样满足功率
+hengdian-p1,ext-laptop-45w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 45 瓦,
+hengdian-p2,ext-laptop-45w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 22.5 瓦 < 需求 45 瓦,
+hengdian-p3,ext-laptop-45w,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 需求 45 瓦,需线材同样满足功率
+lianshu-c1,ext-laptop-45w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 60 瓦 ≥ 需求 45 瓦,
+lianshu-c2,ext-laptop-45w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 45 瓦,
+lianshu-c3,ext-laptop-45w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 45 瓦,
+lianshu-h1,ext-laptop-45w,PASSTHROUGH,规格层面匹配,R6_hub_passthrough,向主机供电最高 85 瓦 ≥ 需求 45 瓦；输入端需供电 ≥ 需求且线材满足,
+hengdian-a1,ext-laptop-65w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 65 瓦,
+hengdian-a2,ext-laptop-65w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 35 瓦 < 需求 65 瓦,
+hengdian-a3,ext-laptop-65w,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 需求 65 瓦,需线材同样满足功率
+hengdian-p1,ext-laptop-65w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 65 瓦,
+hengdian-p2,ext-laptop-65w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 22.5 瓦 < 需求 65 瓦,
+hengdian-p3,ext-laptop-65w,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 65 瓦 ≥ 需求 65 瓦,需线材同样满足功率
+lianshu-c1,ext-laptop-65w,CABLE_INSUFFICIENT,线材功率不足,R5_cable_power,线材最高 60 瓦 < 需求 65 瓦,
+lianshu-c2,ext-laptop-65w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 65 瓦,
+lianshu-c3,ext-laptop-65w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 65 瓦,
+lianshu-h1,ext-laptop-65w,PASSTHROUGH,规格层面匹配,R6_hub_passthrough,向主机供电最高 85 瓦 ≥ 需求 65 瓦；输入端需供电 ≥ 需求且线材满足,
+hengdian-a1,ext-laptop-100w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 100 瓦,
+hengdian-a2,ext-laptop-100w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 35 瓦 < 需求 100 瓦,
+hengdian-a3,ext-laptop-100w,CAN_POWER,规格层面匹配,R1_power_spec,C 口单口最高 100 瓦 ≥ 需求 100 瓦,需线材同样满足功率
+hengdian-p1,ext-laptop-100w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 20 瓦 < 需求 100 瓦,
+hengdian-p2,ext-laptop-100w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 22.5 瓦 < 需求 100 瓦,
+hengdian-p3,ext-laptop-100w,NOT_COMPATIBLE,功率不足,R4_power_insufficient,C 口单口最高 65 瓦 < 需求 100 瓦,
+lianshu-c1,ext-laptop-100w,CABLE_INSUFFICIENT,线材功率不足,R5_cable_power,线材最高 60 瓦 < 需求 100 瓦,
+lianshu-c2,ext-laptop-100w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 100 瓦,
+lianshu-c3,ext-laptop-100w,CABLE_SUPPORTS,规格层面匹配,R5_cable_power,线材最高 100 瓦 ≥ 需求 100 瓦,
+lianshu-h1,ext-laptop-100w,PASSTHROUGH_INSUFFICIENT,直通功率不足,R6_hub_passthrough,向主机供电最高 85 瓦 < 需求 100 瓦；输入端需供电 ≥ 需求且线材满足,
+jianxing-m3,lianshu-h1,CONNECTS_TO,规格层面匹配,R7_signal,M3 为 A 型有线；H1 有 A 型下行口 2 个,
+lianshu-h1,ext-computer-c,CONNECTS_TO,规格层面匹配,R7_signal,H1 为 C 型上行,
+lianshu-h1,ext-monitor-hdmi,CONNECTS_TO,规格层面匹配,R7_signal,HDMI 最高 4K 30Hz,
+lianshu-c3,ext-monitor-c-video,CONNECTS_TO,规格层面匹配（仅兼容设备）,R7_signal,兼容设备可传输 4K 60Hz,
+lianshu-c1,ext-monitor-c-video,NOT_COMPATIBLE,不支持视频,R7_signal,USB 2.0，不支持视频输出,
+lianshu-c2,ext-monitor-c-video,NOT_COMPATIBLE,不支持视频,R7_signal,USB 2.0，不支持视频输出,
+lianshu-a1,ext-wired-earphone,CONNECTS_TO,规格层面匹配,R7_signal,C 型转 3.5 毫米音频口,
+lianshu-a1,ext-phone-c,CONNECTS_TO,规格层面匹配（仅兼容 C 型设备）,R7_signal,接 C 型设备，主机供电,
+ext-audio-cable,minglan-d1,CONNECTS_TO,规格层面匹配,R7_signal,D1 有 3.5 毫米音频输入；音频线店内不售,
+ext-audio-cable,minglan-d2,CONNECTS_TO,规格层面匹配,R7_signal,D2 有 3.5 毫米音频输入；音频线店内不售,
+jianxing-m3,ext-computer-a,CONNECTS_TO,规格层面匹配,R7_signal,A 型有线直连,
+jianxing-k1,ext-computer-c,CONNECTS_TO,接口层面匹配（附 C 型线，另一端未注明）,R7_signal,C 型有线,
+jianxing-k3,ext-computer-c,CONNECTS_TO,接口层面匹配（附 C 型线，另一端未注明）,R7_signal,C 型有线,
+ext-aa-battery,jianxing-m1,POWERS,规格层面匹配,R8_battery,可更换 AA 电池 1 节；不随附,

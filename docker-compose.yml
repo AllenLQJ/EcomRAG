@@ -53,3 +53,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # 知识图谱演示用，按需启动：docker compose --profile graph up -d neo4j
+  neo4j:
+    image: neo4j:5.26.0-community
+    platform: ${DOCKER_PLATFORM:-linux/arm64}
+    profiles: [graph]
+    environment:
+      # 放在 profile 里，未设置密码时不影响其他服务；启动 neo4j 前须在 .env 设置 NEO4J_PASSWORD（至少 8 位）
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-}
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      - ./volumes/neo4j:/data
+    healthcheck:
+      test: [CMD-SHELL, "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10

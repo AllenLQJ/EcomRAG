@@ -1,0 +1,7 @@
+src,c_out_ports,combined_max_w,two_c_devices,three_c_devices,note
+hengdian-a1,1,20,否,否,唯一明示 5 伏档电流（3 安）的供电商品
+hengdian-a2,2,35,是,否,双口同时使用时为 20 瓦与 15 瓦
+hengdian-a3,2,100,是,否,三口同时使用时为 65 瓦、20 瓦与 15 瓦
+hengdian-p1,1,15,否,否,C 型口兼作输入
+hengdian-p2,1,15,否,否,C 型口兼作输入
+hengdian-p3,2,65,是,否,C 型口兼作输入；双口同时使用时为 45 瓦与 20 瓦

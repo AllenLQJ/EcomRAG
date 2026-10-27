@@ -1,0 +1,49 @@
+sku_id,name,category,role,port_id,connector,direction,port_count,voltage_v,current_a,power_w,pd,combined_max_w,spec_field,spec_value,note
+tinglan-s1,听岚 S1 无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-s2,听岚 S2 无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-m1,听岚 M1 头戴无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-k1,听岚 K1 运动无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-b1,听岚 B1 骨传导无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-n2,听岚 N2 无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-c2,听岚 C2 夹耳无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+tinglan-q1,听岚 Q1 无线耳机,无线耳机,sink,charge_in,USB-C,in,1,,,,,,充电接口,通用 C 型接口,受电电压与电流未注明
+qiguang-l1,栖光 L1 桌面台灯,桌面台灯,sink,power_in,USB-C,in,1,5,2,10,,,输入要求,5 伏直流、2 安,
+qiguang-l2,栖光 L2 夹式桌面台灯,桌面台灯,sink,power_in,USB-C,in,1,5,2,10,,,输入要求,5 伏直流、2 安,
+qiguang-l3,栖光 L3 充电桌面台灯,桌面台灯,sink,power_in,USB-C,in,1,5,1,5,,,输入要求,5 伏直流、1 安,内置电池，供电线同时用于充电
+qiguang-l4,栖光 L4 宽幅桌面台灯,桌面台灯,sink,power_in,DC圆孔,in,1,12,1.5,18.0,,,输入要求,12 伏直流、1.5 安,包装含匹配适配器
+qiguang-l5,栖光 L5 折叠桌面台灯,桌面台灯,sink,power_in,USB-C,in,1,5,1.5,7.5,,,输入要求,5 伏直流、1.5 安,
+qiguang-l6,栖光 L6 绘读桌面台灯,桌面台灯,sink,power_in,DC圆孔,in,1,12,1.5,18.0,,,输入要求,12 伏直流、1.5 安,包装含匹配适配器
+muxi-h1,沐息 H1 桌面加湿器,香薰加湿,sink,power_in,USB-C,in,1,5,1,5,,,输入要求,5 伏直流、1 安,
+muxi-h2,沐息 H2 桌面加湿器,香薰加湿,sink,power_in,USB-C,in,1,5,2,10,,,输入要求,5 伏直流、2 安,
+muxi-a1,沐息 A1 香薰扩香器,香薰加湿,sink,power_in,DC圆孔,in,1,12,1,12,,,输入要求,12 伏直流、1 安,包装含匹配适配器
+minglan-p1,鸣澜 P1 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+minglan-p2,鸣澜 P2 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+minglan-d1,鸣澜 D1 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+minglan-d2,鸣澜 D2 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+minglan-r1,鸣澜 R1 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+minglan-a1,鸣澜 A1 蓝牙音箱,蓝牙音箱,sink,charge_in,USB-C,in,1,5,2,10,,,充电输入,5 伏直流、2 安，通用 C 型接口,
+jianxing-k1,键行 K1 有线键盘,键盘鼠标,host_powered,wired,USB-C,in,1,5,0.5,2.5,,,供电方式,有线 5 伏直流、0.5 安，无电池,有线连接主机供电，无电池
+jianxing-k3,键行 K3 全尺寸键盘,键盘鼠标,host_powered,wired,USB-C,in,1,5,0.5,2.5,,,供电方式,有线 5 伏直流、0.5 安，无电池,有线连接主机供电，无电池
+jianxing-m3,键行 M3 有线鼠标,键盘鼠标,host_powered,wired,USB-A,in,1,5,0.1,0.5,,,供电方式,有线 5 伏直流、0.1 安，无电池,A 型有线直连主机，无电池
+jianxing-k2,键行 K2 无线键盘,键盘鼠标,sink,charge_in,USB-C,in,1,5,1,5,,,供电方式,内置 1500 毫安时电池，C 型 5 伏直流、1 安充电,内置 1500 毫安时电池
+jianxing-m2,键行 M2 办公鼠标,键盘鼠标,sink,charge_in,USB-C,in,1,5,0.5,2.5,,,供电方式,内置 500 毫安时电池，C 型 5 伏直流、0.5 安充电,内置 500 毫安时电池
+jianxing-m1,键行 M1 便携鼠标,键盘鼠标,battery,battery,AA电池,in,1,,,,,,供电方式,可更换 AA 电池 1 节，不支持充电,可更换 AA 电池 1 节，不支持充电；电池不随附
+hengdian-a1,衡电 A1 充电器,充电设备,source,c_out,USB-C,out,1,5;9,3;2.22,20,是,20,输出规格,最高 20 瓦；5 伏、3 安或 9 伏、2.22 安,唯一明示 5 伏档电流（3 安）的供电商品
+hengdian-a2,衡电 A2 充电器,充电设备,source,c_out,USB-C,out,2,,,35,是,35,输出规格,单口最高 35 瓦；双口合计最高 35 瓦（20 瓦与 15 瓦）,双口同时使用时为 20 瓦与 15 瓦
+hengdian-a3,衡电 A3 充电器,充电设备,source,c_out,USB-C,out,2,,,100,是,100,输出规格,单口最高 100 瓦；三口合计最高 100 瓦（65 瓦、20 瓦与 15 瓦）,三口同时使用时为 65 瓦、20 瓦与 15 瓦
+hengdian-a3,衡电 A3 充电器,充电设备,source,a_out,USB-A,out,1,,,,否,100,协议支持,C 型口支持 PD，A 型口不提供 PD,A 型口单口上限未单列，不提供 PD
+hengdian-p1,衡电 P1 充电宝,充电设备,source_sink,c_io,USB-C,bidir,1,,,20,是,15,输出规格,单口最高 20 瓦；多口合计最高 15 瓦,C 型口兼作输入
+hengdian-p1,衡电 P1 充电宝,充电设备,source_sink,a_out,USB-A,out,1,,,,否,15,协议支持,C 型口支持 PD，A 型口不提供 PD,A 型口单口上限未单列，不提供 PD
+hengdian-p1,衡电 P1 充电宝,充电设备,source_sink,recharge_in,USB-C,in,1,5;9,3;2,18,,,输入要求,5 伏直流、3 安；9 伏直流、2 安,本体补电输入，按 9 伏 2 安计 18 瓦
+hengdian-p2,衡电 P2 充电宝,充电设备,source_sink,c_io,USB-C,bidir,1,,,22.5,是,15,输出规格,单口最高 22.5 瓦；多口合计最高 15 瓦,C 型口兼作输入
+hengdian-p2,衡电 P2 充电宝,充电设备,source_sink,a_out,USB-A,out,2,,,,否,15,协议支持,C 型口支持 PD，A 型口不提供 PD,A 型口单口上限未单列，不提供 PD
+hengdian-p2,衡电 P2 充电宝,充电设备,source_sink,recharge_in,USB-C,in,1,5;9,3;2,18,,,输入要求,5 伏直流、3 安；9 伏直流、2 安,本体补电输入，按 9 伏 2 安计 18 瓦
+hengdian-p3,衡电 P3 充电宝,充电设备,source_sink,c_io,USB-C,bidir,1,,,65,是,65,输出规格,单口最高 65 瓦；双口合计最高 65 瓦（45 瓦与 20 瓦）,C 型口兼作输入；双口同时使用时为 45 瓦与 20 瓦
+hengdian-p3,衡电 P3 充电宝,充电设备,source_sink,c_out,USB-C,out,1,,,65,是,65,输出规格,单口最高 65 瓦；双口合计最高 65 瓦（45 瓦与 20 瓦）,双口同时使用时为 45 瓦与 20 瓦
+hengdian-p3,衡电 P3 充电宝,充电设备,source_sink,recharge_in,USB-C,in,1,5-20,,45,,,输入要求,C 型最高 45 瓦，5–20 伏直流,本体补电输入上限
+lianshu-c1,联枢 C1 双 C 口数据线,数据线与配件,cable,cable,USB-C~USB-C,bidir,1,20,3,60,,,供电能力,最高 60 瓦（20 伏、3 安）,
+lianshu-c2,联枢 C2 双 C 口数据线,数据线与配件,cable,cable,USB-C~USB-C,bidir,1,20,5,100,,,供电能力,最高 100 瓦（20 伏、5 安），带电子标记芯片,带电子标记芯片
+lianshu-c3,联枢 C3 高速数据线,数据线与配件,cable,cable,USB-C~USB-C,bidir,1,20,5,100,,,供电能力,最高 100 瓦（20 伏、5 安），带电子标记芯片,带电子标记芯片
+lianshu-h1,联枢 H1 四口扩展器,数据线与配件,hub,pd_in,USB-C,in,1,,,100,,,供电能力,C 型供电输入最高 100 瓦，向主机供电最高 85 瓦,C 型供电输入最高 100 瓦
+lianshu-h1,联枢 H1 四口扩展器,数据线与配件,hub,host_out,USB-C,out,1,,,85,,,供电能力,C 型供电输入最高 100 瓦，向主机供电最高 85 瓦,经上行口向主机供电最高 85 瓦
+lianshu-a1,联枢 A1 音频转接器,数据线与配件,cable,adapter,USB-C~3.5mm,bidir,1,,,,,,供电能力,主机供电，不提供充电输出,主机供电，不提供充电输出

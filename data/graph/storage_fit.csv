@@ -1,0 +1,30 @@
+bag,item,level,basis,note
+najing-p1,tinglan-s1,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-s2,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-k1,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-n2,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-c2,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-q1,类别匹配,适用物品含「耳机」,需核对耳机盒实物尺寸
+najing-p1,tinglan-m1,待核对,适用物品含「耳机」,头戴或后挂款体积较大，外部尺寸 180×110×50 毫米不保证能装入
+najing-p1,tinglan-b1,待核对,适用物品含「耳机」,头戴或后挂款体积较大，外部尺寸 180×110×50 毫米不保证能装入
+najing-p1,lianshu-c1,类别匹配,适用物品含「短数据线」,C1 长 1 米
+najing-p1,lianshu-c3,类别匹配,适用物品含「短数据线」,C3 长 0.8 米
+najing-p1,lianshu-c2,待核对,适用物品为「短数据线」,C2 长 2 米，不属于短线
+najing-p1,hengdian-a1,类别匹配,适用物品含「小型充电器」,单口 20 瓦基础充电器
+najing-p1,hengdian-a2,待核对,适用物品为「小型充电器」,多口充电器尺寸未注明
+najing-p1,hengdian-a3,待核对,适用物品为「小型充电器」,多口充电器尺寸未注明
+najing-p2,hengdian-p1,类别匹配,适用物品含「充电宝」,
+najing-p2,hengdian-p2,类别匹配,适用物品含「充电宝」,
+najing-p2,hengdian-p3,类别匹配,适用物品含「充电宝」,
+najing-p2,lianshu-c1,类别匹配,适用物品含「线材」,
+najing-p2,lianshu-c2,类别匹配,适用物品含「线材」,
+najing-p2,lianshu-c3,类别匹配,适用物品含「线材」,
+najing-p2,lianshu-a1,类别匹配,适用物品含「线材」,
+najing-p2,lianshu-h1,类别匹配,适用物品含「线材」,
+najing-p2,hengdian-a1,类别匹配,适用物品含「适配器」,
+najing-p2,hengdian-a2,类别匹配,适用物品含「适配器」,
+najing-p2,hengdian-a3,类别匹配,适用物品含「适配器」,
+najing-l1,ext-laptop-45w,尺寸条件,机身不超过 320×225×18 毫米,需按电脑实际尺寸核对
+najing-l1,ext-laptop-65w,尺寸条件,机身不超过 320×225×18 毫米,需按电脑实际尺寸核对
+najing-t1,折叠衣物,类别匹配,适用物品含「折叠衣物」,
+najing-t1,独立包装小物,类别匹配,适用物品含「独立包装小物」,
