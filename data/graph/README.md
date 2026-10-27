@@ -28,7 +28,7 @@ uv run python -m eval.graph_demo --eval       # 对 eval_graph.jsonl 统计 expe
 uv run python -m eval.graph_demo --cypher "MATCH (n:Ecom:Product) RETURN n.name LIMIT 5"
 ```
 
-演示 CLI 不调用模型，也不接入在线问答链路：先按商品全名、「系列 型号」、SKU 做规则实体链接（单独的「L1」有歧义，不链接），再按关键词选意图和 Cypher 模板，以读访问模式查询。`--eval` 只把查询结果里出现的 id 计入召回，问句中链接到的实体不算。
+演示 CLI 不调用模型。查询规划代码在 `backend/app/graph/planner.py`，与在线问答共用（`GRAPH_ENABLED=true` 时启用，见开发文档 2.2）：先按商品全名、「系列 型号」、SKU 做规则实体链接（单独的「L1」有歧义，不链接），再按关键词选意图和 Cypher 模板，以读访问模式查询。`--eval` 只把查询结果里出现的 id 计入召回，问句中链接到的实体不算。
 
 ## 图模型
 

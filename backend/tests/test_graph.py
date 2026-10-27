@@ -6,6 +6,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
+from app.graph import planner
 from eval import graph_demo
 from ingest import graph_data, graph_load
 from ingest.loaders import resolve_data_path
@@ -214,7 +215,7 @@ class GraphDemoTest(unittest.TestCase):
     products = graph_data.load_products()
 
     def link(self, text):
-        return graph_demo.link_entities(text, self.products)["entities"]
+        return planner.link_entities(text, self.products)["entities"]
 
     def test_link_aliases(self):
         self.assertEqual(self.link("衡电A1 能给栖光 L1 供电吗"), ["hengdian-a1", "qiguang-l1"])
@@ -231,26 +232,26 @@ class GraphDemoTest(unittest.TestCase):
         self.assertIn("ext-monitor-hdmi", self.link("想接 HDMI 显示器"))
 
     def plan(self, text):
-        linked, intent, plans = graph_demo.plan_queries(text, self.products)
+        linked, intent, plans = planner.plan_queries(text, self.products)
         return intent, [query for _, query, _ in plans]
 
     def test_intents_choose_templates(self):
         cases = [
-            ("衡电 A1 能给栖光 L1 供电吗", "power", graph_demo.Q_PAIR),
-            ("栖光 L4 能用店里哪款充电器", "power", graph_demo.Q_SOURCES),
-            ("衡电 A3 配联枢 C2，65 瓦电脑够吗", "laptop", graph_demo.Q_LAPTOP),
-            ("65 瓦电脑经联枢 H1 充电行吗", "hub", graph_demo.Q_HUB),
-            ("衡电 A2 能同时给栖光 L1 和鸣澜 P2 供电吗", "multi", graph_demo.Q_MULTI),
-            ("联枢 C1 能接显示器吗", "signal", graph_demo.Q_SIGNAL),
-            ("纳境 P1 能装哪些东西", "storage", graph_demo.Q_HOLD),
-            ("通勤搭配推荐了什么", "scene", graph_demo.Q_SCENE),
-            ("通勤搭配里的充电宝能给耳机充电吗", "scene_power", graph_demo.Q_SCENE_POWER),
-            ("衡电 A2 配栖光 L5 行不行", "power", graph_demo.Q_PAIR),
-            ("哪些衡电产品自带充电线", "power", graph_demo.Q_PACKAGE_FILTER),
-            ("电脑只有 C 口，想接 HDMI 显示器和 A 口鼠标", "signal", graph_demo.Q_SIGNAL_2HOP),
-            ("办公桌面搭配里的台灯能和衡电 A1 一起用吗", "scene_source", graph_demo.Q_SCENE_SOURCE),
-            ("哪些商品不能用衡电充电器或充电宝供电？", "power", graph_demo.Q_INCOMPATIBLE),
-            ("键行哪些键盘鼠标不需要充电器？", "power", graph_demo.Q_NO_CHARGER),
+            ("衡电 A1 能给栖光 L1 供电吗", "power", planner.Q_PAIR),
+            ("栖光 L4 能用店里哪款充电器", "power", planner.Q_SOURCES),
+            ("衡电 A3 配联枢 C2，65 瓦电脑够吗", "laptop", planner.Q_LAPTOP),
+            ("65 瓦电脑经联枢 H1 充电行吗", "hub", planner.Q_HUB),
+            ("衡电 A2 能同时给栖光 L1 和鸣澜 P2 供电吗", "multi", planner.Q_MULTI),
+            ("联枢 C1 能接显示器吗", "signal", planner.Q_SIGNAL),
+            ("纳境 P1 能装哪些东西", "storage", planner.Q_HOLD),
+            ("通勤搭配推荐了什么", "scene", planner.Q_SCENE),
+            ("通勤搭配里的充电宝能给耳机充电吗", "scene_power", planner.Q_SCENE_POWER),
+            ("衡电 A2 配栖光 L5 行不行", "power", planner.Q_PAIR),
+            ("哪些衡电产品自带充电线", "power", planner.Q_PACKAGE_FILTER),
+            ("电脑只有 C 口，想接 HDMI 显示器和 A 口鼠标", "signal", planner.Q_SIGNAL_2HOP),
+            ("办公桌面搭配里的台灯能和衡电 A1 一起用吗", "scene_source", planner.Q_SCENE_SOURCE),
+            ("哪些商品不能用衡电充电器或充电宝供电？", "power", planner.Q_INCOMPATIBLE),
+            ("键行哪些键盘鼠标不需要充电器？", "power", planner.Q_NO_CHARGER),
         ]
         for text, intent, query in cases:
             with self.subTest(text=text):
@@ -273,7 +274,7 @@ class GraphDemoTest(unittest.TestCase):
 
     def test_answer_counts_only_result_ids(self):
         def runner(query, params):
-            if query == graph_demo.Q_PAIR:
+            if query == planner.Q_PAIR:
                 return [{"src_id": "hengdian-a1", "dst_id": "qiguang-l1", "level": graph_data.LEVEL_SPEC}]
             return []
 

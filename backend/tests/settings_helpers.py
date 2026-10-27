@@ -5,7 +5,7 @@ import os
 APP_PREFIXES = (
     "LLM_", "QWEN_", "ROUTER_", "GENERATE_", "MYSQL_", "REDIS_", "MILVUS_",
     "FAQ_", "REFUSE_", "RERANK_", "RERANKER_", "BGE_", "EMBED_", "CHILD_",
-    "PARENT_", "REQUEST_", "RATE_LIMIT_", "HEALTH_", "LOG_", "CHAT_LOG_",
+    "PARENT_", "REQUEST_", "RATE_LIMIT_", "HEALTH_", "LOG_", "CHAT_LOG_", "GRAPH_", "NEO4J_",
 )
 
 

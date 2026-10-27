@@ -20,7 +20,7 @@ def audit(event, args):
         raise AssertionError("禁止网络访问")
 sys.meta_path.insert(0, Block())
 sys.addaudithook(audit)
-import app.main, app.config, app.contracts, app.pipeline
+import app.main, app.config, app.contracts, app.pipeline, app.graph.lookup
 import app.faq.repo, app.faq.cache, app.faq.bm25, app.faq.service
 import app.retrieval.embedder, app.retrieval.store, app.retrieval.retriever, app.retrieval.reranker
 import eval.search_demo, eval.faq_demo, eval.check_retrieval

@@ -8,6 +8,7 @@ from app.executor import BoundedExecutor
 from app.faq.cache import FaqCache
 from app.faq.repo import FaqRepo
 from app.faq.service import FaqService
+from app.graph.lookup import GraphLookup
 from app.llm.client import LLMClient
 from app.llm.generator import Generator
 from app.llm.router import Router
@@ -98,6 +99,12 @@ class Services:
                                               queue_timeout_s=settings.model_io_queue_timeout_s)
         # 刷新不占请求池名额，单 worker 时请求也无需等待整个快照构建。
         self.faq_refresh_executor = BoundedExecutor(1, name="faq-refresh", queue_size=0)
+        self.graph = None
+        if settings.graph_enabled:
+            if settings.neo4j_password.get_secret_value():
+                self.graph = GraphLookup(settings)
+            else:
+                logger.warning("GRAPH_ENABLED 已开启但未设置 NEO4J_PASSWORD；本进程不查询知识图谱")
 
     def _initialize(self, *, use_cache=True):
         with self._faq_init_lock:
@@ -171,6 +178,10 @@ class Services:
     async def generate_answer(self, question, docs, history):
         return await self.generator.generate_answer(question, docs, history)
 
+    @property
+    def graph_lookup(self):
+        return None if self.graph is None else self.graph.lookup
+
     def product_cards(self, docs, answer=""):
         return self.products.for_sources(docs, answer)
 
@@ -192,6 +203,8 @@ class Services:
         def close():
             if self.faq is not None:
                 self.faq.close()
+            if self.graph is not None:
+                self.graph.close()
             with self._model_lock:
                 if self.cache.client is not None:
                     self.cache.client.close()

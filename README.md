@@ -146,7 +146,7 @@ uv run python -m ingest.migrate_db                  # 数据库补列（幂等�
 - **知识库版本化**：`kb_migrate`（一次性，需停流量）→ `ingest.run --staged --yes` → `kb_switch --check` → `kb_switch --yes`，回滚为 `kb_switch --to kb_chunks_v0 --yes`，所有命令固定同一个 `--state-dir`。见 [知识库扩容与回滚](docs/知识库扩容与回滚.md)；FAQ 见 [FAQ维护与发布](docs/FAQ维护与发布.md)。
 - **内容工具**：`ingest.content_check`（一致性检查）、`ingest.content_merge`（合并到暂存目录），见 [内容集成与一致性检查](docs/内容集成与一致性检查.md)。当前语料：`data/docs` 156 篇，`data/faq.csv` 128 条。
 - **离线评估**：`run_eval` 三个评测集 + RAGAS 两阶段（collect 在主环境，score 在 `backend/.venv-eval`）。
-- **知识图谱演示（可选）**：`ingest.graph_data` 生成商品供电、接口、包装、收纳、场景关系与 94 道多跳评测题，`ingest.graph_load` 导入 Neo4j（`docker compose --profile graph up -d neo4j`，需在 `.env` 设置 `NEO4J_PASSWORD`），`eval.graph_demo` 演示实体链接与 Cypher 查询。兼容结论只代表规格层面匹配；图谱暂未接入在线问答链路。见 [data/graph/README.md](data/graph/README.md)。
+- **知识图谱演示（可选）**：`ingest.graph_data` 生成商品供电、接口、包装、收纳、场景关系与 94 道多跳评测题，`ingest.graph_load` 导入 Neo4j（`docker compose --profile graph up -d neo4j`，需在 `.env` 设置 `NEO4J_PASSWORD`），`eval.graph_demo` 演示实体链接与 Cypher 查询。兼容结论只代表规格层面匹配。在线问答可设 `GRAPH_ENABLED=true` 接入图谱（默认关闭，Neo4j 故障时自动跳过），见开发文档 [2.2](docs/电商RAG智能客服-开发文档.md#22-检索重排与拒答)。见 [data/graph/README.md](data/graph/README.md)。
 
 ## 部署
 
