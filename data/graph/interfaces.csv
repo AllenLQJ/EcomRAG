@@ -1,0 +1,25 @@
+sku_id,name,kind,connector,direction,port_count,spec,spec_field,spec_value,note
+lianshu-c1,联枢 C1 双 C 口数据线,data,USB-C~USB-C,bidir,1,USB 2.0 480Mbps,传输规格,USB 2.0，最高 480 兆比特每秒，不支持视频输出,不支持视频
+lianshu-c2,联枢 C2 双 C 口数据线,data,USB-C~USB-C,bidir,1,USB 2.0 480Mbps,传输规格,USB 2.0，最高 480 兆比特每秒，不支持视频输出,不支持视频
+lianshu-c3,联枢 C3 高速数据线,data,USB-C~USB-C,bidir,1,USB 3.2 Gen 2 10Gbps,传输规格,USB 3.2 Gen 2，最高 10 吉比特每秒；兼容设备可传输 4K、60 赫兹视频,
+lianshu-c3,联枢 C3 高速数据线,video,USB-C~USB-C,bidir,1,4K 60Hz,传输规格,USB 3.2 Gen 2，最高 10 吉比特每秒；兼容设备可传输 4K、60 赫兹视频,仅兼容设备
+lianshu-h1,联枢 H1 四口扩展器,data,USB-C,upstream,1,接主机,连接接口,C 型上行；A 型下行口 2 个、HDMI 口 1 个、C 型供电口 1 个,
+lianshu-h1,联枢 H1 四口扩展器,data,USB-A,downstream,2,共享 5Gbps,传输规格,A 型口共享最高 5 吉比特每秒；HDMI 最高 4K、30 赫兹,
+lianshu-h1,联枢 H1 四口扩展器,video,HDMI,out,1,4K 30Hz,传输规格,A 型口共享最高 5 吉比特每秒；HDMI 最高 4K、30 赫兹,
+lianshu-a1,联枢 A1 音频转接器,audio,USB-C,upstream,1,接 C 型设备,连接接口,C 型至 3.5 毫米音频口,
+lianshu-a1,联枢 A1 音频转接器,audio,3.5mm,out,1,24bit/96kHz 解码,传输规格,数字音频解码最高 24 比特、96 千赫兹，不支持视频输出,不支持视频
+minglan-d1,鸣澜 D1 蓝牙音箱,audio,3.5mm,in,1,3.5 毫米音频输入,连接方式,蓝牙 5.3、3.5 毫米音频输入,不含音频线
+minglan-d2,鸣澜 D2 蓝牙音箱,audio,3.5mm,in,1,3.5 毫米音频输入,连接方式,蓝牙 5.3、3.5 毫米音频输入,不含音频线
+minglan-p1,鸣澜 P1 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3,
+minglan-p2,鸣澜 P2 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3,
+minglan-d1,鸣澜 D1 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3、3.5 毫米音频输入,
+minglan-d2,鸣澜 D2 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3、3.5 毫米音频输入,
+minglan-r1,鸣澜 R1 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3,
+minglan-a1,鸣澜 A1 蓝牙音箱,wireless,蓝牙5.3,in,1,蓝牙 5.3,连接方式,蓝牙 5.3,
+jianxing-k1,键行 K1 有线键盘,data,USB-C,upstream,1,C 型有线,连接方式,C 型有线,
+jianxing-k3,键行 K3 全尺寸键盘,data,USB-C,upstream,1,C 型有线,连接方式,C 型有线,
+jianxing-m3,键行 M3 有线鼠标,data,USB-A,upstream,1,A 型有线,连接方式,A 型有线,
+jianxing-k2,键行 K2 无线键盘,wireless,蓝牙;2.4GHz,upstream,1,蓝牙、2.4GHz 无线,连接方式,蓝牙、2.4 吉赫兹无线、C 型有线,附无线接收器，接收器接口未注明
+jianxing-k2,键行 K2 无线键盘,data,USB-C,upstream,1,C 型有线,连接方式,蓝牙、2.4 吉赫兹无线、C 型有线,
+jianxing-m1,键行 M1 便携鼠标,wireless,蓝牙;2.4GHz,upstream,1,蓝牙、2.4GHz 无线,连接方式,蓝牙、2.4 吉赫兹无线,附无线接收器，接收器接口未注明
+jianxing-m2,键行 M2 办公鼠标,wireless,蓝牙;2.4GHz,upstream,1,蓝牙、2.4GHz 无线,连接方式,蓝牙、2.4 吉赫兹无线,附无线接收器，接收器接口未注明

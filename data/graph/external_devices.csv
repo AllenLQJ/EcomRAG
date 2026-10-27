@@ -1,0 +1,13 @@
+ext_id,name,connector,need_w,note
+ext-laptop-45w,需 45 瓦 C 口供电的轻薄电脑,USB-C,45,示例设备，店内不售
+ext-laptop-65w,需 65 瓦 C 口供电的轻薄电脑,USB-C,65,示例设备，店内不售
+ext-laptop-100w,需 100 瓦 C 口供电的电脑,USB-C,100,示例设备，店内不售
+ext-monitor-hdmi,HDMI 接口显示器,HDMI,,店内不售
+ext-monitor-c-video,支持 C 口视频输入的显示器,USB-C,,店内不售
+ext-wired-earphone,3.5 毫米有线耳机,3.5mm,,店内不售
+ext-audio-cable,3.5 毫米音频线,3.5mm~3.5mm,,店内不售；鸣澜音箱均不含
+ext-c-a-cable,C 转 A 线,USB-C~USB-A,,店内不售
+ext-computer-c,带 C 口的电脑,USB-C,,店内不售
+ext-computer-a,带 A 口的电脑,USB-A,,店内不售
+ext-phone-c,仅有 C 口的手机,USB-C,,店内不售；受电需求因机型而异
+ext-aa-battery,AA 电池,AA电池,,店内不售；键行 M1 不随附
