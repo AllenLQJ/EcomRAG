@@ -149,7 +149,12 @@ class GraphLookup:
             record("graph", started, hit=False, detail="skipped")
             return None
         driver = self._connection()
-        results = [(title, self._read(driver, query, params)) for title, query, params in plans]
+        results = []
+        for title, query, params in plans:
+            # 查询串行执行；整体超过超时就放弃，避免超时后工作线程仍继续逐条查询。
+            if perf_counter() - started > self.settings.graph_timeout_s:
+                raise TimeoutError("graph lookup exceeded timeout")
+            results.append((title, self._read(driver, query, params)))
         rows = [row for _, found in results for row in found]
         record("graph", started, hit=bool(rows), detail=intent, candidates=len(rows))
         if not rows:

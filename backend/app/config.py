@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     # 知识图谱默认关闭；开启后 Neo4j 不可用或超时只跳过图谱，不影响原检索链路。
     graph_enabled: bool = False
     graph_timeout_s: float = Field(default=1.5, gt=0, allow_inf_nan=False)
+    graph_workers: int = Field(default=4, gt=0)
     graph_max_chars: int = Field(default=2500, ge=500)
     neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"

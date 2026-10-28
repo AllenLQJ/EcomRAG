@@ -273,7 +273,8 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         rerank_query = decision.rewritten_query if history else chat.message
         graph = getattr(services, "graph_lookup", None)
         if graph is not None:
-            graph_task = asyncio.create_task(lookup_graph(graph, rerank_query, settings, executor))
+            graph_executor = getattr(services, "graph_executor", None) or executor
+            graph_task = asyncio.create_task(lookup_graph(graph, rerank_query, settings, graph_executor))
         if on_status is not None:
             await on_status("retrieving")
         if speculative is not None:

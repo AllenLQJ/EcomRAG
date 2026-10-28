@@ -99,10 +99,12 @@ class Services:
                                               queue_timeout_s=settings.model_io_queue_timeout_s)
         # 刷新不占请求池名额，单 worker 时请求也无需等待整个快照构建。
         self.faq_refresh_executor = BoundedExecutor(1, name="faq-refresh", queue_size=0)
-        self.graph = None
+        self.graph = self.graph_executor = None
         if settings.graph_enabled:
             if settings.neo4j_password.get_secret_value():
                 self.graph = GraphLookup(settings)
+                # 图谱独立小池、不排队：Neo4j 变慢时满了直接跳过，不挤占模型调用的名额。
+                self.graph_executor = BoundedExecutor(settings.graph_workers, name="graph", queue_size=0)
             else:
                 logger.warning("GRAPH_ENABLED 已开启但未设置 NEO4J_PASSWORD；本进程不查询知识图谱")
 
@@ -199,6 +201,8 @@ class Services:
         if isinstance(self.reranker, RemoteReranker):
             await self.reranker.aclose()
         await self.faq_refresh_executor.aclose()
+        if self.graph_executor is not None:
+            await self.graph_executor.aclose()
         # 等待已超时请求的同步工作退出，再关闭共享连接。
         def close():
             if self.faq is not None:

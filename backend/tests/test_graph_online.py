@@ -1,11 +1,14 @@
 import asyncio
 import logging
+import threading
+import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.config import Settings
 from app.contracts import RetrievedDoc
+from app.executor import BoundedExecutor
 from app.graph import planner
 from app.graph.lookup import MAX_ROWS, MORE_ROWS, GraphLookup, render
 from app.llm.generator import GeneratedAnswer
@@ -178,3 +181,80 @@ def test_lookup_trace_comes_from_worker_thread():
     graph = [item for item in result.trace if item.stage == "graph"]
     assert graph[0].hit is True and graph[0].detail == "power" and graph[0].candidates == 1
     assert result.sources[0].doc_id == "graph:power"
+
+
+def test_graph_lookup_runs_on_its_own_executor():
+    calls = []
+
+    class GraphExecutor:
+        async def run(self, function):
+            calls.append(function)
+            return function()
+
+    services = FakeServices().knowledge()
+    services.graph_lookup = lambda question: graph_doc()
+    services.graph_executor = GraphExecutor()
+    result = run(services)
+    assert len(calls) == 1 and result.route == "rag"
+    assert [doc.doc_id for doc in services.generate_answer.await_args.args[1]][0] == "graph:power"
+
+
+def test_busy_graph_executor_skips_graph_without_failing_chat(caplog):
+    release = threading.Event()
+    busy = BoundedExecutor(1, name="graph-test", queue_size=0)
+    services = FakeServices().knowledge()
+    services.graph_lookup = lambda question: graph_doc()
+    services.graph_executor = busy
+
+    async def scenario():
+        blocker = asyncio.create_task(busy.run(release.wait))
+        await asyncio.sleep(0.05)
+        chat = ChatRequest(session_id="test", message="原问题", debug=True)
+        try:
+            return await run_chat(chat, settings=Settings(_env_file=None, allow_trace=True,
+                                                          speculative_retrieval=False), services=services)
+        finally:
+            release.set()
+            await blocker
+            await busy.aclose()
+
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        result = asyncio.run(scenario())
+    assert result.route == "rag"
+    assert [doc.doc_id for doc in services.generate_answer.await_args.args[1]] == ["d1"]
+    assert "graph_unavailable" in caplog.text
+
+
+def test_lookup_stops_running_plans_after_timeout():
+    def slow(query, params):
+        time.sleep(0.05)
+        return [PAIR_ROW] if query == planner.Q_PAIR else []
+
+    lookup, driver, _ = lookup_with(slow, graph_timeout_s=0.01)
+    with pytest.raises(TimeoutError):
+        lookup.lookup("衡电 A1 能给栖光 L1 供电吗")
+    assert len(driver.queries) == 1
+
+
+@pytest.mark.parametrize("retrieved", [[], [document(score=0.05).model_copy(update={"score_provider": "local"})]])
+def test_graph_only_context_still_refuses_when_generator_says_no_answer(retrieved):
+    services = FakeServices().knowledge()
+    services.retrieve.return_value = retrieved
+    services.graph_lookup = AsyncMock(return_value=graph_doc())
+    services.generate_answer.return_value = GeneratedAnswer("NO_ANSWER", set())
+    result = run(services)
+    assert [doc.doc_id for doc in services.generate_answer.await_args.args[1]] == ["graph:power"]
+    assert result.route == "fallback" and result.answer == REFUSAL and result.sources == []
+
+
+def test_product_question_without_relation_never_reaches_neo4j():
+    # 链接到了商品但问的不是兼容关系：规则不放行，不连库、不加资料，回答只用向量检索结果。
+    lookup, driver, factory = lookup_with(lambda query, params: [PAIR_ROW])
+    services = FakeServices().knowledge()
+    services.graph_lookup = lookup.lookup
+    chat = ChatRequest(session_id="test", message="听岚 S1 的充电盒防水吗？", debug=True)
+    result = asyncio.run(run_chat(chat, settings=Settings(_env_file=None, allow_trace=True,
+                                                          speculative_retrieval=False), services=services))
+    assert result.route == "rag" and driver.queries == [] and not factory.called
+    assert [doc.doc_id for doc in services.generate_answer.await_args.args[1]] == ["d1"]
+    assert [item.detail for item in result.trace if item.stage == "graph"] == ["skipped"]
