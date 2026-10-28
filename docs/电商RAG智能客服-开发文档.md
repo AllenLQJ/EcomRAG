@@ -22,6 +22,7 @@
       general   → 通用对话生成 → general
       sensitive → 固定敏感拒答 → fallback
       knowledge → Milvus 混合检索 → 父块去重 → 重排 → 拒答判断
+                  （GRAPH_ENABLED 时并行查询 Neo4j 图谱，命中则作为资料 [1]）
                   → 上下文过滤 → 带 [n] 引用生成 → rag / NO_ANSWER 转 fallback
 ```
 
@@ -29,7 +30,7 @@ FAQ 与缓存只存 FAQ 答案，不缓存 RAG 或闲聊。缓存键为 `faq:cac
 
 路由意图优先级为 sensitive > knowledge > general。配送范围、付款、商品、售后等店铺具体问题走 knowledge，即使目的地特殊或资料可能不支持，也先检索。路由正常一次调用；JSON 提取或字段校验失败时再调用一次，仍失败则可疑输入走 sensitive，其余走 knowledge/direct/原问。网络故障由 LLM 客户端处理，不等同于路由解析重试。`hyde/subquery/stepback` 仅保留枚举，当前查询构建统一按 direct 处理。
 
-默认 `SPECULATIVE_RETRIEVAL=true`：空 history、FAQ 未命中时，并行执行路由与**原问题**的召回/重排；knowledge 复用这次结果，不再按改写问题重新召回。general/sensitive 会取消等待或丢弃投机结果，其 trace 不进入响应；已经运行的同步模型线程不能强制停止，仍占用执行名额和模型锁。关闭该开关时先路由，再用改写问题召回、原问题重排。
+`SPECULATIVE_RETRIEVAL` 默认关闭：路由判为 general/sensitive 时投机召回与远程重排的开销全部浪费，因此默认先路由，再用改写问题召回、原问题重排。设为 true 时，空 history、FAQ 未命中时并行执行路由与**原问题**的召回/重排；knowledge 复用这次结果，不再按改写问题重新召回。general/sensitive 会取消等待或丢弃投机结果，其 trace 不进入响应；已经运行的同步模型线程不能强制停止，仍占用执行名额和模型锁。
 
 ### 2.2 检索、重排与拒答
 
@@ -46,6 +47,8 @@ bge-m3 输出 1024 维稠密向量与词表 ID 稀疏向量。Milvus 集合 `kb_
 `RERANK_PROVIDER=remote` 使用远程重排：完整合法的 0 基 index 双射优先于回显文本；文本不同仅记录一条差异计数，不含 query、候选正文或 key。index 越界、重复或缺项才回退逐条文本匹配，仍无法完整对应则为 `bad_response`，所有分数仍须有限。`REMOTE_REFUSE_THRESHOLD` 仅接受 [0,1] 内的有限数（含 0、1），空值/None 表示云端分数不用于拒答，启动时提示「云端分数不用于拒答，拒答依赖路由 sensitive 与生成 NO_ANSWER」。智谱分数可能对所有问题都接近 1.0，默认保持此项为空；只有实测可区分时才显式设置。`REMOTE_RAG_CONTEXT_MIN_SCORE` 允许任意有限数，空时保留全部远程 TopK，设置后仍至少保留最高分资料；此项只过滤上下文。本地回退继续使用本地阈值，RRF 回退不按分数拒答；详细配置见 [README](../README.md)。
 
 提示词要求只据资料中的直接依据回答，通常不超过 150 字、最多 5 条，每个事实附 `[n]`；没有直接依据、完全无法回答，或请求涉及他人隐私、医疗/疗效/法律结果承诺、忽略规则或展示系统提示词时，只输出内部标记 `NO_ANSWER`。除必须拒答的请求外，部分可答则保留有直接依据的已知事实并说明缺失内容。路由已有他人隐私及提示词注入的 sensitive 规则。pipeline 清除大小写、空白、全角变体的标记；只有标记或清理后仅剩标点、格式、引用时转为固定拒答，sources 为空。流式缓冲跨增量的标记前缀，结束时残缺真前缀也不发给顾客。引用校验支持 `[1]`、`【1】`、`［1］` 与全角数字，越界编号删除，代码块及行内代码不参与引用匹配。
+
+**知识图谱（可选，`GRAPH_ENABLED=false` 默认关闭）**：knowledge 路由后，用重排问句（多轮为改写问句）在 `app/graph/planner.py` 做规则实体链接与意图识别，与向量检索并行查询 Neo4j。只有链接到商品、外部设备或系列且命中具体模板时才查询；纯场景问法和只能退到一跳邻居的问句不查。供电类关键词还要求另一端：第二个实体、衡电供电商品、「充电器/充电宝」品类，或「店里/哪款/能用」等找供电端的问法；无实体时须为「哪些」类汇总问法。因此「听岚 S1 的充电盒防水吗」不查；「会送适配器吗」类只查包装含/不含。「视频」只在「传视频/视频输出」等说法下链接显示器。模板统一按结论排序（规格层面匹配 → 部分/接口层面匹配 → 不匹配），在线每条只取 21 行，资料最多列 20 行，多出时注明「其余结果未列出」；离线演示和 `--eval` 取全量。查询结果写成一份标题为「商品兼容关系（知识图谱）」的资料，放在资料 [1]，`skus` 为结果中的商品，供引用与商品卡片使用，末尾附规格层面免责句。向量检索低分或无结果但图谱有结果时，不再固定拒答，只用图谱资料生成，生成器仍可输出 NO_ANSWER。Neo4j 未启动、超时（`GRAPH_TIMEOUT_S`）或报错时只记录 `graph_unavailable` 日志与 trace，按原链路继续，不返回 503。trace 新增 `graph` 阶段：`detail` 为图谱意图、`skipped` 或 `unavailable`，`candidates` 为结果行数。
 
 ### 2.3 多轮上下文
 
@@ -221,7 +224,11 @@ LLM_MAX_CONCURRENCY=50
 | RERANK_TEXT_MODE | `child` | child 使用最佳子块，parent 使用父块 |
 | RERANK_FP16 | false | 仅 MPS 支持 fp16；CPU 使用 fp32 |
 | RERANK_TOP_K | 5 | 默认返回父块数；retrieve 显式 top_k 优先 |
-| SPECULATIVE_RETRIEVAL | true | 空 history 时并行路由与原问检索/重排 |
+| SPECULATIVE_RETRIEVAL | false | 设为 true 时，空 history 下并行路由与原问检索/重排 |
+| GRAPH_ENABLED | false | 在线问答是否并行查询 Neo4j 图谱；开启但未设 NEO4J_PASSWORD 时告警并不查询 |
+| GRAPH_TIMEOUT_S | 1.5 | 图谱查询整体超时，同时用作连接与单条 Cypher 超时；超时跳过图谱 |
+| GRAPH_MAX_CHARS | 2500 | 图谱资料最大字符数（≥500），超出截断 |
+| NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD / NEO4J_DATABASE | `bolt://127.0.0.1:7687` / `neo4j` / 空 / `neo4j` | 在线服务从 `.env` 读取；图谱 CLI 仍只读进程环境 |
 | REFUSE_THRESHOLD | 0.2 | 仅本地及本地回退重排最高分严格低于此值时拒答；云端默认不按分数拒答 |
 | RAG_CONTEXT_MIN_SCORE | 0.1 | 生成上下文过滤阈值；始终保留最高分，仅开启重排时生效 |
 | LLM_TIMEOUT_S | 12 | 单次传输/流式首内容超时，不含信号量排队 |
@@ -722,3 +729,4 @@ Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` �
 - **并发容量统一为 50**：LLM、远程重排、模型工作线程及等待队列、限流检查线程及总在飞容量均默认 50；分钟频率额度提高为 50，日额度保留 200。该调整扩大接纳容量，供应商配额及本地模型锁仍独立生效，不据此宣称单机模型吞吐提升。
 - **登录失败区分“账号不存在/密码错误”**：产品负责人明确要求可区分提示，已接受账号枚举风险；两种失败都做一次 scrypt 校验以减少耗时差异，详见[账号与历史接口说明](账号与历史接口说明.md)。
 - **知识库改为 alias + 版本化发布**：就地 upsert 不清理旧块且无法回滚，改为 `--staged` 构建、`kb_switch --check` 校验后切换，保留 v0 作回滚点（5.6）。
+- **图谱接入在线问答且低分不拒答**：兼容类多跳问题（如「衡电 A2 配栖光 L5 行不行」）向量检索常偏低分，图谱命中时改为只用图谱资料作答；默认关闭，Neo4j 故障只跳过图谱。保留生成器 NO_ANSWER 兜底，`test_graph_online.py` 覆盖触发、低分、故障与超时。

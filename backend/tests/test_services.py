@@ -238,7 +238,7 @@ def test_default_model_queue_accepts_next_chat_even_with_legacy_capacity_one(cap
 @pytest.mark.parametrize("intent", ["general", "sensitive"])
 def test_next_request_queues_behind_discarded_speculative_worker(intent, caplog):
     async def run():
-        settings = Settings(_env_file=None)
+        settings = Settings(_env_file=None, speculative_retrieval=True)
         loop = asyncio.get_running_loop()
         entered, next_queued, release = asyncio.Event(), asyncio.Event(), threading.Event()
         services = FakeServices()

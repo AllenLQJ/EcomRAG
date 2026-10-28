@@ -38,7 +38,7 @@ def test_api_handoff_timeout_chat_done_has_no_speculative_stages(caplog):
             finally:
                 cancelled.set()
         services.rerank_candidates = rerank
-        app = create_app(Settings(_env_file=None, request_timeout_s=0.1, warmup_on_start=False), services=services)
+        app = create_app(Settings(_env_file=None, request_timeout_s=0.1, warmup_on_start=False, speculative_retrieval=True), services=services)
         app.state.rate_limiter.cache._client = lambda: None
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             result = await client.post("/api/v1/chat", json={"session_id": "handoff", "message": "问题"})

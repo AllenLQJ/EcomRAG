@@ -134,7 +134,7 @@ def test_all_test_settings_constructors_explicitly_disable_env_files():
 
 def test_performance_config_defaults_and_zero_char_limit():
     settings = Settings(_env_file=None, rerank_max_chars=0)
-    assert settings.speculative_retrieval is True
+    assert settings.speculative_retrieval is False
     assert settings.rerank_candidates == 10 and settings.router_max_tokens == 2048
     assert settings.rerank_max_length == 512 and settings.rerank_batch_size == 16
     assert settings.rerank_max_chars == 0

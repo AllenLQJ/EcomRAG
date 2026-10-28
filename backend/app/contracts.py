@@ -46,7 +46,9 @@ class RetrievedDoc(BaseModel):
     # None 为旧索引无元数据；[] 为显式无关联商品，不再从文件名推断。
     skus: list[str] | None = Field(default=None, exclude=True)
     # 请求内携带分数来源，避免并发请求共享 fallback 状态；不进入对外响应。
-    score_provider: Literal["local", "remote", "fallback_local", "fallback_rrf"] | None = Field(default=None, exclude=True)
+    # graph 为图谱资料，不参与重排分数与拒答阈值比较。
+    score_provider: Literal["local", "remote", "fallback_local", "fallback_rrf", "graph"] | None = Field(
+        default=None, exclude=True)
 
     @field_validator("skus", mode="before")
     @classmethod

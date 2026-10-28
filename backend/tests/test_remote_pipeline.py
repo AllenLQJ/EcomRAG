@@ -151,7 +151,7 @@ def test_disabled_rerank_has_priority_in_pipeline(provider):
     services.retrieve_candidates = Mock(return_value=candidates)
     services.rerank_candidates = retriever.arerank_candidates
     result = asyncio.run(run_chat(ChatRequest(session_id="off", message="q", debug=True),
-                                   settings=configured(rerank_provider=provider, rerank_enabled=False,
+                                   settings=configured(rerank_provider=provider, rerank_enabled=False, speculative_retrieval=True,
                                                        allow_trace=True), services=services))
     assert result.route == "rag" and len(services.generate_answer.call_args.args[1]) == 2
     remote.rerank.assert_not_awaited()
@@ -252,7 +252,7 @@ def test_remote_speculation_cancels_io_without_trace_leaks():
             return RouteDecision(intent="general", rewritten_query="q")
         services.route = route
         result = await run_chat(ChatRequest(session_id="cancel", message="q", debug=True),
-                                settings=configured(allow_trace=True), services=services)
+                                settings=configured(allow_trace=True, speculative_retrieval=True), services=services)
         await cancelled.wait()
         assert result.route == "general"
         assert not any(item.stage in {"retrieve", "rerank"} for item in result.trace)

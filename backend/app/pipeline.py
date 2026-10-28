@@ -126,6 +126,19 @@ async def rescue_rerank(services, question, rewritten, docs, candidates, trace, 
     return result
 
 
+async def lookup_graph(lookup, question, settings, executor):
+    """与向量检索并行；任何故障或超时只记录并跳过图谱，不让问答因此失败。"""
+    started = perf_counter()
+    try:
+        async with asyncio.timeout(settings.graph_timeout_s):
+            return await call(lookup, question, executor=executor)
+    except Exception as exc:
+        logger.warning("graph_unavailable error=%s", type(exc).__name__,
+                       extra={"reason": type(exc).__name__, "stage": "graph"})
+        record("graph", started, hit=False, detail="unavailable")
+        return None
+
+
 def select_context(docs, settings):
     if not docs or not settings.rerank_enabled or uses_rrf(docs):
         return docs
@@ -222,6 +235,7 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
         if faq_response is not None:
             return faq_response
     speculative, speculative_trace = None, []
+    graph_task = graph_doc = None
     if settings.speculative_retrieval and not history:
         speculative = asyncio.create_task(speculate(services, chat.message, speculative_trace,
                                                     executor=executor, top_k=settings.rerank_top_k))
@@ -257,6 +271,9 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
                 return faq_response
         # 多轮原问可能只有「那台灯呢」，所有重排与补救均使用补齐后的问句。
         rerank_query = decision.rewritten_query if history else chat.message
+        graph = getattr(services, "graph_lookup", None)
+        if graph is not None:
+            graph_task = asyncio.create_task(lookup_graph(graph, rerank_query, settings, executor))
         if on_status is not None:
             await on_status("retrieving")
         if speculative is not None:
@@ -280,17 +297,29 @@ async def _run(chat, request_id, settings, services, trace, history, executor, *
             candidates = docs
         docs = await rescue_rerank(services, rerank_query, decision.rewritten_query, docs, candidates,
                                    trace, settings, executor)
+        if graph_task is not None:
+            graph_doc = await graph_task
+            graph_task = None
     finally:
         # 路由失败、整请求超时或调用方取消时同样必须消费投机任务的异常。
         if speculative is not None:
             discard(speculative)
+        if graph_task is not None:
+            graph_task.cancel()
     threshold = refuse_threshold(settings, docs)
     if not docs or (settings.rerank_enabled and not uses_rrf(docs) and threshold is not None
                     and max(doc.score for doc in docs) < threshold):
-        return response(REFUSAL, "fallback", strategy="direct",
-                        refuse_reason="no_docs" if not docs else "low_score")
-    # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
-    docs = select_context(docs, settings)
+        if graph_doc is None:
+            return response(REFUSAL, "fallback", strategy="direct",
+                            refuse_reason="no_docs" if not docs else "low_score")
+        # 图谱命中时只用图谱资料作答；低分检索结果不进入上下文，生成器仍可输出 NO_ANSWER。
+        logger.info("graph_answer_without_docs reason=%s", "no_docs" if not docs else "low_score")
+        docs = []
+    else:
+        # 拒答阈值判断后才筛选生成上下文；过滤后的顺序就是生成器和响应共用的编号。
+        docs = select_context(docs, settings)
+    if graph_doc is not None:
+        docs = [graph_doc, *docs]
     if collector is not None:
         # 与 Generator._rag_messages 的资料块逐项一致，保留未引用项和原始编号。
         collected_contexts = [{"index": i, "doc_id": doc.doc_id, "title": doc.title,
