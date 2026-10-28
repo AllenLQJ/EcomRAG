@@ -12,6 +12,7 @@ volumes/
 models/
 logs/
 backups/faq/
+.kb-state/
 .pytest_cache/
 .ruff_cache/
 *.py[cod]

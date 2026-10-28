@@ -259,6 +259,31 @@ class GraphDemoTest(unittest.TestCase):
                 self.assertEqual(got_intent, intent)
                 self.assertIn(query, queries)
 
+    def test_power_words_need_another_end(self):
+        # 商品自身属性里的「充电」不查图谱；问店内供电端时照常查询。
+        self.assertEqual(self.plan("听岚 S1 的充电盒防水吗？"), ("neighbors", [planner.Q_NEIGHBORS]))
+        self.assertEqual(self.plan("退货要把充电器寄回吗"), ("neighbors", []))
+        self.assertEqual(self.plan("听岚 S1 的充电盒用什么充电")[0], "power")
+        self.assertIn(planner.Q_SOURCES, self.plan("听岚 S1 的充电盒用什么充电")[1])
+
+    def test_package_question_only_queries_package(self):
+        self.assertEqual(self.plan("买栖光 L1 会送电源适配器吗？"), ("package", [planner.Q_PACKAGE]))
+
+    def test_unboxing_video_is_not_a_monitor(self):
+        self.assertEqual(self.link("外观问题能不能不传开箱视频？"), [])
+        self.assertEqual(self.plan("外观问题能不能不传开箱视频？")[1], [])
+        self.assertEqual(self.link("联枢 C2 能传视频吗"), ["lianshu-c2", "ext-monitor-c-video"])
+
+    def test_templates_rank_by_level_and_take_limit(self):
+        templates = [v for k, v in vars(planner).items() if k.startswith("Q_") and k != "Q_NEIGHBORS"]
+        for query in templates:
+            with self.subTest(query=query[:40]):
+                self.assertTrue(query.endswith("LIMIT $limit"))
+                if "AS level" in query:
+                    self.assertIn("ORDER BY " + planner.LEVEL_RANK, query)
+        _, _, plans = planner.plan_queries("衡电 A1 能给栖光 L1 供电吗", self.products)
+        self.assertTrue(all(params["limit"] == planner.FULL_LIMIT for _, _, params in plans))
+
     def test_hdmi_does_not_also_link_c_video_monitor(self):
         self.assertEqual(self.link("想接 HDMI 显示器"), ["ext-monitor-hdmi"])
         self.assertEqual(self.link("C 口线能接显示器吗"), ["ext-monitor-c-video"])

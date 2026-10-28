@@ -7,7 +7,7 @@ import pytest
 from app.config import Settings
 from app.contracts import RetrievedDoc
 from app.graph import planner
-from app.graph.lookup import GraphLookup, render
+from app.graph.lookup import MAX_ROWS, MORE_ROWS, GraphLookup, render
 from app.llm.generator import GeneratedAnswer
 from app.pipeline import REFUSAL, run_chat
 from app.schemas import ChatRequest
@@ -81,6 +81,18 @@ def test_render_names_ids_lists_and_truncates():
     assert "扩展器：衡电 A1 充电器；关系：可直通供电；外部设备：65 瓦电脑；供电商品：衡电 A1 充电器；连接路径：甲 → 乙" in text
     long = render([("标题", [{"detail": "很长" * 100}] * 20)], names, 500)
     assert len(long) <= 500 and "（结果较多，已截断）" in long and long.endswith(CAVEAT)
+
+
+def test_render_marks_rows_beyond_limit_without_count():
+    rows = [{"detail": f"第{i}条"} for i in range(MAX_ROWS + 1)]
+    text = render([("标题", rows)], {}, 2500)
+    assert f"第{MAX_ROWS - 1}条" in text and f"第{MAX_ROWS}条" not in text and MORE_ROWS in text
+
+
+def test_lookup_limits_every_query_to_one_row_beyond_render_cap():
+    lookup, driver, _ = lookup_with(lambda query, params: [PAIR_ROW] if query == planner.Q_PAIR else [])
+    lookup.lookup("衡电 A1 能给栖光 L1 供电吗")
+    assert driver.queries and all(params["limit"] == MAX_ROWS + 1 for _, params, _ in driver.queries)
 
 
 def graph_doc():

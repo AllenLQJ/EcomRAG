@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: SecretStr = SecretStr("")
     neo4j_database: str = "neo4j"
-    speculative_retrieval: bool = True
+    speculative_retrieval: bool = False
     refuse_threshold: float = Field(default=0.2, ge=0, le=1)
     rag_context_min_score: float = Field(default=0.1, ge=0, le=1)
     llm_timeout_s: float = Field(default=12, gt=0)

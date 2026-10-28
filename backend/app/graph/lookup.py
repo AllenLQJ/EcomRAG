@@ -19,6 +19,8 @@ PREAMBLE = "以下为店内商品知识图谱按商品参数推导的关系，�
 MAX_ROWS = 20
 MAX_LINE = 300  # GRAPH_MAX_CHARS 最小 500，保证至少一行结果能放下
 TRUNCATED = "（结果较多，已截断）"
+# 查询只取 MAX_ROWS + 1 行，不知道总数；模板已按匹配程度排序，列出的是最匹配的部分。
+MORE_ROWS = "- 其余结果未列出（已按匹配程度优先列出）"
 REL_LABELS = {
     "CAN_POWER": "可供电", "NOT_COMPATIBLE": "不匹配", "INCLUDES": "包装含", "NOT_INCLUDES": "包装不含",
     "CONNECTS_TO": "可连接", "POWERS": "可供电", "CAN_HOLD": "可收纳", "CABLE_SUPPORTS": "线材功率满足",
@@ -80,7 +82,7 @@ def render(results, names, max_chars):
         lines.append(f"【{title}】")
         lines.extend(f"- {render_row(row, names)}"[:MAX_LINE] for row in rows[:MAX_ROWS])
         if len(rows) > MAX_ROWS:
-            lines.append(f"- 其余 {len(rows) - MAX_ROWS} 条未列出")
+            lines.append(MORE_ROWS)
     budget = max_chars - len(CAVEAT) - len(TRUNCATED) - 2
     kept, used = [], 0
     for line in lines:
@@ -142,7 +144,7 @@ class GraphLookup:
     def lookup(self, question):
         started = perf_counter()
         self._load()
-        linked, intent, plans = plan_queries(question, self._products, self._aliases)
+        linked, intent, plans = plan_queries(question, self._products, self._aliases, limit=MAX_ROWS + 1)
         if not should_query(linked, intent, plans):
             record("graph", started, hit=False, detail="skipped")
             return None

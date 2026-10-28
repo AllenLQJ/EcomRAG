@@ -39,7 +39,7 @@ def test_knowledge_router_and_retrieval_start_concurrently_and_use_original_quer
         services.route = AsyncMock(side_effect=route)
         services.retrieve_candidates = AsyncMock(side_effect=candidates)
         services.rerank_candidates = AsyncMock(return_value=docs)
-        result = await run_chat(request(), settings=Settings(_env_file=None, allow_trace=True), services=services)
+        result = await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, allow_trace=True), services=services)
         assert result.route == "rag" and result.sources[0].doc_id == "d2"
         services.retrieve_candidates.assert_awaited_once_with(["原问题"])
         services.rerank_candidates.assert_awaited_once_with("原问题", docs, top_k=5)
@@ -79,7 +79,7 @@ def test_discarded_speculation_has_no_unretrieved_exception_or_trace_leak(intent
         services.route = AsyncMock(side_effect=route)
         services.retrieve_candidates = AsyncMock(side_effect=candidates)
         services.rerank_candidates = Mock()
-        result = await run_chat(request(), settings=Settings(_env_file=None, allow_trace=True), services=services)
+        result = await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, allow_trace=True), services=services)
         await asyncio.sleep(0)  # 消费取消回调，不等待任何模型线程。
         assert not unhandled
         assert result.route == ("general" if intent == "general" else "fallback")
@@ -101,7 +101,7 @@ def test_knowledge_speculative_infrastructure_failure_maps_to_503(error):
     services = FakeServices().knowledge()
     services.retrieve_candidates = AsyncMock(side_effect=error)
     with pytest.raises(AppError) as caught:
-        asyncio.run(run_chat(request(), settings=Settings(_env_file=None), services=services))
+        asyncio.run(run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True), services=services))
     assert (caught.value.code, caught.value.http_status) == (50301, 503)
     services.generate_answer.assert_not_awaited()
 
@@ -111,7 +111,7 @@ def test_knowledge_speculative_programming_error_propagates():
     error = ValueError("bug")
     services.retrieve_candidates = AsyncMock(side_effect=error)
     with pytest.raises(ValueError) as caught:
-        asyncio.run(run_chat(request(), settings=Settings(_env_file=None), services=services))
+        asyncio.run(run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True), services=services))
     assert caught.value is error
 
 
@@ -152,7 +152,7 @@ def test_speculative_rerank_runs_off_event_loop_with_trace_context():
             return decision()
         services.route = route
         services.rerank_candidates = rerank
-        result = await run_chat(request(), settings=Settings(_env_file=None, allow_trace=True), services=services)
+        result = await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, allow_trace=True), services=services)
         assert result.route == "rag"
         assert len([item for item in result.trace if item.stage == "rerank"]) == 1
     asyncio.run(asyncio.wait_for(run(), 2))
@@ -175,7 +175,7 @@ def test_request_timeout_consumes_both_parallel_tasks_and_records_total():
         services.retrieve_candidates = candidates
         trace = []
         with pytest.raises(AppError) as caught:
-            await run_chat(request(), settings=Settings(_env_file=None, request_timeout_s=0.02),
+            await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, request_timeout_s=0.02),
                            services=services, trace_sink=trace)
         assert caught.value.code == 50401
         await asyncio.wait_for(cancelled.wait(), 1)
@@ -208,7 +208,7 @@ def test_discarded_worker_finishes_later_without_delaying_response_or_leaking_tr
         services.route, services.rerank_candidates = route, rerank
         trace = []
         try:
-            result = await asyncio.wait_for(run_chat(request(), settings=Settings(_env_file=None, allow_trace=True),
+            result = await asyncio.wait_for(run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, allow_trace=True),
                                                      services=services, trace_sink=trace), 1)
             assert result.route == "general" and not finished.is_set()
         finally:
@@ -243,7 +243,7 @@ def test_handoff_timeout_drops_all_speculative_trace_and_consumes_worker_excepti
         trace = []
         try:
             with pytest.raises(AppError) as caught:
-                await run_chat(request(), settings=Settings(_env_file=None, request_timeout_s=0.1),
+                await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True, request_timeout_s=0.1),
                                services=services, trace_sink=trace)
             assert caught.value.code == 50401 and entered.is_set()
             assert [item.stage for item in trace] == ["cache", "faq", "router", "total"]
@@ -269,7 +269,7 @@ def test_handoff_baseexception_is_reraised_and_private_trace_discarded():
         services.rerank_candidates = AsyncMock(side_effect=Abort())
         trace = []
         with pytest.raises(Abort):
-            await run_chat(request(), settings=Settings(_env_file=None), services=services, trace_sink=trace)
+            await run_chat(request(), settings=Settings(_env_file=None, speculative_retrieval=True), services=services, trace_sink=trace)
         await asyncio.sleep(0)
         assert not {"retrieve", "rerank"} & {item.stage for item in trace}
     asyncio.run(run())
