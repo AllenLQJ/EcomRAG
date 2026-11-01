@@ -129,6 +129,11 @@ class Settings(BaseSettings):
     user_daily_limit: int = Field(default=50, gt=0)
     rate_limit_day_tz_offset_hours: int = Field(default=8, ge=-12, le=14)
     auth_secret: SecretStr = SecretStr("")
+    # 服务间内部接口（/api/v1/rag/search、/internal/v1/kb/upsert）的令牌；为空则这些接口不存在（404）
+    internal_token: SecretStr = SecretStr("")
+    # 内部检索接口 score 的校准区间：稠密余弦 floor→0、ceiling→1（实测依据见 internal_api.calibrated）
+    internal_score_floor: float = Field(default=0.45, ge=0, lt=1)
+    internal_score_ceiling: float = Field(default=0.70, gt=0, le=1)
     auth_scrypt_n: int = Field(default=32768, ge=32768, le=262144)
     auth_io_workers: int = Field(default=4, gt=0)
     auth_io_max_in_flight: int = Field(default=16, gt=0)

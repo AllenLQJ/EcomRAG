@@ -22,6 +22,8 @@ GENERATE_MODEL=glm-5.3-flash
 LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
 # 非调试模式（DEBUG=false，默认）必须非空，否则启动失败；用 openssl rand -hex 32 生成，不要提交
 AUTH_SECRET=粘贴生成结果
+# 可选：服务间内部接口（/api/v1/rag/search、/internal/v1/kb/upsert）的令牌；留空则这两个接口不存在。见开发文档第 9 节
+INTERNAL_TOKEN=
 # 保持为空；它只接受完整 http(s) 地址，填 /images 会启动失败
 IMAGE_BASE_URL=
 ```

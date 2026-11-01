@@ -731,3 +731,8 @@ Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` �
 - **登录失败区分“账号不存在/密码错误”**：产品负责人明确要求可区分提示，已接受账号枚举风险；两种失败都做一次 scrypt 校验以减少耗时差异，详见[账号与历史接口说明](账号与历史接口说明.md)。
 - **知识库改为 alias + 版本化发布**：就地 upsert 不清理旧块且无法回滚，改为 `--staged` 构建、`kb_switch --check` 校验后切换，保留 v0 作回滚点（5.6）。
 - **图谱接入在线问答且低分不拒答**：兼容类多跳问题（如「衡电 A2 配栖光 L5 行不行」）向量检索常偏低分，图谱命中时改为只用图谱资料作答；默认关闭，Neo4j 故障只跳过图谱。保留生成器 NO_ANSWER 兜底，`test_graph_online.py` 覆盖触发、低分、故障与超时。
+- **新增服务间内部接口（供 EcomOps 调用）**：`POST /api/v1/rag/search`（纯检索，不经路由/LLM，不占游客与账号配额，也不发游客 cookie）与 `POST /internal/v1/kb/upsert`（把一条运营补录的知识切块、编码，就地 upsert 到**当前发布的集合**）。两者都要求请求头 `X-Internal-Token`，由 `INTERNAL_TOKEN` 配置；**为空时这组接口返回 404（不存在）**。实现在 `backend/app/internal_api.py`。要点：
+  - **score 是校准后的相关度，不是重排分**。远程重排对库外问题也给 ~1.0（实测"怎么做红烧肉"的重排分仍约 1），不能当置信度；所以 `score = clamp((稠密余弦 − floor)/(ceiling − floor))`，默认 `INTERNAL_SCORE_FLOOR=0.45`、`INTERNAL_SCORE_CEILING=0.70`。依据是 16 条样本上的实测：库内问题余弦 0.68–0.76，库外 0.37–0.58。样本很小、只对 bge-m3 与当前库成立，换模型或扩库后需重新标定。响应里同时带 `cosine` 与 `rerank_score` 供核对。
+  - **upsert 沿用 `ingest.run` 的就地更新协议**：取发布锁、`recover()`、固定写入当前发布的实体并把该版本登记为 `modified-in-place`（之后不能再用陈旧发布清单切回）。主键由 `chunk_id` 派生的文档来源决定（`doc_id = sha256("ecomops/<chunk_id>.md")[:24]`），重复调用不新增行；文本变短时会删除该文档遗留的高位子块。分类固定为 `after_sales`。
+  - **tenant_id / catalog_category_id 被接受但不参与过滤**：现有集合没有这两个字段，做租户隔离需要加字段并重建集合（`--staged` 全量重建），尚未做。
+  - 验证：`tests/test_internal_api.py` 14 个离线用例；upsert 在一个临时 Milvus 集合上用真实 bge-m3 验证过（写入、重复写入同主键、改文本后检索到新文本，验证后已删除该集合，未写入 `kb_chunks`）；search 对运行中的真实服务（含远程重排）验证过。

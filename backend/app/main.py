@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException
 
 from app import config
 from app.account_api import account_router
+from app.internal_api import KbWriter, internal_router
 from app.auth import AccountService, GUEST_COOKIE, set_cookie
 from app.chat_log import ChatLog, ChatLogWriter, persist
 from app.contracts import (
@@ -105,7 +106,7 @@ def allowed_origin(request: Request, origin: str, whitelist: list[str]) -> bool:
 
 
 def create_app(settings: config.Settings | None = None, *, services=None, chat_log_writer=None,
-               account_service=None, daily_quota=None) -> FastAPI:
+               account_service=None, daily_quota=None, kb_writer=None) -> FastAPI:
     settings = settings if settings is not None else config.get_settings()
     configure_logging(settings)
     logger.info("capacity_config llm=%d rerank=%d model_workers=%d model_queue=%d "
@@ -169,7 +170,7 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         started, status = perf_counter(), 500
         guest_token = None
         try:
-            if request.url.path.startswith("/api/v1/"):
+            if request.url.path.startswith("/api/v1/") and not request.url.path.startswith("/api/v1/rag/"):
                 old_guest = request.cookies.get(GUEST_COOKIE)
                 request.state.guest_id = accounts.guest(old_guest)
                 if request.state.guest_id != old_guest:
@@ -291,6 +292,7 @@ def create_app(settings: config.Settings | None = None, *, services=None, chat_l
         }
 
     app.include_router(account_router(settings, accounts, quota))
+    app.include_router(internal_router(settings, services, kb_writer or KbWriter(settings, services)))
 
     async def chat_context(payload, request):
         user = await accounts.current(request)
