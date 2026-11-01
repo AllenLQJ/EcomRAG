@@ -5,10 +5,15 @@
 
 返回的 score 是校准后的相关度（见 calibrated），不是重排分；rerank_score 是原始重排分，仅供参考。
 
-当前知识库是单租户、按文档分类（after_sales 等）的：tenant_id / catalog_category_id 会被接受但**不参与过滤**，
-要做租户隔离需要给集合加字段并重建，见开发文档。
+租户/类目/生效期过滤取决于集合是否带规则元数据字段（`KB_RULE_METADATA=true` 的集合）：
+  - 带字段：检索只看 公共规则 + 该租户规则（+ 类目），且当前时间在生效期内；响应 `filtered=true`。
+  - 不带字段（现有的 kb_chunks）：tenant_id / catalog_category_id 被接受但**不参与过滤**，响应 `filtered=false`，
+    调用方不能当作已经做了租户隔离。upsert 同理，元数据不会被存下来（响应 `rule_metadata_stored=false`）。
+迁移到带字段的集合见开发文档第 9 节。
 """
 import asyncio
+import contextlib
+import dataclasses
 import hashlib
 import hmac
 import inspect
@@ -23,6 +28,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, INVALID_ARGUMENT, NOT_FOUND, UNAUTHORIZED
 from app.pipeline import call
+from app.retrieval.retriever import rule_scope
+from app.retrieval.store import NEVER_EXPIRES
 
 logger = logging.getLogger(__name__)
 KB_CATEGORY = "after_sales"          # 运营补录的是售后规则；分类集合见 ingest.loaders.CATEGORIES
@@ -34,6 +41,13 @@ class SearchBody(BaseModel):
     tenant_id: str | None = Field(default=None, max_length=64)
     catalog_category_id: str | None = Field(default=None, max_length=64)
     top_k: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("tenant_id", "catalog_category_id")
+    @classmethod
+    def safe_id(cls, value):
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_.:\-]{1,64}", value):
+            raise ValueError("只能含字母数字和 _ . : -，长度 1–64")
+        return value
 
     @field_validator("query")
     @classmethod
@@ -51,8 +65,23 @@ class UpsertBody(BaseModel):
     rule_source: str = Field(min_length=1, max_length=200)
     is_demo_rule: bool = False
     version: int = Field(default=0, ge=0)
-    effective_from: int | None = None
-    effective_to: int | None = None
+    effective_from: int | None = Field(default=None, ge=0)
+    effective_to: int | None = Field(default=None, ge=0)
+
+    @field_validator("tenant_id", "catalog_category_id")
+    @classmethod
+    def safe_id(cls, value):
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9_.:\-]{1,64}", value):
+            raise ValueError("只能含字母数字和 _ . : -，长度 1–64")
+        return value
+
+    @field_validator("effective_to")
+    @classmethod
+    def ordered(cls, value, info):
+        start = info.data.get("effective_from")
+        if value is not None and start is not None and start > value:
+            raise ValueError("effective_from 不能晚于 effective_to")
+        return value
 
     @field_validator("text", "rule_source")
     @classmethod
@@ -74,7 +103,8 @@ class KbWriter:
             return self._store_factory()
         from app.retrieval.store import MilvusStore
         return MilvusStore(self.settings.milvus_uri, timeout_s=self.settings.milvus_timeout_s,
-                           skus_metadata=self.settings.product_skus_metadata)
+                           skus_metadata=self.settings.product_skus_metadata,
+                           rule_metadata=self.settings.kb_rule_metadata)
 
     def _manager(self, store):
         if self._manager_factory:
@@ -99,6 +129,13 @@ class KbWriter:
         s = self.settings
         chunks = split_document(document, parent_max_chars=s.parent_max_chars, child_chunk_size=s.child_chunk_size,
                                 child_chunk_overlap=s.child_chunk_overlap)
+        stored_rule = bool(s.kb_rule_metadata)
+        if stored_rule:
+            rule = {"tenant_id": body.tenant_id, "catalog_category_id": body.catalog_category_id or "",
+                    "rule_source": body.rule_source.strip()[:256], "is_demo_rule": body.is_demo_rule,
+                    "effective_from": body.effective_from or 0, "effective_to": body.effective_to or NEVER_EXPIRES,
+                    "version": body.version}
+            chunks = [dataclasses.replace(chunk, rule=rule) for chunk in chunks]
         store = self._store()
         manager = self._manager(store)
         with manager.locked():
@@ -124,7 +161,8 @@ class KbWriter:
             if stale:
                 store.delete_ids(stale)
             store.flush_load()
-        return {"chunk_id": body.chunk_id, "milvus_pk": doc_id, "chunks": len(chunks), "removed_stale": len(stale)}
+        return {"chunk_id": body.chunk_id, "milvus_pk": doc_id, "chunks": len(chunks), "removed_stale": len(stale),
+                "rule_metadata_stored": stored_rule}
 
     @staticmethod
     def _stale_ids(store, doc_id: str, keep: set[str]) -> list[str]:
@@ -181,15 +219,17 @@ def internal_router(settings, services, writer: KbWriter):
     @router.post("/api/v1/rag/search", dependencies=[guard])
     async def search(body: SearchBody):
         executor = getattr(services, "model_executor", None)
+        filtered = bool(settings.kb_rule_metadata)
         try:
-            if executor is not None:
-                docs = await call(services.retrieve, [body.query], rerank_query=body.query, top_k=body.top_k,
-                                  executor=executor)
-            elif inspect.iscoroutinefunction(services.retrieve):
-                docs = await services.retrieve([body.query], rerank_query=body.query, top_k=body.top_k)
-            else:
-                docs = await asyncio.to_thread(partial(services.retrieve, [body.query],
-                                                       rerank_query=body.query, top_k=body.top_k))
+            with (rule_scope(body.tenant_id, body.catalog_category_id) if filtered else contextlib.nullcontext()):
+                if executor is not None:
+                    docs = await call(services.retrieve, [body.query], rerank_query=body.query, top_k=body.top_k,
+                                      executor=executor)
+                elif inspect.iscoroutinefunction(services.retrieve):
+                    docs = await services.retrieve([body.query], rerank_query=body.query, top_k=body.top_k)
+                else:
+                    docs = await asyncio.to_thread(partial(services.retrieve, [body.query],
+                                                           rerank_query=body.query, top_k=body.top_k))
         except AppError:
             raise
         except Exception as exc:
@@ -199,11 +239,15 @@ def internal_router(settings, services, writer: KbWriter):
             raise
         sims = await asyncio.to_thread(cosines, services.embedder, getattr(services, "_model_lock", None),
                                        body.query, [d.snippet for d in docs])
-        hits = [{"chunk_id": d.parent_id, "text": d.snippet, "rule_source": d.title, "is_demo_rule": False,
-                 "score": calibrated(sim, settings.internal_score_floor, settings.internal_score_ceiling),
-                 "cosine": round(sim, 6), "rerank_score": round(float(d.score), 6)} for d, sim in zip(docs, sims)]
+        hits = []
+        for d, sim in zip(docs, sims):
+            rule = d.rule or {}
+            hits.append({"chunk_id": d.parent_id, "text": d.snippet, "rule_source": rule.get("rule_source") or d.title,
+                         "is_demo_rule": bool(rule.get("is_demo_rule", False)), "version": rule.get("version", 0),
+                         "skus": d.skus, "score": calibrated(sim, settings.internal_score_floor, settings.internal_score_ceiling),
+                         "cosine": round(sim, 6), "rerank_score": round(float(d.score), 6)})
         hits.sort(key=lambda h: (-h["score"], h["chunk_id"]))
-        return {"hits": hits[:body.top_k]}
+        return {"hits": hits[:body.top_k], "filtered": filtered}
 
     @router.post("/internal/v1/kb/upsert", dependencies=[guard])
     async def upsert(body: UpsertBody):

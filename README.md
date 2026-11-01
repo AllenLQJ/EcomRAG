@@ -24,6 +24,9 @@ LLM_EXTRA_BODY='{"thinking":{"type":"enabled","effort":"low"}}'
 AUTH_SECRET=粘贴生成结果
 # 可选：服务间内部接口（/api/v1/rag/search、/internal/v1/kb/upsert）的令牌；留空则这两个接口不存在。见开发文档第 9 节
 INTERNAL_TOKEN=
+# 可选：规则元数据（租户/类目/生效期过滤）与加权排序，默认都关闭；见开发文档第 9 节的迁移步骤
+# KB_RULE_METADATA=false
+# HYBRID_RANKER=rrf
 # 保持为空；它只接受完整 http(s) 地址，填 /images 会启动失败
 IMAGE_BASE_URL=
 ```

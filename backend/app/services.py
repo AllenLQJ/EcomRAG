@@ -84,7 +84,9 @@ class Services:
                                    rerank_candidates=settings.rerank_candidates,
                                    rerank_max_chars=settings.rerank_max_chars,
                                    rerank_text_mode=settings.rerank_text_mode,
-                                   skus_metadata=settings.product_skus_metadata)
+                                   skus_metadata=settings.product_skus_metadata,
+                                   rule_metadata=settings.kb_rule_metadata, ranker=settings.hybrid_ranker,
+                                   ranker_weights=(settings.hybrid_dense_weight, round(1 - settings.hybrid_dense_weight, 6)))
         if remote:
             self.retriever.rerank_fallback = settings.rerank_fallback
             self.retriever.local_rerank = self._fallback_local

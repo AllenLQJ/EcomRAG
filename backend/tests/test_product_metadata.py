@@ -77,6 +77,7 @@ class ProductMetadataTests(unittest.TestCase):
         chunk = split_document(Document("a", "标题", "内容。", "a.md", "product"))[0]
         previous = asdict(chunk)
         previous.pop("skus")
+        previous.pop("rule")   # 规则元数据是后加的可选字段；默认块的 chunk_record 与发布指纹必须保持不变
         self.assertEqual(chunk_record(chunk), previous)
         self.assertEqual(manifest([chunk], 1)["rows"][chunk.chunk_id], digest(previous))
         client = FakeMilvusClient()

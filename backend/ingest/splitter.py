@@ -18,12 +18,18 @@ class Chunk:
     source: str
     category: str
     skus: tuple[str, ...] | None = None
+    # 规则元数据（tenant_id/catalog_category_id/rule_source/is_demo_rule/effective_from/effective_to/version）；
+    # None = 公共文档，写入带规则字段的集合时由 MilvusStore 填默认值
+    rule: dict | None = None
 
 
 def chunk_record(chunk):
     """缺省元数据完全沿用旧行/旧发布清单；新字段存 JSON 字符串。"""
     row = asdict(chunk)
     skus = row.pop("skus")
+    rule = row.pop("rule")
+    if rule is not None:
+        row.update(rule)
     if skus is not None:
         row["skus"] = json.dumps(skus, ensure_ascii=False, separators=(",", ":"))
     return row

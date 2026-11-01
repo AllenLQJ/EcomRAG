@@ -736,3 +736,8 @@ Caddy 监听 127.0.0.1:8080（HTTP），托管 `frontend/dist`、反代 `/api` �
   - **upsert 沿用 `ingest.run` 的就地更新协议**：取发布锁、`recover()`、固定写入当前发布的实体并把该版本登记为 `modified-in-place`（之后不能再用陈旧发布清单切回）。主键由 `chunk_id` 派生的文档来源决定（`doc_id = sha256("ecomops/<chunk_id>.md")[:24]`），重复调用不新增行；文本变短时会删除该文档遗留的高位子块。分类固定为 `after_sales`。
   - **tenant_id / catalog_category_id 被接受但不参与过滤**：现有集合没有这两个字段，做租户隔离需要加字段并重建集合（`--staged` 全量重建），尚未做。
   - 验证：`tests/test_internal_api.py` 14 个离线用例；upsert 在一个临时 Milvus 集合上用真实 bge-m3 验证过（写入、重复写入同主键、改文本后检索到新文本，验证后已删除该集合，未写入 `kb_chunks`）；search 对运行中的真实服务（含远程重排）验证过。
+- **规则元数据（租户/类目/生效期/版本）与加权排序，默认关闭**：新增设置 `KB_RULE_METADATA`（默认 `false`）、`HYBRID_RANKER`（`rrf`|`weighted`，默认 `rrf`）、`HYBRID_DENSE_WEIGHT`（默认 0.7，即路线图的 `WeightedRanker(0.7, 0.3)`）。
+  - 开启 `KB_RULE_METADATA=true` 的**新**集合带字段 `tenant_id`、`catalog_category_id`、`rule_source`、`is_demo_rule`、`effective_from`、`effective_to`、`version`（空串租户/类目 = 公共规则，`effective_to` 默认 2100 年）。已有集合不带这些字段，**不受影响**；开关与集合不一致（开了但集合没有字段，或没开但集合有字段）会明确报错，与 `skus` 字段同一套策略。
+  - 检索过滤（开关为 true 时）：公共规则 + 请求租户的规则（无租户则只看公共）；给了类目则同样限定；当前时间必须在 `[effective_from, effective_to]` 内。过滤表达式用 `fullmatch` 校验过的标识符拼接，注入串（引号、空白、结尾换行）会被拒绝。内部检索接口的响应带 `filtered`：`false` 表示当前集合没有这些字段、**没有做租户隔离**。
+  - **迁移现有 `kb_chunks` 的步骤（本次没有执行）**：`KB_RULE_METADATA=true uv run python -m ingest.run --dir ../data/docs --staged --version <新版本名> --yes` 构建新版本（现有文档都是公共规则），`kb_switch --check` 校验后切换别名；EcomOps 发布的知识也要在新集合里重新发布。回滚沿用既有的别名切换。
+  - 验证：离线用例 `tests/test_rule_metadata.py`；在一个临时 Milvus 集合上用真实 bge-m3 验证过（T1 看到公共+T1、看不到 T2 / 已过期 / 未生效；无租户只看到公共；类目过滤生效；`rrf` 与 `weighted` 两种排序都被 Milvus 接受），验证后已删除，没有触碰 `kb_chunks`。

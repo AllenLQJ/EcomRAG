@@ -161,7 +161,7 @@ def test_search_empty_and_validation(make_app):
     services.embedder = VecEmbedder({})
     services.retrieve.return_value = []
     with TestClient(make_app(services=services)) as client:
-        assert client.post("/api/v1/rag/search", json={"query": "库外问题"}, headers=H).json() == {"hits": []}
+        assert client.post("/api/v1/rag/search", json={"query": "库外问题"}, headers=H).json() == {"hits": [], "filtered": False}
         for bad in ({"query": ""}, {"query": "  "}, {"query": "问" * 501}, {"query": "x", "top_k": 0}, {"query": "x", "top_k": 21}):
             assert client.post("/api/v1/rag/search", json=bad, headers=H).status_code == 400
 

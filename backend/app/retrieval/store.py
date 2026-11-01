@@ -12,6 +12,11 @@ TEXT_FIELDS = {
     "parent_text": 8192, "doc_id": 64, "title": 512,
     "source": 1024, "category": 32,
 }
+NEVER_EXPIRES = 4102444800   # 2100-01-01 UTC：effective_to 的"不过期"取值
+# 规则元数据（可选字段，KB_RULE_METADATA=true 时才建/才要求；与 skus 字段同一套兼容策略）。空串 tenant/类目 = 公共规则。
+RULE_TEXT_FIELDS = {"tenant_id": 64, "catalog_category_id": 64, "rule_source": 256}
+RULE_DEFAULTS = {"tenant_id": "", "catalog_category_id": "", "rule_source": "", "is_demo_rule": False,
+                 "effective_from": 0, "effective_to": NEVER_EXPIRES, "version": 0}
 DEFAULT_COLLECTION = "kb_chunks"  # 现有服务/入库共同使用的名字；迁移后同名 alias。
 
 
@@ -20,7 +25,7 @@ class MilvusStore:
 
     def __init__(self, uri: str = "http://127.0.0.1:19530", *,
                  collection_name: str = DEFAULT_COLLECTION, client=None, data_type=None, timeout_s=10,
-                 skus_metadata=False):
+                 skus_metadata=False, rule_metadata=False):
         if not math.isfinite(timeout_s) or timeout_s <= 0:
             raise ValueError("Milvus 超时必须是正的有限秒数")
         self.timeout_s = timeout_s
@@ -30,6 +35,7 @@ class MilvusStore:
         self.data_type = data_type
         self._ready = False
         self.skus_metadata = skus_metadata
+        self.rule_metadata = rule_metadata
 
     def _connect(self):
         if self.client is None or self.data_type is None:
@@ -58,6 +64,13 @@ class MilvusStore:
                                  max_length=length, is_primary=name == "chunk_id")
             if self.skus_metadata:
                 schema.add_field(field_name="skus", datatype=self.data_type.VARCHAR, max_length=4096)
+            if self.rule_metadata:
+                for name, length in RULE_TEXT_FIELDS.items():
+                    schema.add_field(field_name=name, datatype=self.data_type.VARCHAR, max_length=length)
+                schema.add_field(field_name="is_demo_rule", datatype=self.data_type.BOOL)
+                schema.add_field(field_name="effective_from", datatype=self.data_type.INT64)
+                schema.add_field(field_name="effective_to", datatype=self.data_type.INT64)
+                schema.add_field(field_name="version", datatype=self.data_type.INT32)
             schema.add_field(field_name="dense", datatype=self.data_type.FLOAT_VECTOR, dim=DENSE_DIM)
             schema.add_field(field_name="sparse", datatype=self.data_type.SPARSE_FLOAT_VECTOR)
             indexes = client.prepare_index_params()
@@ -69,7 +82,13 @@ class MilvusStore:
         else:
             fields = client.describe_collection(collection_name=self.collection_name,
                                                 timeout=self.timeout_s)["fields"]
-            has_skus = "skus" in {field["name"] for field in fields}
+            names = {field["name"] for field in fields}
+            has_rule = "tenant_id" in names
+            if self.rule_metadata and not has_rule:
+                raise ValueError("已有集合缺少规则元数据字段；请用 KB_RULE_METADATA=true 做 staged 全量重建")
+            if not self.rule_metadata and has_rule:
+                raise ValueError("已有集合含规则元数据字段，拒绝不带元数据的写入；请开启 KB_RULE_METADATA")
+            has_skus = "skus" in names
             if self.skus_metadata and not has_skus:
                 raise ValueError("已有集合缺少 skus 字段；请使用 --staged --with-skus 构建新版本")
             if not self.skus_metadata and has_skus:
@@ -94,6 +113,16 @@ class MilvusStore:
             for name, limit in TEXT_FIELDS.items():
                 if len(row[name].encode("utf-8")) > limit:
                     raise ValueError(f"字段 {name} 超出 Milvus 的 {limit} 字节限制")
+            if self.rule_metadata:
+                for name, default in RULE_DEFAULTS.items():
+                    row.setdefault(name, default)
+                for name, limit in RULE_TEXT_FIELDS.items():
+                    if len(str(row[name]).encode("utf-8")) > limit:
+                        raise ValueError(f"字段 {name} 超出 Milvus 的 {limit} 字节限制")
+                if row["effective_from"] > row["effective_to"]:
+                    raise ValueError("effective_from 不能晚于 effective_to")
+            elif any(name in row for name in RULE_DEFAULTS):
+                raise ValueError("规则元数据写入需显式启用 rule_metadata，避免静默丢失")
             rows.append({**row, "dense": dense, "sparse": sparse})
         self.ensure_collection()
         return self.client.upsert(collection_name=self.collection_name, data=rows, timeout=self.timeout_s)

@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     product_manifest_paths: list[str] = Field(default_factory=lambda: [
         "data/docs_new", "data/docs_staging/manifest.csv", "data/docs/manifest.csv"])
     product_skus_metadata: bool = False
+    # 规则元数据：集合含 tenant_id/catalog_category_id/生效期/版本等字段，检索按租户、类目、生效期过滤。
+    # 默认 false，保证现有集合不动；开启需 staged 全量重建（见开发文档第 9 节）。
+    kb_rule_metadata: bool = False
+    hybrid_ranker: Literal["rrf", "weighted"] = "rrf"       # 路线图是 WeightedRanker(0.7, 0.3)；默认 rrf 以保持现有评测基线
+    hybrid_dense_weight: float = Field(default=0.7, gt=0, lt=1)
     product_cards_timeout_s: float = Field(default=1, gt=0, allow_inf_nan=False)
     product_cards_max: int = Field(default=6, ge=1, le=12)
     redis_url: str = "redis://127.0.0.1:6379/0"

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib
+import json
 import math
 import logging
 import re
 import threading
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from time import perf_counter
 
 from app.contracts import AppError, DEPENDENCY_UNAVAILABLE, RetrievedDoc
@@ -13,6 +17,36 @@ from app.retrieval.reranker import Reranker, rerank_text
 from app.retrieval.store import DEFAULT_COLLECTION
 
 OUTPUT_FIELDS = ["parent_id", "doc_id", "title", "source", "parent_text", "child_text"]
+RULE_OUTPUT_FIELDS = ["tenant_id", "catalog_category_id", "rule_source", "is_demo_rule",
+                      "effective_from", "effective_to", "version"]
+_ID = re.compile(r"[A-Za-z0-9_.:\-]{1,64}")
+# 当前请求的规则过滤范围；用 contextvar 传递，避免改动 retrieve/retrieve_candidates/rerank 等一串签名
+RULE_SCOPE: ContextVar[dict | None] = ContextVar("rule_scope", default=None)
+
+
+@contextmanager
+def rule_scope(tenant_id: str | None, catalog_category_id: str | None = None, now: int | None = None):
+    """限定本次检索只看：公共规则 + 该租户的规则；类目给了就同样限定；且当前时间在生效期内。
+
+    tenant_id 为空时只看公共规则（空串租户），不会泄露任何租户私有规则。"""
+    for value in (tenant_id, catalog_category_id):
+        if value is not None and not _ID.fullmatch(value):   # fullmatch：`$` 会放过结尾换行
+            raise ValueError("tenant_id / catalog_category_id 只能含字母数字和 _ . : -，长度 1–64")
+    token = RULE_SCOPE.set({"tenant_id": tenant_id, "catalog_category_id": catalog_category_id,
+                            "now": int(now if now is not None else time.time())})
+    try:
+        yield
+    finally:
+        RULE_SCOPE.reset(token)
+
+
+def rule_expr(scope: dict) -> str:
+    tenants = ['""'] + ([json.dumps(scope["tenant_id"])] if scope["tenant_id"] else [])
+    parts = [f"tenant_id in [{', '.join(tenants)}]",
+             f"effective_from <= {scope['now']} and effective_to >= {scope['now']}"]
+    if scope["catalog_category_id"]:
+        parts.append(f'catalog_category_id in ["", {json.dumps(scope["catalog_category_id"])}]')
+    return " and ".join(parts)
 logger = logging.getLogger(__name__)
 
 
@@ -25,7 +59,8 @@ class Retriever:
                  rerank_text_mode="child",
                  rerank_fallback="rrf", local_rerank=None,
                  timeout_s=10, skus_metadata=False,
-                 request_factory=None, rrf_factory=None):
+                 rule_metadata=False, ranker="rrf", ranker_weights=(0.7, 0.3),
+                 request_factory=None, rrf_factory=None, weighted_factory=None):
         if rerank_candidates <= 0:
             raise ValueError("重排候选数量必须大于零")
         if rerank_max_chars < 0:
@@ -44,11 +79,16 @@ class Retriever:
         self.rerank_text_mode = rerank_text_mode
         self.rerank_fallback, self.local_rerank = rerank_fallback, local_rerank
         self.request_factory, self.rrf_factory = request_factory, rrf_factory
+        self.rule_metadata, self.ranker, self.ranker_weights = rule_metadata, ranker, tuple(ranker_weights)
+        self.weighted_factory = weighted_factory
+        if ranker not in {"rrf", "weighted"}:
+            raise ValueError("ranker 必须为 rrf 或 weighted")
         self.skus_metadata = skus_metadata
         self._skus_schema_lock = threading.Lock()
 
     def _connect(self):
-        if self.client is None or self.request_factory is None or self.rrf_factory is None:
+        if (self.client is None or self.request_factory is None or self.rrf_factory is None
+                or (self.ranker == "weighted" and self.weighted_factory is None)):
             module = importlib.import_module("pymilvus")
             if self.client is None:
                 try:
@@ -59,6 +99,8 @@ class Retriever:
                 self.request_factory = module.AnnSearchRequest
             if self.rrf_factory is None:
                 self.rrf_factory = module.RRFRanker
+            if self.weighted_factory is None and self.ranker == "weighted":
+                self.weighted_factory = module.WeightedRanker
         return self.client
 
     def _search(self, client, **kwargs):
@@ -109,18 +151,23 @@ class Retriever:
             raise ValueError("查询与向量数量不一致")
         client = self._connect()
         parents = {}
+        scope = RULE_SCOPE.get() if self.rule_metadata else None
+        extra = {"expr": rule_expr(scope)} if scope else {}
+        ranker = (self.weighted_factory(*self.ranker_weights) if self.ranker == "weighted"
+                  else self.rrf_factory(k=60))
         for dense, sparse in zip(embeddings.dense, embeddings.sparse):
             requests = [
                 self.request_factory(data=[dense], anns_field="dense", limit=20,
-                                     param={"metric_type": "COSINE", "params": {"ef": 64}}),
+                                     param={"metric_type": "COSINE", "params": {"ef": 64}}, **extra),
                 self.request_factory(data=[sparse], anns_field="sparse", limit=20,
-                                     param={"metric_type": "IP", "params": {}}),
+                                     param={"metric_type": "IP", "params": {}}, **extra),
             ]
             results = self._search(
                 client,
                 collection_name=self.collection_name, reqs=requests,
-                ranker=self.rrf_factory(k=60), limit=40,
-                output_fields=OUTPUT_FIELDS + (["skus"] if self.skus_metadata else []),
+                ranker=ranker, limit=40,
+                output_fields=(OUTPUT_FIELDS + (["skus"] if self.skus_metadata else [])
+                               + (RULE_OUTPUT_FIELDS if self.rule_metadata else [])),
                 timeout=self.timeout_s,
             )
             for hit in results[0] if results else []:
@@ -131,6 +178,7 @@ class Retriever:
                     content=entity["parent_text"], snippet=entity["child_text"],
                     score=float(hit["distance"]),
                     skus=entity.get("skus"),
+                    rule={name: entity[name] for name in RULE_OUTPUT_FIELDS if name in entity} or None,
                 )
                 previous = parents.get(doc.parent_id)
                 if previous is None or doc.score > previous.score:
